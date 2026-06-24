@@ -1,0 +1,9 @@
+{
+  "name": "Hoshi Card #001 — Charizard",
+  "description": "POC card NFT untuk validasi vault Hoshi",
+  "image": "https://placehold.co/512x716/7c3aed/ffffff/png?text=Hoshi+Card+001%0ACharizard",
+  "attributes": [
+    { "trait_type": "Set", "value": "Base" },
+    { "trait_type": "Rarity", "value": "Holo Rare" }
+  ]
+}

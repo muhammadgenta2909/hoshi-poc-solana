@@ -1,36 +1,103 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hoshi POC — Solana devnet
 
-## Getting Started
+Technical validation that the Hoshi architecture works on Solana **devnet**. Not a
+product — it proves four things end-to-end:
 
-First, run the development server:
+1. **Wallet connect** — Phantom on devnet, show address + SOL balance
+2. **Sign message** — login-with-wallet proof (signature logged + shown)
+3. **Mint** — a Metaplex Core NFT minted **by the platform keypair**, with `owner` = the user's wallet
+4. **Metadata** — opens correctly in an explorer
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+See [PROJECT.md](./PROJECT.md) for the full spec and rationale.
+
+## Stack
+
+Next.js 16 (App Router, Turbopack) · `@solana/wallet-adapter-*` · `@solana/web3.js` v1 ·
+Metaplex Core (`@metaplex-foundation/mpl-core`) via Umi · `bs58`.
+
+## Project map
+
+```
+app/
+  layout.tsx          # server layout, wraps children in <Providers>
+  providers.tsx       # "use client" — Connection/Wallet/WalletModal providers
+  page.tsx            # 3-step UI
+  api/mint/route.ts   # server-side Core mint (Node runtime)
+components/
+  WalletConnect.tsx   # WalletMultiButton + address + devnet balance
+  SignMessage.tsx     # sign login message -> bs58 signature
+  ClaimCard.tsx       # POST /api/mint, render explorer links
+lib/
+  umi.ts              # server-only: Umi + platform keypair from env
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. Install
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+```
 
-## Learn More
+### 2. Create + fund the platform keypair (devnet)
 
-To learn more about Next.js, take a look at the following resources:
+The platform pays mint rent (~0.003 SOL/asset), so its keypair needs devnet SOL.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+solana-keygen new --outfile platform.json        # gitignored — NEVER commit
+solana airdrop 2 $(solana-keygen pubkey platform.json) --url devnet
+# if the CLI airdrop is rate-limited, use https://faucet.solana.com (paste the pubkey)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 3. Host the metadata JSON
 
-## Deploy on Vercel
+Put a public JSON file somewhere reachable (fastest: a GitHub gist → "Raw" URL).
+Use [metadata.example.json](./metadata.example.json) as the shape.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 4. Configure env
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+cp .env.example .env.local
+```
+
+Fill `.env.local`:
+
+```
+NEXT_PUBLIC_RPC_URL=https://api.devnet.solana.com
+PLATFORM_SECRET_KEY=[12,34,...]      # the FULL contents of platform.json (byte array)
+NEXT_PUBLIC_METADATA_URI=https://gist.githubusercontent.com/<you>/<id>/raw/metadata.json
+```
+
+> `NEXT_PUBLIC_*` vars are read at dev-server start and inlined at build time. After
+> editing them, restart `npm run dev` (or rebuild). `PLATFORM_SECRET_KEY` is server-only
+> and never reaches the browser.
+
+### 5. Run
+
+```bash
+npm run dev      # http://localhost:3000
+```
+
+## Manual test checklist
+
+**Phantom:** Settings → Developer Settings → Testnet Mode → network **Devnet**.
+
+**Phase 1 — wallet + sign**
+- [ ] Click *Select Wallet* → Phantom connects; address + SOL balance show (devnet)
+- [ ] Disconnect works
+- [ ] *Sign login message* → Phantom prompts; a base58 signature appears and logs to console
+
+**Phase 2 — mint**
+- [ ] *Claim Card NFT* → returns within a few seconds
+- [ ] *View NFT on Metaplex Core Explorer* opens and shows the metadata (name/image/attributes)
+- [ ] *View mint transaction* opens on Solana Explorer (devnet) and is confirmed
+- [ ] In Phantom (devnet) the new NFT appears under the **user's** wallet, not the platform's
+
+## Notes
+
+- Minting is done **server-side** by the platform keypair (the user does not pay), which
+  mirrors the real Hoshi flow (Next.js frontend + NestJS backend; this API route stands in
+  for the NestJS endpoint).
+- `wallets={[]}` is intentional: modern Phantom auto-registers as a Standard Wallet, so it
+  appears in the modal without an explicit adapter.
+- Out of scope for this POC: token, marketplace, staking, redeem, candy machine.
