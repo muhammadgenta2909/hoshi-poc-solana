@@ -22,18 +22,40 @@ blocker arsitektur; sisanya hanya item hardening produksi yang memang di luar sc
 | 3 | Mint NFT (Core) ke devnet, owner = user | ✅ Berhasil | Asset on-chain, owner = wallet user (terverifikasi) |
 | 4 | Metadata tersimpan & dibuka di explorer | ✅ Berhasil | JSON di Irys (HTTP 200), nama+gambar+atribut render di explorer |
 
-## Bukti on-chain (devnet) — NFT untuk didemokan
+## Bukti on-chain (devnet) — live-mint dari browser (run 2026-06-26)
 
-- **NFT demo (metadata Irys, render penuh):** `BdmERYifUWwPogU4QSZm52Gqr1EyWkgFXXE6Dh1kJ6Lb`
-  - Metaplex Core Explorer: https://core.metaplex.com/explorer/BdmERYifUWwPogU4QSZm52Gqr1EyWkgFXXE6Dh1kJ6Lb?env=devnet
-- **owner** = `5UcNEuD2jMVsfuDu3xuE6yDM1r8X7BjXYAeRvd4Qa9ET` (wallet user) ✓
-- **updateAuthority** = `6ab4UvyYAo5skGbN7jaMFBDUtNjA4FvWUCVPKEW7cb59` (platform) ✓
+Demo end-to-end penuh dijalankan ulang dari browser di mesin saat ini. Keypair platform
+di-generate baru di mesin ini (`28eEMis…`), beda dari run sebelumnya — wajar, karena secret
+key tidak ikut git (lihat FAQ di bawah). NFT lama tetap valid, dikelola keypair lama.
+
+- **NFT demo (metadata Irys, render penuh):** `CbQudme1VgJSUknV2C9gpRwwWVGKNVNCnyavSE1AT9h9`
+  - Metaplex Core Explorer: https://core.metaplex.com/explorer/CbQudme1VgJSUknV2C9gpRwwWVGKNVNCnyavSE1AT9h9?env=devnet
+- **owner** = `5UcNEuD2jMVsfuDu3xuE6yDM1r8X7BjXYAeRvd4Qa9ET` (wallet user / Phantom) ✓
+- **updateAuthority** = `28eEMisTxjYRi85kx7Ui6tVWswRGAmZBTNcqYp9MqYhk` (platform, run ini) ✓
+- **fee payer (tx)** = `28eEMisTxjYRi…MqYhk` (platform), fee 0.00001 SOL, status **Success / Finalized** ✓
 - **metadata** = `https://gateway.irys.xyz/6UNWfKd2igXWUGF7XY39Mwa7baeVwFHVdorDCaH1bjN2` (HTTP 200, JSON valid) ✓
-- Poin kunci: saldo wallet user **0 SOL** → membuktikan **platform yang membayar mint**, bukan user.
+- **Poin kunci (tunjukkan ini):** saldo wallet user di UI = **0.0000 SOL**, tapi tetap menerima
+  NFT yang ia miliki penuh → bukti **platform yang membayar mint**, bukan user.
 
-> Catatan: ada beberapa NFT lama di wallet user dari iterasi awal (mis. `BJjm…`) yang masih
-> pakai URI placeholder lama dan akan tampil "kosong". **Saat demo, tunjuk `BdmERYif…`** (atau
-> hasil live-mint baru), bukan yang lama.
+> Catatan: NFT lama dari iterasi awal (mis. `BdmERYif…`, `BJjm…`, update authority `6ab4Uvy…`)
+> masih ada & valid. **Saat demo, tunjuk hasil live-mint baru** (atau `CbQudme…`), bukan yang lama.
+
+## FAQ — "data ini dari mana?" (jaga-jaga ditanya PM)
+
+| Pertanyaan | Jawaban singkat |
+|---|---|
+| **Angka-angka di `platform.json` dari mana?** | Itu **secret key sebuah dompet Solana** yang **kita generate sendiri** pakai tool resmi (`solana-keygen` / `Keypair.generate()`). 64 angka = wujud byte dari kunci dompet. Dibuat lokal, bukan dari pihak luar. |
+| **`PLATFORM_SECRET_KEY` di `.env` dari mana?** | **Isi yang sama persis** dengan `platform.json`, di-copy ke `.env.local` supaya kode server bisa membacanya. Ini dompet **"platform"** yang **membayar biaya mint** & jadi **update authority**. |
+| **Link metadata (`...irys.xyz/...`) dari mana?** | Alamat sebuah **file JSON** (nama, gambar, atribut kartu) yang **kita upload ke Irys** (storage Arweave-style). NFT di-chain hanya menyimpan *link*-nya, bukan gambarnya langsung. |
+| **Kok wallet user 0 SOL tapi bisa punya NFT?** | Karena yang membayar mint adalah **dompet platform**, bukan user. `owner` di-assign ke wallet user saat `create()`. Ini inti model "vault → mint ke user" Hoshi. |
+| **Gambarnya kok placeholder?** | **Sengaja (by-design).** Tujuan POC = validasi teknis (wallet+sign+mint+metadata), bukan aset visual. |
+
+### Implementasi aslinya nanti gimana? (3 hal berubah saat produksi/mainnet)
+
+1. **Secret key** → TIDAK di file `.env`. Dipindah ke **KMS / Secret Manager** (mis. AWS KMS).
+2. **Backend** → API route Next.js POC ini diganti **endpoint NestJS** asli Hoshi. Alur tetap sama.
+3. **Storage & RPC** → metadata ke **Irys/Arweave mainnet** (permanen) + **RPC provider berbayar**
+   (bukan devnet publik yang rate-limited).
 
 ## Status per fase (Definition of Done)
 
