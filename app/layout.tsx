@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Press_Start_2P } from "next/font/google";
+import { Geist, Geist_Mono, Outfit, Press_Start_2P } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 
@@ -13,10 +13,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Pixel/arcade display font for the HOSHI wordmark and section headers.
+// Pixel/arcade display font for placeholder art and section headers.
 const pressStart = Press_Start_2P({
   weight: "400",
   variable: "--font-press-start",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+// Primary UI font for the marketplace (nav, panels, body).
+const outfit = Outfit({
+  variable: "--font-outfit",
   subsets: ["latin"],
   display: "swap",
 });
@@ -35,7 +42,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${pressStart.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${pressStart.variable} ${outfit.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>

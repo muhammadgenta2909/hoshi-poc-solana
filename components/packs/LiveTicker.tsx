@@ -6,7 +6,7 @@ export default function LiveTicker({ cards }: { cards: LiveCard[] }) {
   const row = [...cards, ...cards];
 
   return (
-    <section className="border-b border-white/5 bg-black/20">
+    <section>
       <div className="mx-auto max-w-[1400px] px-4 pt-3 sm:px-6">
         <div className="flex items-center gap-2 text-xs font-medium text-zinc-300">
           <span className="relative flex h-2 w-2">

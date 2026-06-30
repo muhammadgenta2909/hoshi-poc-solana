@@ -1,6 +1,13 @@
+import type { ImgHTMLAttributes } from "react";
 import type { Pack } from "@/lib/packs";
 
 const idr = new Intl.NumberFormat("id-ID");
+
+/** Plain <img> for real /public assets — next/image isn't needed for fixed-size UI chrome. */
+export function Img(props: ImgHTMLAttributes<HTMLImageElement>) {
+  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+  return <img {...props} />;
+}
 
 /** The blue IDRX token coin. */
 export function IdrxGlyph({ size = 16 }: { size?: number }) {
