@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" width="300" height="420" role="img" aria-label="Hoshi card back">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#141024"/>
+      <stop offset="0.55" stop-color="#0c1030"/>
+      <stop offset="1" stop-color="#050510"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBB222"/>
+      <stop offset="1" stop-color="#FFF600"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.5">
+      <stop offset="0" stop-color="#0F56E6" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#0F56E6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="6" y="6" width="288" height="408" rx="18" fill="url(#bg)" stroke="url(#gold)" stroke-width="3"/>
+  <rect x="18" y="18" width="264" height="384" rx="12" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1.5"/>
+  <circle cx="150" cy="178" r="120" fill="url(#glow)"/>
+  <path d="M150 96 l20 44 48 5 -36 33 10 47 -42 -24 -42 24 10 -47 -36 -33 48 -5 z" fill="url(#gold)"/>
+  <text x="150" y="300" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="800" letter-spacing="6" fill="url(#gold)">HOSHI</text>
+  <text x="150" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" letter-spacing="3" fill="#ffffff" fill-opacity="0.5">VAULT VERIFIED</text>
+</svg>

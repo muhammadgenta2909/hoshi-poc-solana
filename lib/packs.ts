@@ -14,18 +14,40 @@ export type Pack = {
   price: number;
   /** CSS gradient used by the dummy art (ignored once `image` is set). */
   accent: string;
-  /** Real artwork URL — when present it replaces the placeholder. */
+  /** Pack-wrapper thumbnail shown in the Select Pack grid. */
   image?: string;
+  /** Large hero artwork for the center showcase (falls back to `image`). */
+  heroImage?: string;
+  /**
+   * Expected value in IDRX = Σ (dropRate% × rarity value). These mirror the
+   * server-authoritative catalog (hoshi-backend expectedValueIdr); production
+   * should fetch GET /api/packs instead of hardcoding. NOTE: with the current
+   * placeholder odds × rarity values, EV sits above price for every pack —
+   * economics still needs calibration by the product/economics team.
+   */
   expectedValue: number;
   dropRates: DropRate[];
 };
 
-const TIER_COLOR: Record<Tier, string> = {
+/** Shared rarity palette — the one source of truth for tier colors app-wide. */
+export const TIER_COLOR: Record<Tier, string> = {
   Common: "#22c55e",
   Rare: "#3b82f6",
   Epic: "#a855f7",
   Legendary: "#f59e0b",
   "Legendary Rare": "#fb7185",
+};
+
+/** Rarity ordering, low → high. Used to sort listings by rarity. */
+export const TIER_ORDER: Tier[] = ["Common", "Rare", "Epic", "Legendary", "Legendary Rare"];
+
+/** Drop-rate glyphs shipped in /public, keyed by tier (shared with the marketplace). */
+export const TIER_ICON: Record<Tier, string> = {
+  Common: "/icon-common.png",
+  Rare: "/icon-rare.png",
+  Epic: "/icon-epic.png",
+  Legendary: "/icon-legendary.png",
+  "Legendary Rare": "/icon-legendary-rare.png",
 };
 
 const rates = (
@@ -50,7 +72,8 @@ export const PACKS: Pack[] = [
     group: "Normal Hoshi Pack",
     price: 10000,
     accent: "linear-gradient(160deg,#52525b,#18181b)",
-    expectedValue: 12500,
+    image: "/card-disable1.png",
+    expectedValue: 57300,
     dropRates: rates(70, 22, 6, 1.8, 0.2),
   },
   {
@@ -60,7 +83,8 @@ export const PACKS: Pack[] = [
     group: "Normal Hoshi Pack",
     price: 15000,
     accent: "linear-gradient(160deg,#71717a,#27272a)",
-    expectedValue: 19000,
+    image: "/card-disable2.png",
+    expectedValue: 77640,
     dropRates: rates(62, 26, 9, 2.7, 0.3),
   },
   {
@@ -70,7 +94,8 @@ export const PACKS: Pack[] = [
     group: "Special Hoshi Pack",
     price: 50000,
     accent: "linear-gradient(160deg,#b45309,#451a03)",
-    expectedValue: 16250000,
+    image: "/card-enable1.png",
+    expectedValue: 107550,
     dropRates: rates(55, 27, 13, 4.6, 0.4),
   },
   {
@@ -80,7 +105,9 @@ export const PACKS: Pack[] = [
     group: "Special Hoshi Pack",
     price: 75000,
     accent: "linear-gradient(160deg,#fbbf24,#b45309)",
-    expectedValue: 24250000,
+    image: "/card-enable2.png",
+    heroImage: "/card-main.png",
+    expectedValue: 114750,
     dropRates: rates(50, 25, 15, 4.5, 0.5),
   },
 ];

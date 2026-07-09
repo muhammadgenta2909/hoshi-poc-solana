@@ -11,6 +11,7 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-pixel: var(--font-press-start);
+  --font-jersey: var(--font-jersey);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,10 +21,13 @@
   }
 }
 
+/* Hoshi is a dark, always-on-theme app. Pin the body to the warm-dark base so
+   overscroll/rubber-band never flashes white, and default text to Outfit so any
+   unstyled text matches the page instead of falling back to Arial. */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #0a0907;
+  color: #ededed;
+  font-family: var(--font-outfit), system-ui, sans-serif;
 }
 
 /* ---------- Hoshi marketplace UI helpers ---------- */
@@ -54,8 +58,106 @@ body {
   scrollbar-width: none;
 }
 
+/* Clickable controls always show the pointer cursor (disabled ones don't). */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+/* "Rip Pack" cinematic reveal: charge shake → card rises out of the pack → duar flash. */
+@keyframes hoshi-charge {
+  0%, 100% { transform: translateX(0) rotate(0) scale(1); }
+  20% { transform: translateX(-5px) rotate(-2deg); }
+  40% { transform: translateX(5px) rotate(2deg) scale(1.02); }
+  60% { transform: translateX(-4px) rotate(-1.5deg); }
+  80% { transform: translateX(4px) rotate(1.5deg); }
+}
+.pack-charge {
+  animation: hoshi-charge 0.45s ease-in-out infinite;
+}
+
+/* won card landing on reveal */
+@keyframes hoshi-card-rise {
+  0% { transform: translateY(40px) scale(0.85); opacity: 0; }
+  55% { opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.hoshi-card-rise {
+  animation: hoshi-card-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* quick "duar" flash behind the revealed card (fades fast, no wash-out) */
+@keyframes hoshi-duar {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  25% { opacity: 0.85; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.45); }
+}
+.hoshi-duar {
+  animation: hoshi-duar 0.5s ease-out forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-marquee {
+  .animate-marquee,
+  .pack-charge,
+  .hoshi-card-rise,
+  .hoshi-duar,
+  .animate-float {
     animation: none;
   }
+}
+
+@keyframes hoshi-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+.animate-float {
+  animation: hoshi-float 3s ease-in-out infinite;
+}
+
+/* Dual-handle price range slider (Figma). Two native range inputs are stacked;
+   only their thumbs receive pointer events so both handles stay draggable over a
+   single shared track. The filled (yellow) segment is a sibling div positioned by
+   the component. Thumbs are gold to match the brand gradient. */
+.hoshi-range {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.hoshi-range:focus {
+  outline: none;
+}
+.hoshi-range::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  width: 20px;
+  border-radius: 9999px;
+  background: #ffde59;
+  border: none;
+  box-shadow: 0 0 0 3px #f5a623, 0 2px 6px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+.hoshi-range::-moz-range-thumb {
+  pointer-events: auto;
+  height: 20px;
+  width: 20px;
+  border-radius: 9999px;
+  background: #ffde59;
+  border: none;
+  box-shadow: 0 0 0 3px #f5a623, 0 2px 6px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+.hoshi-range::-webkit-slider-runnable-track {
+  background: transparent;
+}
+.hoshi-range::-moz-range-track {
+  background: transparent;
 }

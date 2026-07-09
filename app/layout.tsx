@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Outfit, Press_Start_2P } from "next/font/google";
+import { Geist, Geist_Mono, Jersey_10, Outfit, Press_Start_2P } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
+import BgmPlayer from "@/components/BgmPlayer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,6 +29,15 @@ const outfit = Outfit({
   display: "swap",
 });
 
+// Tall pixel display font (Figma: Jersey 10) for the Rip Pack CTA, "HOSHI"
+// wordmarks, and drop-rate percentages.
+const jersey = Jersey_10({
+  weight: "400",
+  variable: "--font-jersey",
+  subsets: ["latin"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Hoshi POC — Solana devnet",
   description:
@@ -42,10 +52,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${pressStart.variable} ${outfit.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${pressStart.variable} ${outfit.variable} ${jersey.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
+        <BgmPlayer />
       </body>
     </html>
   );

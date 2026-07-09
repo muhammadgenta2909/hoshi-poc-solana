@@ -1,5 +1,6 @@
 import type { Pack } from "@/lib/packs";
-import { ChevronLeftIcon, Idrx, PackArt } from "./ui";
+import CollapsePanel from "./CollapsePanel";
+import { GradientText, Idrx, LabelStrip, PackArt } from "./ui";
 
 const GROUPS = ["Normal Hoshi Pack", "Special Hoshi Pack"] as const;
 
@@ -13,21 +14,19 @@ export default function SelectPackPanel({
   onSelect: (id: string) => void;
 }) {
   return (
-    <aside className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-pixel text-xs text-yellow-400">Select Pack</h2>
-        <button
-          className="text-zinc-500 transition hover:text-zinc-200"
-          aria-label="Collapse panel"
-        >
-          <ChevronLeftIcon />
-        </button>
-      </div>
-
+    <CollapsePanel
+      icon="/icon-select.png"
+      title="Select Pack"
+      toggleIcon="/icon-left.png"
+      side="left"
+      sideLines
+    >
       <div className="flex flex-col gap-5">
         {GROUPS.map((group) => (
           <div key={group}>
-            <p className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">— {group}</p>
+            <p className="mb-2 flex items-center text-[11px] uppercase tracking-wider text-zinc-500">
+              <LabelStrip />{group}
+            </p>
             <div className="grid grid-cols-2 gap-2.5">
               {packs
                 .filter((p) => p.group === group)
@@ -45,8 +44,8 @@ export default function SelectPackPanel({
                       }`}
                     >
                       <PackArt pack={p} label={p.tierLabel} className="aspect-[3/4] w-full" />
-                      <span className="text-[11px] font-medium text-zinc-200">{p.name}</span>
-                      <Idrx amount={p.price} size={12} className="text-[11px] text-yellow-400" />
+                      <GradientText className="text-[11px] font-semibold">{p.name}</GradientText>
+                      <Idrx amount={p.price} size={12} className="text-[11px] text-zinc-200" />
                     </button>
                   );
                 })}
@@ -54,6 +53,6 @@ export default function SelectPackPanel({
           </div>
         ))}
       </div>
-    </aside>
+    </CollapsePanel>
   );
 }

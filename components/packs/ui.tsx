@@ -1,12 +1,77 @@
-import type { ImgHTMLAttributes } from "react";
+import type { CSSProperties, ImgHTMLAttributes, ReactNode } from "react";
 import type { Pack } from "@/lib/packs";
 
 const idr = new Intl.NumberFormat("id-ID");
+
+/** Shared gold brand gradient (Figma: linear #FBB222 -> #FFF600). */
+export const GOLD_GRADIENT = "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)";
+
+/**
+ * White hairlines down the LEFT & RIGHT edges ONLY, fading out toward the top
+ * and bottom ends (Figma) — never a solid full-height line. Layered as
+ * background-images so they paint over the element's fill color without extra
+ * DOM; combine with a Tailwind `bg-*` (background-color) and a `rounded-*`.
+ */
+export const SIDE_LINES: CSSProperties = {
+  backgroundImage:
+    "linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0.45) 26%, rgba(255,255,255,0.45) 74%, transparent 100%), linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0.45) 26%, rgba(255,255,255,0.45) 74%, transparent 100%)",
+  backgroundSize: "1px 100%, 1px 100%",
+  backgroundPosition: "left center, right center",
+  backgroundRepeat: "no-repeat",
+};
+
+/** Selected/idle treatment for toggle tiles (pack cells, market cards, filter
+ *  toggles) — one source of truth so "selected" reads identically app-wide. */
+export const TOGGLE_SELECTED =
+  "border-yellow-400 bg-yellow-400/10 shadow-[0_0_0_1px_rgba(250,204,21,0.4),0_0_26px_-6px_rgba(250,204,21,0.65)]";
+export const TOGGLE_IDLE =
+  "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04]";
+
+/** Format an amount with id-ID thousands separators (75.000). */
+export const formatIdr = (amount: number) => idr.format(amount);
 
 /** Plain <img> for real /public assets — next/image isn't needed for fixed-size UI chrome. */
 export function Img(props: ImgHTMLAttributes<HTMLImageElement>) {
   // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
   return <img {...props} />;
+}
+
+/** Text painted with the gold brand gradient (background-clip: text). */
+export function GradientText({
+  children,
+  className = "",
+  style,
+}: {
+  children: ReactNode;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <span
+      className={className}
+      style={{
+        backgroundImage: GOLD_GRADIENT,
+        WebkitBackgroundClip: "text",
+        backgroundClip: "text",
+        color: "transparent",
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Three short dashes used as a section-label marker (Figma "--- Label").
+ *  Inherits the label color via `bg-current`. */
+export function LabelStrip({ className = "" }: { className?: string }) {
+  return (
+    <span aria-hidden className={`mr-1.5 inline-flex items-center gap-[3px] ${className}`}>
+      <span className="h-[1.5px] w-[7px] rounded-full bg-current" />
+      <span className="h-[1.5px] w-[7px] rounded-full bg-current" />
+      <span className="h-[1.5px] w-[7px] rounded-full bg-current" />
+    </span>
+  );
 }
 
 /** The blue IDRX token coin. */
@@ -40,22 +105,26 @@ export function Idrx({
   );
 }
 
-/** Pack artwork — real image if `pack.image` is set, otherwise a styled placeholder. */
+/** Pack artwork — real image if set, otherwise a styled placeholder.
+ *  `hero` picks the large center artwork (heroImage), falling back to the thumb. */
 export function PackArt({
   pack,
   label,
   big = false,
+  hero = false,
   className = "",
 }: {
   pack: Pack;
   label?: string;
   big?: boolean;
+  hero?: boolean;
   className?: string;
 }) {
-  if (pack.image) {
+  const src = hero ? pack.heroImage ?? pack.image : pack.image;
+  if (src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={pack.image} alt={pack.name} className={`object-contain ${className}`} />
+      <img src={src} alt={pack.name} className={`object-contain ${className}`} />
     );
   }
   return (

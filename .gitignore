@@ -44,3 +44,15 @@ platform.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local scratch notes — may contain credentials. Never commit.
+note.txt
+
+# Agent tooling; not part of the app and not needed by the Vercel build.
+.claude/
+.agents/
+agent/
+skills-lock.json
+
+# Stray duplicate asset from a browser download.
+public/visibility (1).png
