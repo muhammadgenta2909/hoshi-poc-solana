@@ -5,6 +5,8 @@ import type { Listing } from "@/lib/market";
 import type { Offer } from "@/lib/cardDetail";
 
 import { useCart } from "@/lib/useCart";
+import { useAuth } from "@/lib/useAuth";
+import { useWalletConnect } from "@/lib/useWalletConnect";
 import { formatIdr, GOLD_GRADIENT } from "./ui";
 import { submitContactMessage } from "@/lib/admin-api";
 import { submitOffer } from "@/lib/api";
@@ -86,6 +88,8 @@ export default function CardActions({
   onOffer: (offer: Offer) => void;
 }) {
   const { has, add, remove } = useCart();
+  const { token } = useAuth();
+  const { open: openWallet } = useWalletConnect();
   const inCart = has(listing.id);
 
   const [modal, setModal] = useState<null | "offer" | "message">(null);
@@ -106,13 +110,19 @@ export default function CardActions({
   const [msgError, setMsgError] = useState<string | null>(null);
 
   const submitOfferAction = async () => {
-    if (amount <= 0) return;
+    if (amount <= 0 || !token) return;
     setSubmittingOffer(true);
     setOfferError(null);
     try {
-      await submitOffer(listing.id, "You", amount);
-      const offer: Offer = { user: "You", ago: "just now", amount: Math.round(amount), status: "PENDING" };
-      onOffer(offer);
+      const saved = await submitOffer(listing.id, amount, token);
+      // Echo the persisted row (real id + buyer label), not a locally invented one.
+      onOffer({
+        id: saved.id,
+        user: saved.buyer.label,
+        ago: "just now",
+        amount: saved.amount,
+        status: saved.status,
+      } satisfies Offer);
       setOfferDone(true);
     } catch (err) {
       setOfferError(err instanceof Error ? err.message : "Failed to send offer.");
@@ -177,6 +187,9 @@ export default function CardActions({
               <p className="text-sm text-emerald-400">
                 Offer IDRX {formatIdr(Math.round(amount))} sent.
               </p>
+              <p className="mt-1.5 text-xs text-zinc-500">
+                The seller can accept or decline it from their profile.
+              </p>
               <button
                 type="button"
                 onClick={closeOffer}
@@ -184,6 +197,26 @@ export default function CardActions({
                 style={{ backgroundImage: GOLD_GRADIENT }}
               >
                 Done
+              </button>
+            </div>
+          ) : !token ? (
+            // Offers are tied to a wallet now — an anonymous offer could never be
+            // shown to the seller, so ask for a signature before taking a number.
+            <div className="text-center">
+              <p className="text-sm text-zinc-300">Verify your wallet to make an offer.</p>
+              <p className="mt-1.5 text-xs text-zinc-500">
+                Offers are linked to your wallet so the seller can respond to you.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  closeOffer();
+                  openWallet();
+                }}
+                className="mt-4 rounded-xl px-5 py-2.5 text-[14px] font-semibold text-[#171717]"
+                style={{ backgroundImage: GOLD_GRADIENT }}
+              >
+                Connect wallet
               </button>
             </div>
           ) : (

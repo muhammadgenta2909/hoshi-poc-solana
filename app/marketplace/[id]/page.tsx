@@ -5,14 +5,16 @@ import { useParams } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import Link from "next/link";
-import { secondaryPrice } from "@/lib/market";
+import { secondaryPrice, type Listing, type RelistInput } from "@/lib/market";
 import type { CardDetail, Offer } from "@/lib/cardDetail";
 import {
   ApiError,
   buyListing,
+  cancelListing,
   getListingDetail,
   getMyPurchases,
   registerListingView,
+  relistListing,
 } from "@/lib/api";
 
 import { useAuth } from "@/lib/useAuth";
@@ -25,6 +27,10 @@ import { GOLD_GRADIENT, GradientText, Img, formatIdr } from "@/components/packs/
 const JERSEY = { fontFamily: "var(--font-jersey)" } as const;
 const GREEN = "#3DDC84";
 const CONTRACT_YELLOW = "#FEF003";
+
+/** Number-input styling for the owner panel — mirrors the sell form's field. */
+const OWNER_INPUT =
+  "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm tabular-nums text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-yellow-400/60";
 
 function shortAsset(address: string): string {
   if (address.length <= 13) return address;
@@ -269,6 +275,116 @@ function OfferRow({ offer }: { offer: Offer }) {
   );
 }
 
+/** Owner-only controls shown in place of the Buy button when you own the card.
+ *  Not listed (SOLD/CANCELLED): set an ask price + buyback and list it for sale.
+ *  Listed (ACTIVE): show the live ask and let the owner withdraw it. */
+function OwnerPanel({
+  listing,
+  listedByMe,
+  busy,
+  msg,
+  onRelist,
+  onCancel,
+}: {
+  listing: Listing;
+  listedByMe: boolean;
+  busy: boolean;
+  msg: string | null;
+  onRelist: (input: RelistInput) => void;
+  onCancel: () => void;
+}) {
+  const [price, setPrice] = useState(listing.price);
+  const [buyback, setBuyback] = useState(listing.buyback);
+
+  // Value edge vs. the card's Hoshi expected value — same math as the sell form.
+  const edge = price > 0 ? (listing.expectedValue - price) / price : 0;
+
+  return (
+    <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      {listedByMe ? (
+        <>
+          <Label>Your Listing</Label>
+          <div className="mt-2 flex items-center gap-2.5">
+            <span className="text-sm text-zinc-400">Listed for</span>
+            <IdrxCoin size={26} />
+            <span className="text-2xl leading-none text-white" style={JERSEY}>
+              {formatIdr(listing.price)}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="mt-4 w-full rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-[15px] font-semibold text-red-300 transition hover:bg-red-400/20 disabled:opacity-50"
+          >
+            {busy ? "Cancelling…" : "Cancel Listing"}
+          </button>
+        </>
+      ) : (
+        <>
+          <h3 className="text-[20px] leading-none text-white" style={JERSEY}>
+            You own this card
+          </h3>
+          <div className="mt-4 flex flex-col gap-4">
+            <label className="block">
+              <span style={JERSEY} className="mb-1.5 block text-[13px] uppercase tracking-wide text-zinc-500">
+                Ask price (IDRX)
+              </span>
+              <input
+                type="number"
+                value={Number.isNaN(price) ? "" : price}
+                min={1}
+                step={100_000}
+                onChange={(e) => setPrice(Number(e.target.value))}
+                className={OWNER_INPUT}
+              />
+            </label>
+            <label className="block">
+              <span style={JERSEY} className="mb-1.5 block text-[13px] uppercase tracking-wide text-zinc-500">
+                Buyback (IDRX)
+              </span>
+              <input
+                type="number"
+                value={Number.isNaN(buyback) ? "" : buyback}
+                min={0}
+                step={100_000}
+                onChange={(e) => setBuyback(Number(e.target.value))}
+                className={OWNER_INPUT}
+              />
+            </label>
+            <p className="-mt-1 text-[12px] text-zinc-500">
+              Value edge:{" "}
+              <span className={edge >= 0 ? "text-emerald-400" : "text-red-400"}>
+                {edge >= 0 ? "+" : ""}
+                {(edge * 100).toFixed(1)}%
+              </span>{" "}
+              {edge >= 0 ? "(reads as a good deal)" : "(priced above expected value)"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onRelist({ price: Math.round(price), buyback: Math.round(buyback) })}
+            disabled={busy || price <= 0}
+            className="mt-4 w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105 disabled:opacity-50"
+            style={{ backgroundImage: GOLD_GRADIENT }}
+          >
+            {busy ? "Listing…" : "List for Sale"}
+          </button>
+        </>
+      )}
+
+      {msg && <p className="mt-3 text-center text-sm text-red-400">{msg}</p>}
+
+      <Link
+        href="/vault"
+        className="mt-3 block w-full rounded-2xl bg-white/[0.04] px-6 py-3.5 text-center text-[15px] font-semibold text-zinc-100 transition hover:bg-white/[0.08]"
+      >
+        View in Vault →
+      </Link>
+    </div>
+  );
+}
+
 function RightColumn({
   detail,
   offers,
@@ -278,6 +394,10 @@ function RightColumn({
   unavailable,
   owned,
   buyMsg,
+  onRelist,
+  onCancel,
+  ownerBusy,
+  ownerMsg,
 }: {
   detail: CardDetail;
   offers: Offer[];
@@ -287,8 +407,13 @@ function RightColumn({
   unavailable: boolean;
   owned: boolean;
   buyMsg: string | null;
+  onRelist: (input: RelistInput) => void;
+  onCancel: () => void;
+  ownerBusy: boolean;
+  ownerMsg: string | null;
 }) {
   const { listing } = detail;
+  const listedByMe = owned && listing.status === "ACTIVE";
   const trendUp = detail.change30dPct >= 0;
   const trendColor = trendUp ? GREEN : "#F87171";
   const stats = [
@@ -373,36 +498,41 @@ function RightColumn({
         </div>
       </div>
 
-      {/* actions */}
-      <button
-        type="button"
-        onClick={onBuy}
-        disabled={buying || unavailable}
-        className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
-        style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
-      >
-        <Img src="/icon-buy.png" alt="" className="h-5 w-5" />
-        <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
-          {unavailable ? "Sold" : buying ? "Processing…" : "Buy Card"}
-        </span>
-      </button>
-      {buyMsg && (
-        <p
-          className={`mt-2 text-center text-sm ${owned ? "text-[#3DDC84]" : "text-red-400"}`}
-        >
-          {buyMsg}
-        </p>
-      )}
-      {owned && (
-        <Link
-          href="/vault"
-          className="mt-3 block w-full rounded-2xl bg-white/[0.04] px-6 py-3.5 text-center text-[15px] font-semibold text-zinc-100 transition hover:bg-white/[0.08]"
-        >
-          View in Vault →
-        </Link>
-      )}
+      {/* actions — the owner gets list/withdraw controls, everyone else the Buy button.
+          A buy flips `owned` to true, so the purchase confirmation has to render in the
+          owner branch too; only the Buy button can leave `buyMsg` set while !owned, and
+          that only ever happens on failure. Hence green above, red below. */}
+      {owned ? (
+        <>
+          {buyMsg && <p className="mt-5 text-center text-sm text-[#3DDC84]">{buyMsg}</p>}
+          <OwnerPanel
+            listing={listing}
+            listedByMe={listedByMe}
+            busy={ownerBusy}
+            msg={ownerMsg}
+            onRelist={onRelist}
+            onCancel={onCancel}
+          />
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={onBuy}
+            disabled={buying || unavailable}
+            className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
+          >
+            <Img src="/icon-buy.png" alt="" className="h-5 w-5" />
+            <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
+              {unavailable ? "Sold" : buying ? "Processing…" : "Buy Card"}
+            </span>
+          </button>
+          {buyMsg && <p className="mt-2 text-center text-sm text-red-400">{buyMsg}</p>}
 
-      <CardActions listing={listing} onOffer={onOffer} />
+          <CardActions listing={listing} onOffer={onOffer} />
+        </>
+      )}
 
       {/* offers */}
       <div className="mt-7">
@@ -435,6 +565,9 @@ export default function CardDetailPage() {
   const [sold, setSold] = useState(false);
   const [owned, setOwned] = useState(false);
   const [buyMsg, setBuyMsg] = useState<string | null>(null);
+  // Owner-mode (relist / cancel) has its own busy + message, kept apart from buy.
+  const [ownerBusy, setOwnerBusy] = useState(false);
+  const [ownerMsg, setOwnerMsg] = useState<string | null>(null);
   const [pendingOffers, setPendingOffers] = useState<Offer[]>([]);
 
   useEffect(() => {
@@ -527,6 +660,69 @@ export default function CardDetailPage() {
     }
   }, [detail, unavailable, token, login, publicKey, setVisible]);
 
+  // Re-list a card we own (SOLD/CANCELLED -> ACTIVE). Mirrors handleBuy's 401 retry.
+  const handleRelist = useCallback(
+    async (input: RelistInput) => {
+      if (!detail) return;
+      setOwnerMsg(null);
+      setOwnerBusy(true);
+      const doRelist = (t: string) => relistListing(detail.listing.id, input, t);
+      try {
+        // Needs a JWT: use the stored token, or trigger wallet login (nonce→sign).
+        let t = token ?? (await login());
+        let relisted: Awaited<ReturnType<typeof relistListing>> | null = null;
+        try {
+          relisted = await doRelist(t);
+        } catch (e) {
+          // Stale token -> log in again once and retry.
+          if (e instanceof ApiError && e.status === 401) {
+            t = await login();
+            relisted = await doRelist(t);
+          } else throw e;
+        }
+        if (relisted) {
+          setDetail((d) =>
+            d && d.listing.id === relisted.id ? { ...d, listing: relisted } : d,
+          );
+        }
+      } catch (e) {
+        setOwnerMsg(e instanceof Error ? e.message : String(e));
+      } finally {
+        setOwnerBusy(false);
+      }
+    },
+    [detail, token, login],
+  );
+
+  // Withdraw a card we own that is currently listed (ACTIVE -> CANCELLED).
+  const handleCancel = useCallback(async () => {
+    if (!detail) return;
+    setOwnerMsg(null);
+    setOwnerBusy(true);
+    const doCancel = (t: string) => cancelListing(detail.listing.id, t);
+    try {
+      let t = token ?? (await login());
+      let cancelled: Awaited<ReturnType<typeof cancelListing>> | null = null;
+      try {
+        cancelled = await doCancel(t);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          t = await login();
+          cancelled = await doCancel(t);
+        } else throw e;
+      }
+      if (cancelled) {
+        setDetail((d) =>
+          d && d.listing.id === cancelled.id ? { ...d, listing: cancelled } : d,
+        );
+      }
+    } catch (e) {
+      setOwnerMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOwnerBusy(false);
+    }
+  }, [detail, token, login]);
+
   return (
     <div
       className="relative min-h-screen text-zinc-100"
@@ -558,6 +754,10 @@ export default function CardDetailPage() {
               unavailable={unavailable}
               owned={owned}
               buyMsg={buyMsg}
+              onRelist={handleRelist}
+              onCancel={handleCancel}
+              ownerBusy={ownerBusy}
+              ownerMsg={ownerMsg}
             />
           </div>
 

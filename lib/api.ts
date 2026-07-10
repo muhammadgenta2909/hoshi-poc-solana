@@ -2,8 +2,9 @@
 // response shapes are DELIBERATELY 1:1 with the local types (Listing / CardDetail),
 // so pages just swap their data source from mock → fetch, with no mapping.
 
-import type { Listing, NewListingInput } from "./market";
+import type { Listing, NewListingInput, RelistInput, UpdateListingInput } from "./market";
 import type { CardDetail } from "./cardDetail";
+import type { ActivityQuery, ActivityRecord, OfferRecord } from "./offers";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -51,10 +52,14 @@ export const registerListingView = (id: string) =>
     method: "POST",
   });
 
-export const submitOffer = (id: string, user: string, amount: number) =>
-  api<{ submitted: boolean; listingId: string }>(`/marketplace/${encodeURIComponent(id)}/offer`, {
+/** Make an offer. Requires a JWT — the buyer identity comes from the token, so
+ *  the offer can be surfaced to the seller (Offers Received) and to the buyer
+ *  (Offers Made). Previously the client sent the literal string "You". */
+export const submitOffer = (id: string, amount: number, token: string) =>
+  api<OfferRecord>(`/marketplace/${encodeURIComponent(id)}/offer`, {
     method: "POST",
-    body: JSON.stringify({ user, amount }),
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ amount }),
   });
 
 export const buyListing = (id: string, token: string) =>
@@ -88,6 +93,92 @@ export const cancelListing = (id: string, token: string) =>
   api<Listing>(`/marketplace/${encodeURIComponent(id)}/cancel`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
+  });
+
+/** Re-list a card you own (POST /marketplace/:id/relist). Owner-only; requires a JWT. */
+export const relistListing = (id: string, input: RelistInput, token: string) =>
+  api<Listing>(`/marketplace/${encodeURIComponent(id)}/relist`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Change the price of your own ACTIVE listing (PATCH /marketplace/:id).
+ *  A dedicated update, not a cancel + re-list: views, listedAt and any live
+ *  offers survive it (mirrors Collector Crypt's "update listing"). */
+export const updateListing = (id: string, input: UpdateListingInput, token: string) =>
+  api<Listing>(`/marketplace/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/* ---------------- offers (seller ⇄ buyer, no admin in the loop) ------------ */
+
+/** Offers the signed-in user has made (GET /marketplace/me/offers-made). */
+export const getOffersMade = (token: string) =>
+  api<OfferRecord[]>("/marketplace/me/offers-made", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/** Offers others made on the signed-in user's listings. */
+export const getOffersReceived = (token: string) =>
+  api<OfferRecord[]>("/marketplace/me/offers-received", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+const offerAction = (offerId: string, action: string, token: string) =>
+  api<OfferRecord>(`/marketplace/offers/${encodeURIComponent(offerId)}/${action}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/** Seller accepts → the card sells immediately at the offer price. */
+export const acceptOffer = (offerId: string, token: string) =>
+  offerAction(offerId, "accept", token);
+
+/** Seller declines an offer. */
+export const rejectOffer = (offerId: string, token: string) =>
+  offerAction(offerId, "reject", token);
+
+/** Buyer withdraws their own offer. */
+export const cancelOffer = (offerId: string, token: string) =>
+  offerAction(offerId, "cancel", token);
+
+/* ---------------- activity feed ---------------- */
+
+/** Profile activity: every event where the user is the actor or counterparty. */
+export const getMyActivity = (token: string, params?: ActivityQuery) => {
+  const q = new URLSearchParams();
+  if (params?.search) q.set("search", params.search);
+  if (params?.set) q.set("set", params.set);
+  if (params?.sort) q.set("sort", params.sort);
+  const qs = q.toString();
+  return api<ActivityRecord[]>(`/marketplace/me/activity${qs ? `?${qs}` : ""}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+};
+
+/* ---------------- profile ---------------- */
+
+export type Profile = {
+  id: string;
+  walletAddress: string;
+  displayName: string | null;
+  createdAt: string;
+};
+
+export const getProfile = (token: string) =>
+  api<Profile & { counts: { nfts: number; vaultItems: number } }>("/users/me", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/** Rename yourself (the pencil next to the profile name). */
+export const updateProfile = (displayName: string, token: string) =>
+  api<Profile>("/users/me", {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ displayName }),
   });
 
 /* ---------------- auth (wallet login) ---------------- */

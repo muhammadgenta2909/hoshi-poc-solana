@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import type { Currency, Listing } from "@/lib/market";
 import { secondaryPrice } from "@/lib/market";
-import { formatIdr, GradientText, Img } from "./ui";
+import { formatIdr, GOLD_GRADIENT, GradientText, Img } from "./ui";
 
 /** Frosted badge (Figma: white 21% + blur) for grade / language / era. */
 function Badge({ children }: { children: ReactNode }) {
@@ -48,9 +48,12 @@ function IdrxCoin({ size = 24 }: { size?: number }) {
 export default function MarketCard({
   listing,
   currency,
+  showStatus = false,
 }: {
   listing: Listing;
   currency: Currency;
+  /** Opt-in owner view: overlay a "LISTED" / "IN VAULT" chip on the art. */
+  showStatus?: boolean;
 }) {
   return (
     <Link
@@ -59,7 +62,23 @@ export default function MarketCard({
       className="group flex flex-col overflow-hidden rounded-2xl border border-white/5 text-left transition hover:border-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
     >
       {/* Image parent — frosted white 9% (Figma) */}
-      <div className="bg-white/[0.09] p-3 backdrop-blur-sm">
+      <div className="relative bg-white/[0.09] p-3 backdrop-blur-sm">
+        {showStatus &&
+          (listing.status === "ACTIVE" ? (
+            <span
+              className="absolute left-2 top-2 z-10 inline-flex items-center rounded-md px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-[#171717]"
+              style={{ fontFamily: "var(--font-jersey)", backgroundImage: GOLD_GRADIENT }}
+            >
+              Listed
+            </span>
+          ) : (
+            <span
+              className="absolute left-2 top-2 z-10 inline-flex items-center rounded-md bg-white/10 px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-white backdrop-blur-sm"
+              style={{ fontFamily: "var(--font-jersey)" }}
+            >
+              In Vault
+            </span>
+          ))}
         <Img
           src={listing.image}
           alt={listing.name}

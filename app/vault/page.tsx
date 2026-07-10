@@ -110,7 +110,7 @@ export default function VaultPage() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {items.map((l) => (
               <div key={l.id} className="flex flex-col gap-2">
-                <MarketCard listing={l} currency="IDR" />
+                <MarketCard listing={l} currency="IDR" showStatus />
                 {l.nft?.assetAddress && (
                   <a
                     href={`https://explorer.solana.com/address/${l.nft.assetAddress}?cluster=devnet`}

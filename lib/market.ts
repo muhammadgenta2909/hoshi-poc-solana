@@ -124,6 +124,25 @@ export type NewListingInput = {
   priceHistory?: number[];
 };
 
+/** Payload for re-listing a card you already own (POST /marketplace/:id/relist). */
+export type RelistInput = {
+  /** New IDRX ask price (integer). */
+  price: number;
+  expectedValue?: number;
+  buyback?: number;
+};
+
+/**
+ * Payload for editing a live listing (PATCH /marketplace/:id). Every field is
+ * optional, but at least one must be present. Unlike RelistInput this does not
+ * re-open a closed listing — it only re-prices an ACTIVE one.
+ */
+export type UpdateListingInput = {
+  price?: number;
+  expectedValue?: number;
+  buyback?: number;
+};
+
 export type ListingNft = {
   id: string;
   assetAddress: string;

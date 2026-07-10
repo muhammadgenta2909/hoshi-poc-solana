@@ -9,6 +9,7 @@
 import {
   useEffect,
   useRef,
+  useState,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type InputHTMLAttributes,
@@ -18,6 +19,7 @@ import {
 import { createPortal } from "react-dom";
 import { PAGE_BG, ACCOUNT_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
+import { Img } from "@/components/packs/ui";
 
 export const GOLD = "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)";
 export const PANEL = "rounded-2xl border border-white/[0.07] bg-white/[0.03]";
@@ -61,58 +63,118 @@ export function AccountShell({
 
 /* ------------------------------ profile banner ---------------------------- */
 
-/** The identity banner (avatar + name + address + joined). Restrained: a dark
- *  panel with one soft warm sheen, NOT a solid colour wash like the reference. */
+/** The identity banner: a gold hero image with the avatar straddling its lower
+ *  edge, name + rename pencil on the left, wallet + copy on the right. */
 export function ProfileBanner({
   name,
   address,
   joined,
   onCopy,
+  onRename,
+  avatar = "/profile.png",
   right,
 }: {
   name: string;
   address: string | null;
   joined?: string;
   onCopy?: () => void;
+  /** Shows the pencil affordance next to the name when provided. */
+  onRename?: () => void;
+  avatar?: string;
   right?: ReactNode;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    if (!address) return;
+    onCopy?.();
+    if (await copyText(address)) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    }
+  };
+
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-white/[0.07] bg-[#161206] p-5 sm:p-6">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-24 -top-28 h-72 w-72 rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(245,182,52,0.20), transparent 68%)" }}
-      />
-      <div className="relative flex items-center gap-4 sm:gap-5">
-        <div
-          className="grid h-20 w-20 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-zinc-500 sm:h-24 sm:w-24"
-          style={{ boxShadow: "0 0 0 1px rgba(245,182,52,0.12)" }}
-        >
-          <UserIcon className="h-9 w-9" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-xl font-bold text-white sm:text-2xl">{name}</h1>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-zinc-400">
-            {address && (
-              <button
-                type="button"
-                onClick={onCopy}
-                title="Copy address"
-                className="inline-flex items-center gap-1.5 font-mono text-zinc-300 transition hover:text-yellow-300"
-              >
-                {shortAddr(address, 4, 4)}
-                <CopyIcon className="h-3.5 w-3.5" />
-              </button>
-            )}
+    <div>
+      {/* Hero. The art already carries Hoshi's gold, so no extra gradient here. */}
+      <div className="relative overflow-hidden rounded-3xl border border-white/[0.07]">
+        <Img
+          src="/banner-profile.png"
+          alt=""
+          aria-hidden
+          className="h-[112px] w-full object-cover object-center sm:h-[150px]"
+        />
+      </div>
+
+      {/* Avatar overlaps the banner, so pull the identity row up under it. */}
+      <div className="relative -mt-11 flex flex-col gap-4 px-1 sm:-mt-14 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
+        <div className="flex min-w-0 items-end gap-4">
+          <div className="relative shrink-0">
+            <Img
+              src={avatar}
+              alt=""
+              aria-hidden
+              className="h-[88px] w-[88px] rounded-full border-4 border-[#0a0907] bg-[#151105] object-cover sm:h-[112px] sm:w-[112px]"
+            />
+            <span
+              aria-hidden
+              className="absolute bottom-1 right-0 grid h-7 w-7 place-items-center rounded-full border-2 border-[#0a0907] sm:bottom-1.5"
+              style={{ backgroundImage: GOLD }}
+            >
+              <Img src="/icon-buy.png" alt="" className="h-3.5 w-3.5 object-contain" />
+            </span>
+          </div>
+
+          <div className="min-w-0 pb-1">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-[22px] font-bold text-white sm:text-[28px]">{name}</h1>
+              {onRename && (
+                <button
+                  type="button"
+                  onClick={onRename}
+                  aria-label="Edit display name"
+                  title="Edit display name"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg transition hover:bg-white/[0.08]"
+                >
+                  <Img src="/icon-pen.png" alt="" className="h-4 w-4 object-contain" />
+                </button>
+              )}
+              {joined && (
+                <span className="ml-1 hidden whitespace-nowrap text-[13px] text-zinc-500 sm:inline">
+                  Joined in {joined}
+                </span>
+              )}
+            </div>
             {joined && (
-              <>
-                <span className="text-zinc-600">·</span>
-                <span>Joined {joined}</span>
-              </>
+              <span className="text-[13px] text-zinc-500 sm:hidden">Joined in {joined}</span>
             )}
           </div>
         </div>
-        {right && <div className="shrink-0">{right}</div>}
+
+        <div className="flex shrink-0 items-center gap-3 pb-1">
+          {right}
+          {address && (
+            <button
+              type="button"
+              onClick={copy}
+              title="Copy address"
+              className="inline-flex items-center gap-2.5 font-mono text-[14px] text-zinc-200 transition hover:text-yellow-300"
+            >
+              {shortAddr(address, 6, 4)}
+              <span className="grid h-8 w-8 place-items-center rounded-lg border border-yellow-400/25 bg-yellow-400/10">
+                <Img src="/icon-copy-yellow.png" alt="" className="h-4 w-4 object-contain" />
+              </span>
+              <span
+                aria-live="polite"
+                className={`text-[12px] font-sans text-emerald-400 transition-opacity ${
+                  copied ? "opacity-100" : "opacity-0"
+                }`}
+              >
+                Copied
+              </span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -120,7 +182,8 @@ export function ProfileBanner({
 
 /* --------------------------------- tabs ----------------------------------- */
 
-/** Pill/underline tab row. Controlled: caller owns the active value. */
+/** Segmented tab row: equal-width pills, the active one ringed in gold.
+ *  Controlled — the caller owns the active value. */
 export function Tabs<T extends string>({
   tabs,
   active,
@@ -133,7 +196,7 @@ export function Tabs<T extends string>({
   className?: string;
 }) {
   return (
-    <div className={`no-scrollbar flex gap-2 overflow-x-auto ${className}`}>
+    <div className={`no-scrollbar flex gap-2.5 overflow-x-auto sm:gap-3 ${className}`}>
       {tabs.map((t) => {
         const on = t === active;
         return (
@@ -141,10 +204,11 @@ export function Tabs<T extends string>({
             key={t}
             type="button"
             onClick={() => onChange(t)}
-            className={`whitespace-nowrap rounded-xl px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wide transition ${
+            aria-pressed={on}
+            className={`min-w-[132px] flex-1 whitespace-nowrap rounded-xl px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.06em] transition sm:text-[13px] ${
               on
-                ? "bg-yellow-400/15 text-yellow-300 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.35)]"
-                : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                ? "bg-yellow-400/[0.07] text-yellow-300 shadow-[inset_0_0_0_2px_rgba(250,204,21,0.85)]"
+                : "bg-white/[0.03] text-zinc-400 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)] hover:bg-white/[0.06] hover:text-zinc-200"
             }`}
           >
             {t}
