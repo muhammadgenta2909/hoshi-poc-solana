@@ -49,37 +49,14 @@ export default function AccountMenu() {
   ];
 
   const { publicKey, disconnect } = useWallet();
-  const { connection } = useConnection();
   const { logout } = useAuth();
 
   const [open, setOpen] = useState(false);
-  const [sol, setSol] = useState<number | null>(null);
-  const [copied, setCopied] = useState(false);
   const ref = useOutsideClose(open, () => setOpen(false));
 
   const address = publicKey?.toBase58() ?? null;
 
-  // Live SOL balance (all setState in async callbacks — no sync-in-effect).
-  useEffect(() => {
-    if (!publicKey) return;
-    let alive = true;
-    connection
-      .getBalance(publicKey, "confirmed")
-      .then((l) => alive && setSol(l / LAMPORTS_PER_SOL))
-      .catch(() => alive && setSol(null));
-    return () => {
-      alive = false;
-    };
-  }, [publicKey, connection, open]);
-
   if (!address) return <WalletPill />;
-
-  const onCopy = async () => {
-    if (await copyText(address)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }
-  };
 
   const onLogout = () => {
     setOpen(false);
@@ -102,7 +79,11 @@ export default function AccountMenu() {
         >
           <UserIcon className="h-4 w-4" />
         </span>
-        <span className="hidden font-mono text-[13px] font-semibold text-zinc-100 sm:inline">
+        {/* Only from xl. The trigger shares the row with the balance pill and the
+            labelled cart pill, and on a 1024–1279 laptop those three plus the nav
+            links leave no room for it — the wordmark gets shoved ~110px off
+            centre. The full address is one click away inside the dropdown. */}
+        <span className="hidden font-mono text-[13px] font-semibold text-zinc-100 xl:inline">
           {shortAddr(address, 4, 4)}
         </span>
         <ChevronDownIcon className={`h-4 w-4 text-zinc-400 transition ${open ? "rotate-180" : ""}`} />
@@ -110,37 +91,8 @@ export default function AccountMenu() {
 
       {open && (
         <div className="absolute right-0 z-50 mt-2 w-[290px] overflow-hidden rounded-2xl border border-white/10 bg-[#141206] shadow-[0_24px_70px_-18px_rgba(0,0,0,0.85)]">
-          {/* identity + balances */}
           <div className="border-b border-white/[0.06] p-3">
-            <div className="flex items-center gap-3 rounded-xl bg-white/[0.03] p-3">
-              <span
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#171717]"
-                style={{ background: "linear-gradient(180deg,#FBB222,#FFF600)" }}
-              >
-                <UserIcon className="h-5 w-5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-[14px] font-semibold text-white">
-                  {shortAddr(address, 5, 4)}
-                </p>
-                <p className="text-[12px] text-zinc-500">Solana</p>
-              </div>
-              <button
-                type="button"
-                onClick={onCopy}
-                title="Copy address"
-                className="grid h-8 w-8 place-items-center rounded-lg text-zinc-400 transition hover:bg-white/10 hover:text-yellow-300"
-              >
-                <CopyIcon className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="mt-2 space-y-1 rounded-xl bg-white/[0.03] p-2.5">
-              <BalanceRow label="SOL" value={sol === null ? "…" : sol.toFixed(2)} dot="#9945FF" />
-              <BalanceRow label="USDC" value="0.00" dot="#2775CA" />
-              <BalanceRow label="ESCROW" value="0.00" dot="#7C5CFF" />
-            </div>
-            {copied && <p className="mt-2 text-center text-[11px] text-emerald-400">Address copied</p>}
+            <WalletIdentityPanel address={address} />
           </div>
 
           {/* primary nav */}
@@ -172,6 +124,74 @@ export default function AccountMenu() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Wallet identity + balances. Shared by the desktop dropdown and the mobile
+ *  drawer — below `lg` the dropdown is gone, so the drawer is the ONLY place a
+ *  phone user can read their balance or copy their address.
+ *
+ *  It only ever mounts while a menu is open, so mounting is the refetch: there's
+ *  no need to key the effect on an `open` flag. */
+export function WalletIdentityPanel({ address }: { address: string }) {
+  const { connection } = useConnection();
+  const { publicKey } = useWallet();
+  const [sol, setSol] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // All setState in async callbacks — no sync-in-effect.
+  useEffect(() => {
+    if (!publicKey) return;
+    let alive = true;
+    connection
+      .getBalance(publicKey, "confirmed")
+      .then((l) => alive && setSol(l / LAMPORTS_PER_SOL))
+      .catch(() => alive && setSol(null));
+    return () => {
+      alive = false;
+    };
+  }, [publicKey, connection]);
+
+  const onCopy = async () => {
+    if (await copyText(address)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center gap-3 rounded-xl bg-white/[0.03] p-3">
+        <span
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#171717]"
+          style={{ background: "linear-gradient(180deg,#FBB222,#FFF600)" }}
+        >
+          <UserIcon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-[14px] font-semibold text-white">
+            {shortAddr(address, 5, 4)}
+          </p>
+          <p className="text-[12px] text-zinc-500">Solana</p>
+        </div>
+        <button
+          type="button"
+          onClick={onCopy}
+          title="Copy address"
+          aria-label="Copy address"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-400 transition hover:bg-white/10 hover:text-yellow-300"
+        >
+          <CopyIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mt-2 space-y-1 rounded-xl bg-white/[0.03] p-2.5">
+        <BalanceRow label="SOL" value={sol === null ? "…" : sol.toFixed(2)} dot="#9945FF" />
+        <BalanceRow label="USDC" value="0.00" dot="#2775CA" />
+        <BalanceRow label="ESCROW" value="0.00" dot="#7C5CFF" />
+      </div>
+      {copied && <p className="mt-2 text-center text-[11px] text-emerald-400">Address copied</p>}
+    </>
   );
 }
 

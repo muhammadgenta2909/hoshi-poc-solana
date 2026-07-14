@@ -30,6 +30,14 @@ import {
 const TABS = ["MAIN INFO", "ACCOUNT BALANCE", "ACTIVITY"] as const;
 type Tab = (typeof TABS)[number];
 
+// The rail reads in the designer's sentence case; the VALUES stay uppercase so
+// every `tab === "MAIN INFO"` branch below is untouched (mirrors the profile).
+const TAB_LABELS: Record<Tab, string> = {
+  "MAIN INFO": "Main Info",
+  "ACCOUNT BALANCE": "Account Balance",
+  ACTIVITY: "Activity",
+};
+
 const COUNTRIES = [
   "Indonesia",
   "United States of America",
@@ -149,10 +157,27 @@ export default function SettingsPage() {
 
   return (
     <AccountShell active="Vault">
-      <ProfileBanner name="Unnamed" address={address} joined="2026" onCopy={onCopy} />
+      {/* Rail on the left, banner on the right — mirrors the profile page. Below
+          `md` there is no room for the 168px rail beside the banner, so the tabs
+          fall back to the scrolling strip underneath it. */}
+      <div className="flex gap-5">
+        <Tabs
+          vertical
+          jersey
+          className="hidden md:flex"
+          tabs={TABS}
+          labels={TAB_LABELS}
+          active={tab}
+          onChange={setTab}
+        />
 
-      <div className="mt-5">
-        <Tabs tabs={TABS} active={tab} onChange={setTab} />
+        <div className="min-w-0 flex-1">
+          <ProfileBanner name="Unnamed" address={address} joined="2026" onCopy={onCopy} />
+        </div>
+      </div>
+
+      <div className="mt-6 md:hidden">
+        <Tabs jersey tabs={TABS} labels={TAB_LABELS} active={tab} onChange={setTab} />
       </div>
 
       <div className="mt-5">

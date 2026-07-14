@@ -63,14 +63,18 @@ export function AccountShell({
 
 /* ------------------------------ profile banner ---------------------------- */
 
-/** The identity banner: a gold hero image with the avatar straddling its lower
- *  edge, name + rename pencil on the left, wallet + copy on the right. */
+/** The identity banner: the "Your Favorite Card" hero with the avatar straddling
+ *  its lower edge, name + rename pencil on the left, wallet + copy on the right.
+ *  Pass `onRefresh` to hang the gold refresh badge off the avatar. */
 export function ProfileBanner({
   name,
   address,
   joined,
   onCopy,
   onRename,
+  onRefresh,
+  refreshing = false,
+  onEditFavorites,
   avatar = "/profile.png",
   right,
 }: {
@@ -80,6 +84,14 @@ export function ProfileBanner({
   onCopy?: () => void;
   /** Shows the pencil affordance next to the name when provided. */
   onRename?: () => void;
+  /** Shows the refresh badge on the avatar when provided. Reloads the page data. */
+  onRefresh?: () => void;
+  /** Spins the badge and blocks re-entry while a reload is in flight. */
+  refreshing?: boolean;
+  /** Handler for the banner's corner pencil ("Your Favorite Card"). The button is
+   *  part of the artwork, so it renders either way — but with nothing wired to it
+   *  it stays disabled rather than pretending to work. */
+  onEditFavorites?: () => void;
   avatar?: string;
   right?: ReactNode;
 }) {
@@ -95,34 +107,73 @@ export function ProfileBanner({
   };
 
   return (
-    <div>
-      {/* Hero. The art already carries Hoshi's gold, so no extra gradient here. */}
-      <div className="relative overflow-hidden rounded-3xl border border-white/[0.07]">
-        <Img
-          src="/banner-profile.png"
-          alt=""
-          aria-hidden
-          className="h-[112px] w-full object-cover object-center sm:h-[150px]"
-        />
-      </div>
+    <div className="relative">
+      {/* Hero. The art is a composed panel (speech bubble + favourite-card shelf)
+          that already carries its OWN rounded gold frame, so it gets no border and
+          no rounded clip of ours — a second, differently-radiused edge around it
+          reads as a stray outline. It renders at its own 1027:217 ratio rather than
+          being cropped; width/height keep the box reserved before it decodes. */}
+      <Img
+        src="/banner-profile-main.png"
+        alt=""
+        aria-hidden
+        width={1027}
+        height={217}
+        className="block h-auto w-full"
+      />
 
-      {/* Avatar overlaps the banner, so pull the identity row up under it. */}
-      <div className="relative -mt-11 flex flex-col gap-4 px-1 sm:-mt-14 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
-        <div className="flex min-w-0 items-end gap-4">
+      {/* Corner button, tucked flush into the banner's top-right with no inset. The
+          asset is already the gold disc, so it needs no wrapper fill.
+          right-[1.17%], not right-0: the artwork stops at x=1014 of the 1027px PNG,
+          so the file carries ~12px of transparent slop down its right edge. Pinning
+          to the BOX corner would hang the disc off the gold frame; 12/1027 lands it
+          on the ART corner. Top needs no such nudge — the art starts at y=0. */}
+      <button
+        type="button"
+        onClick={onEditFavorites}
+        disabled={!onEditFavorites}
+        aria-label={
+          onEditFavorites ? "Edit your favourite cards" : "Editing favourite cards is coming soon"
+        }
+        title={
+          onEditFavorites ? "Edit your favourite cards" : "Editing favourite cards is coming soon"
+        }
+        className="absolute right-[1.17%] top-0 h-7 w-7 rounded-full transition enabled:hover:brightness-110 disabled:cursor-not-allowed sm:h-8 sm:w-8"
+      >
+        <Img src="/icon-list.png" alt="" className="h-full w-full object-contain" />
+      </button>
+
+      {/* Avatar overlaps the banner, so pull the identity row up under it. The
+          banner is now fluid (it tracks the 1027:217 ratio), so on a phone it is
+          only ~75px tall — a fixed 112px avatar would sit ON TOP of the whole
+          composition and bury the speech bubble. Both the avatar and the pull-up
+          scale with it. */}
+      <div className="relative -mt-8 flex flex-col gap-4 px-1 sm:-mt-14 sm:flex-row sm:items-end sm:justify-between sm:gap-5">
+        <div className="flex min-w-0 items-end gap-3 sm:gap-4">
           <div className="relative shrink-0">
             <Img
               src={avatar}
               alt=""
               aria-hidden
-              className="h-[88px] w-[88px] rounded-full border-4 border-[#0a0907] bg-[#151105] object-cover sm:h-[112px] sm:w-[112px]"
+              className="h-16 w-16 rounded-full border-4 border-[#0a0907] bg-[#151105] object-cover sm:h-[112px] sm:w-[112px]"
             />
-            <span
-              aria-hidden
-              className="absolute bottom-1 right-0 grid h-7 w-7 place-items-center rounded-full border-2 border-[#0a0907] sm:bottom-1.5"
-              style={{ backgroundImage: GOLD }}
-            >
-              <Img src="/icon-buy.png" alt="" className="h-3.5 w-3.5 object-contain" />
-            </span>
+            {/* The asset already carries the gold disc, so it needs no wrapper. */}
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={refreshing}
+                aria-label="Refresh profile"
+                title="Refresh profile"
+                className="absolute -left-1 bottom-0 h-6 w-6 rounded-full transition hover:brightness-110 disabled:cursor-wait sm:bottom-1.5 sm:h-8 sm:w-8"
+              >
+                <Img
+                  src="/icon-refresh-yellow.png"
+                  alt=""
+                  className={`h-full w-full object-contain ${refreshing ? "motion-safe:animate-spin" : ""}`}
+                />
+              </button>
+            )}
           </div>
 
           <div className="min-w-0 pb-1">
@@ -182,21 +233,40 @@ export function ProfileBanner({
 
 /* --------------------------------- tabs ----------------------------------- */
 
-/** Segmented tab row: equal-width pills, the active one ringed in gold.
- *  Controlled — the caller owns the active value. */
+/** Segmented tabs, the active one ringed in gold. Controlled — the caller owns
+ *  the active value.
+ *
+ *  `vertical` turns the row into the profile's left-hand rail, which is a column
+ *  of full-width pills beside the banner rather than a strip beneath it.
+ *  `labels` lets a caller show design copy ("Active Listings") while the tab
+ *  VALUES stay the loud uppercase keys the pages switch on. */
 export function Tabs<T extends string>({
   tabs,
   active,
   onChange,
   className = "",
+  vertical = false,
+  jersey = false,
+  labels,
 }: {
   tabs: readonly T[];
   active: T;
   onChange: (t: T) => void;
   className?: string;
+  vertical?: boolean;
+  /** Pixel display face. Orthogonal to `vertical` on purpose: the profile wants it
+   *  on BOTH its rail and its phone strip, while Settings' tabs stay sans. */
+  jersey?: boolean;
+  labels?: Partial<Record<T, string>>;
 }) {
   return (
-    <div className={`no-scrollbar flex gap-2.5 overflow-x-auto sm:gap-3 ${className}`}>
+    <div
+      className={
+        vertical
+          ? `flex w-[168px] shrink-0 flex-col gap-2.5 ${className}`
+          : `no-scrollbar flex gap-2.5 overflow-x-auto sm:gap-3 ${className}`
+      }
+    >
       {tabs.map((t) => {
         const on = t === active;
         return (
@@ -205,13 +275,23 @@ export function Tabs<T extends string>({
             type="button"
             onClick={() => onChange(t)}
             aria-pressed={on}
-            className={`min-w-[132px] flex-1 whitespace-nowrap rounded-xl px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.06em] transition sm:text-[13px] ${
+            style={jersey ? { fontFamily: "var(--font-jersey)" } : undefined}
+            className={`whitespace-nowrap rounded-xl px-4 transition ${
+              vertical ? "w-full py-2.5" : "min-w-[132px] flex-1 py-3"
+            } ${
+              // Jersey 10 is a tall, narrow pixel face — at the 12/13px the sans
+              // labels use it reads as a smudge, so it steps the size up and drops
+              // the uppercase tracking, which it does not need.
+              jersey
+                ? "text-[19px] leading-none tracking-wide"
+                : "text-[12px] font-semibold uppercase tracking-[0.06em] sm:text-[13px]"
+            } ${
               on
                 ? "bg-yellow-400/[0.07] text-yellow-300 shadow-[inset_0_0_0_2px_rgba(250,204,21,0.85)]"
                 : "bg-white/[0.03] text-zinc-400 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)] hover:bg-white/[0.06] hover:text-zinc-200"
             }`}
           >
-            {t}
+            {labels?.[t] ?? t}
           </button>
         );
       })}

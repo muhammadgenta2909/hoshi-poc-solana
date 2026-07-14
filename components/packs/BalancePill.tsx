@@ -34,7 +34,16 @@ function format(balance: number): string {
   return UNIT === "SOL" ? balance.toFixed(3) : formatIdr(Math.round(balance));
 }
 
-export default function BalancePill() {
+/** `className` carries the layout (and therefore the visibility): the top bar
+ *  shows it from `lg` up, while below that the drawer renders it full-width —
+ *  the bar has no room for it next to the labelled cart pill without shoving the
+ *  centred logo aside. `shrink-0` is load-bearing: without it flexbox squeezes
+ *  the pill under its own content and the refresh icon spills past the border. */
+export default function BalancePill({
+  className = "hidden shrink-0 sm:inline-flex",
+}: {
+  className?: string;
+}) {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
   const [balance, setBalance] = useState<number | null>(null);
@@ -68,7 +77,7 @@ export default function BalancePill() {
       onClick={() => setRefresh((n) => n + 1)}
       disabled={!publicKey}
       title={publicKey ? "Refresh balance" : "Connect a wallet to see your balance"}
-      className="hidden items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-[15px] font-semibold text-zinc-100 transition hover:bg-white/10 disabled:opacity-60 sm:inline-flex"
+      className={`items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-[15px] font-semibold text-zinc-100 transition hover:bg-white/10 disabled:opacity-60 ${className}`}
     >
       <Img src="/idrx.png" alt="" className="h-5 w-5" />
       {value !== null && <span className="tabular-nums">{value}</span>}

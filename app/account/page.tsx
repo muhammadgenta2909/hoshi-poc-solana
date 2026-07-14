@@ -59,6 +59,16 @@ import {
 const TABS = ["ASSETS", "ACTIVITY", "ACTIVE LISTINGS", "OFFERS MADE", "OFFERS RECEIVED"] as const;
 type Tab = (typeof TABS)[number];
 
+// The rail reads in the designer's sentence case; the VALUES stay uppercase so
+// every `tab === "ASSETS"` branch below is untouched.
+const TAB_LABELS: Record<Tab, string> = {
+  ASSETS: "Assets",
+  ACTIVITY: "Activity",
+  "ACTIVE LISTINGS": "Active Listings",
+  "OFFERS MADE": "Offers Made",
+  "OFFERS RECEIVED": "Offers Received",
+};
+
 type SortKey = "newest" | "oldest";
 
 // Typed explicitly so <Select> infers T = SortKey (a bare `as const` widens to string).
@@ -83,13 +93,23 @@ export default function ProfilePage() {
   const [offersMade, setOffersMade] = useState<OfferRecord[]>([]);
   const [offersReceived, setOffersReceived] = useState<OfferRecord[]>([]);
 
-  // `loading` is derived, not set inside the fetch effect — writing state
-  // synchronously from an effect body triggers a cascading re-render.
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // Both flags are DERIVED, never set inside the fetch effect — writing state
+  // synchronously from an effect body triggers a cascading re-render. `loaded`
+  // records which (token, reloadKey) pair the data on screen belongs to, so a
+  // fetch is in flight exactly while it disagrees with the current pair. Deriving
+  // it this way also means logging out mid-refresh can't strand the spinner:
+  // token goes null, `pending` goes false, and the badge stops on its own.
+  const [loaded, setLoaded] = useState<{ token: string; key: number } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const loading = !!token && loadedFor !== token;
+
+  const stale = loaded === null || loaded.token !== token;
+  const pending = !!token && (stale || loaded.key !== reloadKey);
+  /** First pull for this token — nothing on screen yet, so the tabs show skeletons. */
+  const loading = !!token && stale;
+  /** A re-pull of data that is already on screen — spins the banner badge only. */
+  const refreshing = pending && !loading;
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("newest");
@@ -106,9 +126,9 @@ export default function ProfilePage() {
 
   const address = publicKey?.toBase58() ?? null;
 
-  /** Bumped after every mutation. The fetch effect owns loading, so an action on
-   *  one tab refreshes the others it affects — accepting an offer closes a
-   *  listing AND writes an activity row. */
+  /** Bumped by the banner's refresh badge AND after every mutation. The fetch
+   *  effect owns loading, so an action on one tab refreshes the others it affects
+   *  — accepting an offer closes a listing AND writes an activity row. */
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
 
   // Everything the profile needs, in one pass, so tab switches are instant.
@@ -136,13 +156,15 @@ export default function ProfilePage() {
         setError(err instanceof Error ? err.message : "Failed to load your profile.");
       })
       .finally(() => {
-        if (alive) setLoadedFor(token);
+        if (alive) setLoaded({ token, key: reloadKey });
       });
     return () => {
       alive = false;
     };
   }, [token, reloadKey]);
 
+  // Keyed on reloadKey too, so the badge's refresh re-pulls the name/join date
+  // alongside the tables rather than leaving a stale header behind.
   useEffect(() => {
     if (!token) return;
     let alive = true;
@@ -158,7 +180,7 @@ export default function ProfilePage() {
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [token, reloadKey]);
 
   // Filters are per-tab views of the same data. Reset paging from the handler
   // that changed them — an effect would setState during render commit.
@@ -467,15 +489,35 @@ export default function ProfilePage() {
 
   return (
     <AccountShell active="Vault">
-      <ProfileBanner
-        name={bannerName}
-        address={address}
-        joined={joined ?? undefined}
-        onRename={isAuthed ? () => setRenaming(true) : undefined}
-      />
+      {/* Rail on the left, banner + identity on the right — the filter row and the
+          tab body below both span the full width. Below `md` there is no room for
+          a 168px rail beside the banner, so the tabs fall back to the scrolling
+          strip under it. */}
+      <div className="flex gap-5">
+        <Tabs
+          vertical
+          jersey
+          className="hidden md:flex"
+          tabs={TABS}
+          labels={TAB_LABELS}
+          active={tab}
+          onChange={onFilter(setTab)}
+        />
 
-      <div className="mt-6">
-        <Tabs tabs={TABS} active={tab} onChange={onFilter(setTab)} />
+        <div className="min-w-0 flex-1">
+          <ProfileBanner
+            name={bannerName}
+            address={address}
+            joined={joined ?? undefined}
+            onRename={isAuthed ? () => setRenaming(true) : undefined}
+            onRefresh={isAuthed ? refresh : undefined}
+            refreshing={refreshing}
+          />
+        </div>
+      </div>
+
+      <div className="mt-6 md:hidden">
+        <Tabs jersey tabs={TABS} labels={TAB_LABELS} active={tab} onChange={onFilter(setTab)} />
       </div>
 
       {error && (
