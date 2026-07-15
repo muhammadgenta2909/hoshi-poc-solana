@@ -5,6 +5,7 @@
 import type { Listing, NewListingInput, RelistInput, UpdateListingInput } from "./market";
 import type { CardDetail } from "./cardDetail";
 import type { ActivityQuery, ActivityRecord, OfferRecord } from "./offers";
+import type { GachaMachine, GachaPull } from "./gacha";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -179,6 +180,22 @@ export const updateProfile = (displayName: string, token: string) =>
     method: "PATCH",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify({ displayName }),
+  });
+
+/* ---------------- gacha (Collector Crypt machines) ---------------- */
+
+/** All gacha machines, normalized. Public — no auth. */
+export const getGachaMachines = () => api<GachaMachine[]>("/gacha/machines");
+
+/** Pull a pack: a real treasury purchase. ADMIN JWT only — the recipient wallet
+ *  is derived from the token server-side, so the client never sends an address
+ *  (body is just { packType }). One call runs generate → treasury sign → submit
+ *  → open, so it can take ~15-30s; non-admin callers get HTTP 403. */
+export const purchaseGachaPack = (packType: string, token: string) =>
+  api<GachaPull>("/gacha/purchase", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ packType }),
   });
 
 /* ---------------- auth (wallet login) ---------------- */

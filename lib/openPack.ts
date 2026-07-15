@@ -47,6 +47,20 @@ export type OpenResult = {
   rarity: Tier;
   card: { name: string; rarity: Tier; imageUrl: string; valueIdr: number };
   buybackQuoteIdr: number;
+  /**
+   * Present only for a REAL gacha pull (POST /gacha/purchase); the synthetic
+   * openPackLocal path leaves it undefined. `rarity`/`card.rarity` above carry
+   * the nearest Hoshi Tier for the badge color + icon, while `real.rarityLabel`
+   * is the exact Collector Crypt tier to display. See lib/gacha pullToOpenResult.
+   */
+  real?: {
+    rarityLabel: string;
+    nftAddress: string | null;
+    explorerUrl: string;
+    priceUsdc: number | null;
+    wallet?: string;
+    sent?: boolean;
+  };
 };
 
 /** Weighted rarity draw from a pack's drop rates. */
