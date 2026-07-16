@@ -11,3 +11,8 @@ agent
 skills-lock.json
 note.txt
 docs
+
+# Solana keypairs — the app reads the key from the PLATFORM_SECRET_KEY env var
+# (lib/umi.ts), so these files must never be uploaded to Vercel.
+platform.json
+platform-prev-keypair.json
