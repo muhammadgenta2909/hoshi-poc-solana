@@ -24,10 +24,11 @@ import {
 
 // Admin is intentionally NOT a nav entry: /admin is staff-only and reached by
 // direct URL, gated by app/admin/layout.tsx. Nav is the user-facing surface.
-type NavLabel = "Open Packs" | "Marketplace" | "Vault";
+type NavLabel = "Games" | "Marketplace" | "Vault";
 
 const NAV: { label: NavLabel; href: string; icon?: string }[] = [
-  { label: "Open Packs", href: "/open-packs", icon: "/nav-icon.png" },
+  // "Games" membuka halaman pilihan (/games): Open Packs & Open Bid Crack.
+  { label: "Games", href: "/games", icon: "/nav-icon.png" },
   { label: "Marketplace", href: "/marketplace" },
   { label: "Vault", href: "/vault" },
 ];

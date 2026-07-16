@@ -185,7 +185,7 @@ export default function OpenPacksPage() {
         fontFamily: "var(--font-outfit), system-ui, sans-serif",
       }}
     >
-      <TopNav active="Open Packs" />
+      <TopNav active="Games" />
       <LiveTicker cards={LIVE_CARDS} />
 
       {/* Full-bleed grid: the side panels (bg #181507) run flush to the left and

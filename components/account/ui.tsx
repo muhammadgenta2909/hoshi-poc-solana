@@ -40,7 +40,7 @@ export function AccountShell({
   calm = true,
 }: {
   children: ReactNode;
-  active?: "Open Packs" | "Marketplace" | "Vault";
+  active?: "Games" | "Marketplace" | "Vault";
   wide?: boolean;
   /** calm = restrained ACCOUNT_BG (default). Set false to match marketplace glow. */
   calm?: boolean;
