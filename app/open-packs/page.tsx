@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { LIVE_CARDS, type Pack } from "@/lib/packs";
+import { type LiveCard, type Pack } from "@/lib/packs";
 import type { OpenResult } from "@/lib/openPack";
 import { PAGE_BG } from "@/lib/theme";
-import { ApiError, getGachaMachines, purchaseGachaPack } from "@/lib/api";
+import { ApiError, getGachaMachines, getGachaWinners, purchaseGachaPack } from "@/lib/api";
 import {
   isMachineAvailable,
   machineToPack,
   pullToOpenResult,
+  winnersToLiveCards,
   type GachaMachine,
 } from "@/lib/gacha";
 import { useAuth } from "@/lib/useAuth";
@@ -43,6 +44,12 @@ export default function OpenPacksPage() {
   // Action feedback (prompts / backend errors) surfaced under the showcase.
   const [openMsg, setOpenMsg] = useState<string | null>(null);
 
+  // Live "Card Won" ticker feed — REAL recent winners only. Starts empty (the
+  // ticker shows a subtle "loading" line, not fabricated wins): seeding it with
+  // the mock LIVE_CARDS would show made-up cards with fake IDRX prices under the
+  // "Live Card Won" banner. Real winners land within a second or two.
+  const [liveCards, setLiveCards] = useState<LiveCard[]>([]);
+
   // Fetch the real CC machines once on mount, then default-select the first
   // AVAILABLE one (pokemon_250 on devnet). Public endpoint — no auth needed.
   useEffect(() => {
@@ -66,6 +73,29 @@ export default function OpenPacksPage() {
       });
     return () => {
       alive = false;
+    };
+  }, []);
+
+  // Feed the ticker with REAL recent winners: load on mount, then refresh every
+  // ~25s. On any failure OR an empty response, keep the current cards so a loaded
+  // marquee is never blanked mid-session (it just isn't replaced by nothing).
+  useEffect(() => {
+    let alive = true;
+    const loadWinners = () => {
+      getGachaWinners()
+        .then((ws) => {
+          if (!alive || ws.length === 0) return;
+          setLiveCards(winnersToLiveCards(ws));
+        })
+        .catch(() => {
+          /* keep previous cards — never empty the ticker on a fetch error */
+        });
+    };
+    loadWinners();
+    const id = setInterval(loadWinners, 25_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
     };
   }, []);
 
@@ -186,7 +216,7 @@ export default function OpenPacksPage() {
       }}
     >
       <TopNav active="Games" />
-      <LiveTicker cards={LIVE_CARDS} />
+      <LiveTicker cards={liveCards} />
 
       {/* Full-bleed grid: the side panels (bg #181507) run flush to the left and
           right viewport edges, per the Figma; only the center column is padded. */}

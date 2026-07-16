@@ -118,6 +118,10 @@ export type LiveCard = {
   set: string;
   price: number;
   accent: string;
+  /** Real card image URL (winner feed). When set, the ticker shows it instead of the local placeholder art. */
+  imageUrl?: string;
+  /** e.g. "won by 4Th3…VtyT" — replaces set + price for authentic winner data (no synthetic IDRX value). */
+  subtitle?: string;
 };
 
 export const LIVE_CARDS: LiveCard[] = [

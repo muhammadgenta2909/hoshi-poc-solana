@@ -5,7 +5,7 @@
 import type { Listing, NewListingInput, RelistInput, UpdateListingInput } from "./market";
 import type { CardDetail } from "./cardDetail";
 import type { ActivityQuery, ActivityRecord, OfferRecord } from "./offers";
-import type { GachaMachine, GachaPull } from "./gacha";
+import type { GachaMachine, GachaPull, GachaWinner } from "./gacha";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -197,6 +197,10 @@ export const purchaseGachaPack = (packType: string, token: string) =>
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify({ packType }),
   });
+
+/** Recent winners across machines for the live "card won" ticker. Public — no auth.
+ *  Real card identity only (name + image + winner + tier); no synthetic price. */
+export const getGachaWinners = () => api<GachaWinner[]>("/gacha/winners");
 
 /* ---------------- auth (wallet login) ---------------- */
 

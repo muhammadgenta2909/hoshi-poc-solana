@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LiveCard } from "@/lib/packs";
-import { GradientText, Idrx, Img } from "./ui";
+import { GradientText, Img } from "./ui";
 
 // Real card art cycled across the ticker items (the dummy data has 6 cards).
 const CARD_IMAGES = ["/card1.png", "/card2.png", "/card3.png"];
@@ -29,6 +29,9 @@ export default function LiveTicker({ cards }: { cards: LiveCard[] }) {
     const el = viewportRef.current;
     if (!el) return;
     const measure = () => {
+      // No cards yet → setWidth is 0; dividing by it yields Infinity and crashes
+      // Array.from({length}). The empty state renders separately, so just bail.
+      if (setWidth === 0) return;
       // Even count so -50% always lands on a whole-set boundary (seamless loop).
       const needed = Math.max(2, 2 * Math.ceil(el.clientWidth / setWidth));
       setCopies((prev) => (prev === needed ? prev : needed));
@@ -58,11 +61,21 @@ export default function LiveTicker({ cards }: { cards: LiveCard[] }) {
         </div>
       </div>
 
+      {/* Before the first real winners load (and if the feed is momentarily empty),
+          show a quiet loading line instead of fabricated cards. Real wins arrive in
+          a second or two. */}
+      {cards.length === 0 && (
+        <div className="mx-auto max-w-[1400px] px-4 py-3 sm:px-6">
+          <p className="text-[11px] text-zinc-500">Memuat kemenangan terbaru…</p>
+        </div>
+      )}
+
       {/* Full-bleed: the ticker runs flush to both viewport edges at every width
           (no max-width container). A soft edge mask fades cards in/out instead of
           hard-clipping them right at the screen border. */}
       <div
         ref={viewportRef}
+        hidden={cards.length === 0}
         className="marquee-pause w-full overflow-hidden py-3"
         style={{
           WebkitMaskImage:
@@ -89,17 +102,23 @@ export default function LiveTicker({ cards }: { cards: LiveCard[] }) {
                 borderBottom: "1px solid rgba(255,255,255,0.06)",
               }}
             >
+              {/* Real winner art (external arweave/cdn URL) when present, else the
+                  local placeholder art cycled by id. Plain <Img> keeps object-cover
+                  and skips next/image's remote-host allowlist for external URLs. */}
               <Img
-                src={CARD_IMAGES[(c.id - 1) % CARD_IMAGES.length]}
+                src={c.imageUrl ?? CARD_IMAGES[(c.id - 1) % CARD_IMAGES.length]}
                 alt={c.name}
                 className="h-14 w-10 shrink-0 rounded object-cover"
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-semibold text-zinc-100">{c.name}</p>
-                <div className="mt-0.5 flex items-center justify-between gap-2">
-                  <p className="text-[10px] text-zinc-500">{c.set}</p>
-                  <Idrx amount={c.price} size={12} className="shrink-0 text-[11px] text-zinc-200" />
-                </div>
+                {/* Real winners carry a "won by <wallet>" subtitle. We NEVER show a
+                    fabricated IDRX value here — getRecentWinners has no guaranteed price,
+                    so a made-up number under "Live Card Won" would be dishonest. Any card
+                    without a subtitle falls back to its plain label only. */}
+                <p className="mt-0.5 truncate text-[10px] text-zinc-500">
+                  {c.subtitle ?? c.set}
+                </p>
               </div>
             </div>
           ))}

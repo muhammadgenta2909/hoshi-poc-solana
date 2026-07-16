@@ -5,7 +5,7 @@
 // into the existing Open Packs shapes (lib/packs Pack, lib/openPack OpenResult)
 // so the existing panels + reveal render real data with no component rewrites.
 
-import type { DropRate, Pack, Tier } from "./packs";
+import type { DropRate, LiveCard, Pack, Tier } from "./packs";
 import { TIER_COLOR } from "./packs";
 import type { OpenResult } from "./openPack";
 
@@ -197,4 +197,47 @@ export function pullToOpenResult(pull: GachaPull, fallbackPackId: string): OpenR
       sent: pull.status === "OPENED",
     },
   };
+}
+
+/* ---------------- recent winners (live "card won" ticker) ---------------- */
+
+/**
+ * A real recent winner from GET /gacha/winners. The backend flattens each
+ * getRecentWinners entry to just what the ticker needs: the card's identity
+ * (name + image, resolved server-side from nft.content) plus who won it and the
+ * prize tier. There is NO guaranteed USD value in the source payload, so none is
+ * carried here — the ticker shows the winner + card only, never a fake price.
+ */
+export interface GachaWinner {
+  nftAddress: string;
+  name: string;
+  image: string;
+  winner: string;
+  tier: number;
+}
+
+/** Truncate a wallet to `4 depan…4 belakang`, e.g. 4Th3Ej…VtyT → 4Th3…VtyT. */
+const shortWallet = (wallet: string): string =>
+  wallet.length > 8 ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : wallet;
+
+/** Neutral gradient for winner cards — real cards carry their own art (imageUrl),
+ *  so the accent is only a fallback backdrop and stays brand-neutral. */
+const WINNER_ACCENT = "linear-gradient(160deg,#334155,#0f172a)";
+
+/**
+ * Map real recent winners into the LiveCard shape the marquee ticker consumes.
+ * `imageUrl` carries the real card art and `subtitle` the "won by <wallet>" line;
+ * `set` is blank and `price` is 0 because winner payloads have no guaranteed value
+ * (LiveTicker must prefer `subtitle` over set + price when it is present).
+ */
+export function winnersToLiveCards(ws: GachaWinner[]): LiveCard[] {
+  return ws.map((w, i) => ({
+    id: i + 1,
+    name: w.name,
+    set: "",
+    price: 0,
+    accent: WINNER_ACCENT,
+    imageUrl: w.image,
+    subtitle: `won by ${shortWallet(w.winner)}`,
+  }));
 }
