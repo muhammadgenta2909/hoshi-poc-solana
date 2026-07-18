@@ -10,12 +10,24 @@ import type { GachaMachine, GachaPull, GachaWinner } from "./gacha";
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
-/** Fetch JSON with a clean backend error message (Nest returns {message}). */
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  });
+/** Fetch JSON with a clean backend error message (Nest returns {message}).
+ *  `timeoutMs` aborts the request — use it on latency-critical calls (login)
+ *  so a cold backend surfaces a retryable error instead of an endless spinner.
+ *  Do NOT put it on known-slow calls (gacha purchase runs ~15-30s). */
+async function api<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const { timeoutMs, ...rest } = init ?? {};
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...rest,
+      headers: { "content-type": "application/json", ...(rest.headers ?? {}) },
+      signal: timeoutMs != null ? AbortSignal.timeout(timeoutMs) : rest.signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError")
+      throw new ApiError("The server is waking up — please try again in a few seconds.", 408);
+    throw e;
+  }
   if (!res.ok) {
     let msg: string = `HTTP ${res.status}`;
     try {
@@ -38,6 +50,17 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** Fire-and-forget ping so the free-tier backend is awake BEFORE the login
+ *  nonce/verify calls need it (a cold start takes ~30s+). Called on app load
+ *  and when the connect modal opens; throttled so repeat opens don't spam. */
+let lastWarmAt = 0;
+export function warmBackend() {
+  const now = Date.now();
+  if (now - lastWarmAt < 120_000) return;
+  lastWarmAt = now;
+  void fetch(`${API_BASE}/health`, { cache: "no-store" }).catch(() => {});
 }
 
 /* ---------------- marketplace ---------------- */
@@ -166,6 +189,12 @@ export type Profile = {
   id: string;
   walletAddress: string;
   displayName: string | null;
+  email: string | null;
+  bio: string | null;
+  twitter: string | null;
+  website: string | null;
+  phoneCountryCode: string | null;
+  phoneNumber: string | null;
   createdAt: string;
 };
 
@@ -174,12 +203,78 @@ export const getProfile = (token: string) =>
     headers: { authorization: `Bearer ${token}` },
   });
 
-/** Rename yourself (the pencil next to the profile name). */
-export const updateProfile = (displayName: string, token: string) =>
+/** Any subset of the editable profile fields. For bio/twitter/website/phone an
+ *  empty string CLEARS the field (stored as null); displayName is MANDATORY
+ *  server-side (1–32 chars) and must never be sent empty. Omitted keys are left
+ *  untouched. */
+export type UpdateProfileInput = Partial<{
+  displayName: string;
+  bio: string;
+  twitter: string;
+  website: string;
+  phoneCountryCode: string;
+  phoneNumber: string;
+}>;
+
+/** Update your own profile (rename pencil sends { displayName } alone; the
+ *  Settings form sends the whole editable set). */
+export const updateProfile = (input: UpdateProfileInput, token: string) =>
   api<Profile>("/users/me", {
     method: "PATCH",
     headers: { authorization: `Bearer ${token}` },
-    body: JSON.stringify({ displayName }),
+    body: JSON.stringify(input),
+  });
+
+/* ---------------- shipping addresses ---------------- */
+
+export type ShippingAddress = {
+  id: string;
+  fullName: string;
+  country: string;
+  street: string;
+  apt: string | null;
+  state: string | null;
+  city: string;
+  phoneCountryCode: string | null;
+  phoneNumber: string | null;
+  zip: string;
+  isDefault: boolean;
+  createdAt: string;
+};
+
+export type NewAddressInput = {
+  fullName: string;
+  country: string;
+  street: string;
+  apt?: string;
+  state?: string;
+  city: string;
+  phoneCountryCode?: string;
+  phoneNumber?: string;
+  zip: string;
+  isDefault?: boolean;
+};
+
+/** The caller's saved shipping addresses (GET /users/me/addresses). */
+export const getMyAddresses = (token: string) =>
+  api<ShippingAddress[]>("/users/me/addresses", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/** Save a new shipping address. The server enforces the max (5) and keeps a
+ *  single default — marking this one default clears the flag on the others. */
+export const addAddress = (input: NewAddressInput, token: string) =>
+  api<ShippingAddress>("/users/me/addresses", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Remove one of the caller's addresses. Returns the deleted row. */
+export const deleteAddress = (id: string, token: string) =>
+  api<ShippingAddress>(`/users/me/addresses/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
   });
 
 /* ---------------- gacha (Collector Crypt machines) ---------------- */
@@ -202,6 +297,86 @@ export const purchaseGachaPack = (packType: string, token: string) =>
  *  Real card identity only (name + image + winner + tier); no synthetic price. */
 export const getGachaWinners = () => api<GachaWinner[]>("/gacha/winners");
 
+/** The caller's own gacha pull history (GET /gacha/me/packs), newest first.
+ *  Requires a JWT. These are the cards pulled from packs — the Vault merges them
+ *  with marketplace purchases so a pull shows up in the collection immediately. */
+export const getMyPacks = (token: string) =>
+  api<GachaPull[]>("/gacha/me/packs", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/* ---------------- payments (rupiah on-ramp via IDRX: QRIS / e-wallet / VA) ----
+
+   The user pays RUPIAH off-chain; no USDC/SOL leaves their wallet. Flow:
+     1. POST /payments/pack  -> creates an IDRX order, returns a QR / VA / hosted
+        payment URL (nothing on-chain moves yet).
+     2. User pays in their banking / e-wallet app.
+     3. IDRX confirms PAID -> the backend buys + opens the pack (treasury settles
+        on-chain) -> the card is minted to the user -> status FULFILLED.
+     4. Client polls GET /payments/orders/:merchantOrderId until FULFILLED.
+   Gated by NEXT_PUBLIC_PAYMENTS_ENABLED so the UI only appears once the backend
+   has real IDRX credentials configured. -------------------------------------- */
+
+/** True when the rupiah payment UI should be shown (backend IDRX creds ready). */
+export const PAYMENTS_ENABLED = process.env.NEXT_PUBLIC_PAYMENTS_ENABLED === "1";
+
+export type PaymentStatus =
+  | "PENDING"
+  | "PAID"
+  | "FULFILLING"
+  | "FULFILLED"
+  | "EXPIRED"
+  | "FAILED"
+  | "REFUND_DUE";
+
+/** One rupiah order (mirrors backend PaymentOrderDto). Dates arrive as ISO strings. */
+export type PaymentOrder = {
+  merchantOrderId: string;
+  packType: string;
+  priceIdr: number;
+  priceUsdc: number;
+  paymentMethod: string;
+  status: PaymentStatus;
+  qrContent: string | null;
+  virtualAccountNo: string | null;
+  paymentUrl: string | null;
+  packMemo: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  paidAt: string | null;
+  fulfilledAt: string | null;
+};
+
+/** Terminal states — polling stops here. */
+export const isTerminalPaymentStatus = (s: PaymentStatus): boolean =>
+  s === "FULFILLED" || s === "EXPIRED" || s === "FAILED" || s === "REFUND_DUE";
+
+/** Create a rupiah order for a pack (POST /payments/pack). `method` "QRIS" gives a
+ *  QR string; "HOSTED" gives a paymentUrl covering the widest set of channels.
+ *  Price + recipient are snapshotted server-side — never sent from the client. */
+export const createPackOrder = (
+  input: { packType?: string; method?: "QRIS" | "HOSTED" },
+  token: string,
+) =>
+  api<PaymentOrder>("/payments/pack", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Poll one order's status (GET /payments/orders/:merchantOrderId). Ownership is
+ *  checked server-side even though the id is public. */
+export const getPaymentOrder = (merchantOrderId: string, token: string) =>
+  api<PaymentOrder>(`/payments/orders/${encodeURIComponent(merchantOrderId)}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/** The caller's rupiah order history (GET /payments/me/orders), newest first. */
+export const getMyOrders = (token: string) =>
+  api<PaymentOrder[]>("/payments/me/orders", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
 /* ---------------- auth (wallet login) ---------------- */
 
 export type NonceResponse = { message: string; nonce: string };
@@ -210,16 +385,20 @@ export type LoginResponse = {
   user: { id: string; walletAddress: string; displayName: string | null; role?: "USER" | "ADMIN" };
 };
 
+// Both carry a timeout: they sit inside the connect modal's spinner, so a cold
+// backend must surface a retryable "waking up" error, not an endless wait.
 export const requestNonce = (walletAddress: string) =>
   api<NonceResponse>("/auth/nonce", {
     method: "POST",
     body: JSON.stringify({ walletAddress }),
+    timeoutMs: 15_000,
   });
 
 export const login = (walletAddress: string, signature: string) =>
   api<LoginResponse>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ walletAddress, signature }),
+    timeoutMs: 15_000,
   });
 
 /* ---------------- admin (moved to lib/admin-api.ts) ---------------- */

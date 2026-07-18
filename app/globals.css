@@ -96,11 +96,31 @@ button:not(:disabled),
   animation: hoshi-duar 0.5s ease-out forwards;
 }
 
+/* RipReveal takeover easing in over the page (no popup snap). */
+@keyframes hoshi-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.hoshi-fade-in {
+  animation: hoshi-fade-in 0.35s ease-out;
+}
+
+/* White card "breathing" while the treasury purchase finishes behind it. */
+@keyframes hoshi-card-pulse {
+  0%, 100% { box-shadow: 0 0 42px -6px rgba(255, 255, 255, 0.8); }
+  50% { box-shadow: 0 0 64px -4px rgba(255, 255, 255, 0.55); }
+}
+.hoshi-card-pulse {
+  animation: hoshi-card-pulse 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-marquee,
   .pack-charge,
   .hoshi-card-rise,
   .hoshi-duar,
+  .hoshi-fade-in,
+  .hoshi-card-pulse,
   .animate-float {
     animation: none;
   }

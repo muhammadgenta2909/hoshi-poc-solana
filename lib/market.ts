@@ -122,6 +122,9 @@ export type NewListingInput = {
   variant?: string;
   contractAddress?: string;
   priceHistory?: number[];
+  /** When listing a card won from a pack: the CcPackPurchase memo. The backend
+   *  verifies ownership and links the listing to the real pulled NFT. */
+  fromPackMemo?: string;
 };
 
 /** Payload for re-listing a card you already own (POST /marketplace/:id/relist). */
@@ -147,6 +150,29 @@ export type ListingNft = {
   id: string;
   assetAddress: string;
   mintTx?: string | null;
+};
+
+/**
+ * Whose physical vault holds the card (backend `Listing.source`).
+ * HOSHI = our own vault; COLLECTORCRYPT = synced from CollectorCrypt's catalog
+ * (metadata theirs, our admin only edits the price on top). Drives the vault
+ * badge on cards — NOT derived from `buyback > 0` anymore.
+ */
+export type VaultSource = "HOSHI" | "COLLECTORCRYPT";
+
+/** Display label for each vault source (card mark + detail chip). */
+export const VAULT_LABEL: Record<VaultSource, string> = {
+  HOSHI: "HOSHI",
+  COLLECTORCRYPT: "COLLECTOR CRYPT",
+};
+
+/** Vault sources offered as a marketplace filter facet. */
+export const VAULT_SOURCES: VaultSource[] = ["HOSHI", "COLLECTORCRYPT"];
+
+/** Human label for the vault filter rows (fuller than the terse card mark). */
+export const VAULT_FILTER_LABEL: Record<VaultSource, string> = {
+  HOSHI: "Hoshi vault",
+  COLLECTORCRYPT: "CollectorCrypt vault",
 };
 
 /** A single secondary-market listing (a graded, pulled card). */
@@ -185,6 +211,13 @@ export type Listing = {
   views: number;
   /** Listing status from the backend (ACTIVE while live). Absent on mock data. */
   status?: ListingStatus;
+  /** Vault provenance; absent on mock/legacy data ⇒ treat as "HOSHI". */
+  source?: VaultSource;
+  /**
+   * true ⇒ CollectorCrypt has an ACTIVE buyback offer for this card. The price
+   * and execution are 100% CC's — we only surface the signal, never an amount.
+   */
+  ccHasBuyback?: boolean;
   /** NFT minted to the buyer after marketplace purchase. Null while still ACTIVE. */
   nft?: ListingNft | null;
 };

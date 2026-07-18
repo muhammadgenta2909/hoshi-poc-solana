@@ -76,6 +76,12 @@ export type AdminListing = {
   vaultLocation: string | null;
   cardNumber: string | null;
   variant: string | null;
+  /** Vault provenance. Rows synced before this field default to HOSHI server-side. */
+  source: "HOSHI" | "COLLECTORCRYPT";
+  ccNftAddress: string | null;
+  ccPriceUsd: number | null;
+  ccHasBuyback: boolean;
+  ccSyncedAt: string | null;
 };
 
 export type AdminCard = {
@@ -191,6 +197,36 @@ export const importAdminListings = (items: Record<string, unknown>[], token: str
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify({ items, sellerOverride }),
+  });
+
+/* ---------- CollectorCrypt catalog sync ---------- */
+
+export type CcSyncParams = {
+  categories?: string;
+  maxPages?: number;
+  step?: number;
+  listPriceMin?: number;
+  listPriceMax?: number;
+  markBuyback?: boolean;
+};
+
+export type CcSyncResult = {
+  pagesFetched: number;
+  found: number;
+  created: number;
+  updated: number;
+  skipped: { grader: number; price: number; invalid: number };
+  buybackMarked: number;
+  usdIdrRate: number;
+};
+
+/** Pull CollectorCrypt's public catalog into our marketplace (source=COLLECTORCRYPT).
+ *  Re-running refreshes metadata but never touches admin-edited prices. */
+export const ccSyncListings = (params: CcSyncParams, token: string) =>
+  api<CcSyncResult>("/admin/cc-sync", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(params),
   });
 
 export const getAdminActivity = (token: string, params?: {

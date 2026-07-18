@@ -11,8 +11,9 @@ import type {
   Grader,
   Listing,
   SortKey,
+  VaultSource,
 } from "@/lib/market";
-import { ELEMENTS, ERAS, GRADE_FLOOR, GRADERS, valueDeltaPct } from "@/lib/market";
+import { ELEMENTS, ERAS, GRADE_FLOOR, GRADERS, VAULT_SOURCES, valueDeltaPct } from "@/lib/market";
 import { getListings } from "@/lib/api";
 import { PAGE_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
@@ -79,6 +80,18 @@ export default function MarketplacePage() {
       ),
     [listings],
   );
+  // Legacy/mock rows without a source count as HOSHI (the historical default).
+  const vaultSourceCounts = useMemo(
+    () =>
+      VAULT_SOURCES.reduce(
+        (acc, s) => ({
+          ...acc,
+          [s]: listings.filter((l) => (l.source ?? "HOSHI") === s).length,
+        }),
+        {} as Record<VaultSource, number>,
+      ),
+    [listings],
+  );
 
   // Price slider bounds derived from the live catalog: [0, most expensive listing]
   // (rounded up to the slider step). Falls back to a default ceiling while loading.
@@ -100,6 +113,7 @@ export default function MarketplacePage() {
   const [gradeTier, setGradeTier] = useState<GradeTier>("All");
   const [graders, setGraders] = useState<Set<Grader>>(new Set());
   const [elements, setElements] = useState<Set<CardElement>>(new Set());
+  const [vaultSources, setVaultSources] = useState<Set<VaultSource>>(new Set());
 
   const [category, setCategory] = useState<Category>("All");
   const [currency, setCurrency] = useState<Currency>("IDR");
@@ -110,6 +124,7 @@ export default function MarketplacePage() {
 
     const filtered = listings.filter((l) => {
       if (l.price < effMin || l.price > effMax) return false;
+      if (vaultSources.size > 0 && !vaultSources.has(l.source ?? "HOSHI")) return false;
       if (eras.size > 0 && !eras.has(l.era)) return false;
       if (graders.size > 0 && !graders.has(l.grader)) return false;
       if (l.gradeScore < floor) return false;
@@ -137,11 +152,12 @@ export default function MarketplacePage() {
         break;
     }
     return sorted;
-  }, [listings, effMin, effMax, eras, graders, gradeTier, elements, category, sort]);
+  }, [listings, effMin, effMax, vaultSources, eras, graders, gradeTier, elements, category, sort]);
 
   const onClear = () => {
     setPriceMin(null);
     setPriceMax(null);
+    setVaultSources(new Set());
     setEras(new Set());
     setGradeTier("All");
     setGraders(new Set());
@@ -199,6 +215,9 @@ export default function MarketplacePage() {
               elements={elements}
               onToggleElement={(el) => setElements((s) => toggle(s, el))}
               elementCounts={elementCounts}
+              vaultSources={vaultSources}
+              onToggleVaultSource={(s) => setVaultSources((prev) => toggle(prev, s))}
+              vaultSourceCounts={vaultSourceCounts}
             />
           )}
 

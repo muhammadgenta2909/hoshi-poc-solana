@@ -7,8 +7,9 @@ import {
   deleteAdminListing,
   updateAdminListing,
   createAdminListing,
+  ccSyncListings,
 } from "@/lib/admin-api";
-import type { AdminListing, PaginatedResult } from "@/lib/admin-api";
+import type { AdminListing, CcSyncResult, PaginatedResult } from "@/lib/admin-api";
 import ImportModal from "@/components/admin/ImportModal";
 import ImageUploader from "@/components/admin/ImageUploader";
 import Select from "@/components/admin/Select";
@@ -52,10 +53,16 @@ export default function AdminListingsPage() {
 
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState(emptyForm);
+  // Provenance of the row being edited. CC rows lock every metadata field
+  // (the backend rejects those edits, since a re-sync would overwrite them),
+  // so only price/expectedValue/buyback stay editable.
+  const [editSource, setEditSource] = useState<AdminListing["source"]>("HOSHI");
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -78,6 +85,7 @@ export default function AdminListingsPage() {
 
   const openEdit = (l: AdminListing) => {
     setEditId(l.id);
+    setEditSource(l.source ?? "HOSHI");
     setEditForm({
       name: l.name, set: l.set, rarity: l.rarity,
       image: l.image, price: l.priceIdrx, expectedValue: l.expectedValueIdrx,
@@ -93,13 +101,48 @@ export default function AdminListingsPage() {
     if (!token || !editId) return;
     setSaving(true);
     try {
-      await updateAdminListing(editId, editForm, token);
+      // For CC-synced rows, only send price + expectedValue. Metadata is theirs
+      // (re-sync overwrites it) and buyback is meaningless here — the CC buyback
+      // signal comes from ccHasBuyback, and the storefront never renders an IDRX
+      // buyback amount for CC cards, so a typed number would be a dead promise.
+      const payload =
+        editSource === "COLLECTORCRYPT"
+          ? { price: editForm.price, expectedValue: editForm.expectedValue }
+          : editForm;
+      await updateAdminListing(editId, payload, token);
       setEditId(null);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSync = async () => {
+    if (!token) return;
+    setSyncing(true);
+    setSyncMsg(null);
+    setError(null);
+    try {
+      const r: CcSyncResult = await ccSyncListings(
+        { categories: "Pokemon", maxPages: 2, step: 50, markBuyback: true },
+        token,
+      );
+      setSyncMsg(
+        `Sync CollectorCrypt selesai — ${r.created} baru, ${r.updated} diperbarui, ` +
+          `${r.buybackMarked} bertanda buyback (kurs $1=Rp${r.usdIdrRate.toLocaleString("id-ID")}). ` +
+          `Dilewati: ${r.skipped.grader + r.skipped.price + r.skipped.invalid}.`,
+      );
+      // If already on page 1, setPage is a no-op and won't retrigger the fetch
+      // effect, so refetch explicitly; otherwise the page-change effect handles
+      // it (avoids a redundant fetch of the old page with a stale closure).
+      if (page === 1) await fetchData();
+      else setPage(1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync CollectorCrypt gagal");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -162,6 +205,12 @@ export default function AdminListingsPage() {
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="w-56 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none transition focus:border-yellow-400/40"
           />
+          <button onClick={handleSync} disabled={syncing}
+            className="rounded-xl border border-[#38E5D0]/30 bg-[#38E5D0]/[0.08] px-4 py-2.5 text-sm font-medium text-[#38E5D0] transition hover:bg-[#38E5D0]/[0.14] disabled:opacity-50"
+            title="Tarik katalog CollectorCrypt ke marketplace (metadata mereka, harga kita)"
+          >
+            {syncing ? "Syncing…" : "Sync CollectorCrypt"}
+          </button>
           <button onClick={() => setImportOpen(true)}
             className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.04]"
           >
@@ -174,6 +223,12 @@ export default function AdminListingsPage() {
           </button>
         </div>
       </header>
+
+      {syncMsg && (
+        <div className="mb-4 rounded-xl border border-[#38E5D0]/20 bg-[#38E5D0]/[0.06] px-4 py-3">
+          <p className="text-sm text-[#38E5D0]">{syncMsg}</p>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
@@ -192,6 +247,7 @@ export default function AdminListingsPage() {
               <thead>
                 <tr className="border-b border-white/10 bg-white/[0.03] text-[13px] font-semibold text-zinc-400">
                   <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Vault</th>
                   <th className="px-4 py-3">Rarity</th>
                   <th className="px-4 py-3">Price</th>
                   <th className="px-4 py-3">Seller</th>
@@ -206,6 +262,15 @@ export default function AdminListingsPage() {
                 {result.data.map((l) => (
                   <tr key={l.id} className="border-b border-white/5 transition hover:bg-white/[0.02]">
                     <td className="px-4 py-3 font-medium text-white">{l.name}</td>
+                    <td className="px-4 py-3">
+                      {(l.source ?? "HOSHI") === "COLLECTORCRYPT" ? (
+                        <span className="rounded-md bg-[#38E5D0]/[0.12] px-2 py-0.5 text-[11px] font-semibold text-[#38E5D0]"
+                          title={l.ccPriceUsd != null ? `CC list price $${l.ccPriceUsd}` : undefined}
+                        >CollectorCrypt{l.ccHasBuyback ? " • BB" : ""}</span>
+                      ) : (
+                        <span className="rounded-md bg-yellow-400/10 px-2 py-0.5 text-[11px] font-semibold text-yellow-400">Hoshi</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className="rounded-md px-2 py-0.5 text-[11px] font-semibold"
                         style={{ background: `${TIER_COLOR[l.rarity as Tier] || "#888"}20`, color: TIER_COLOR[l.rarity as Tier] || "#888" }}
@@ -417,8 +482,21 @@ export default function AdminListingsPage() {
               <button onClick={() => setEditId(null)} className="text-zinc-500 hover:text-zinc-300">&times;</button>
             </div>
 
+            {editSource === "COLLECTORCRYPT" && (
+              <div className="mb-5 rounded-xl border border-[#38E5D0]/20 bg-[#38E5D0]/[0.06] px-4 py-3">
+                <p className="text-sm text-[#38E5D0]">
+                  Listing hasil sync CollectorCrypt. Metadata (nama, gambar, grade, dll)
+                  milik CC dan di-refresh tiap sync — hanya <b>harga</b> dan <b>expected value</b>{" "}
+                  yang bisa kamu ubah. Buyback kartu CC ditentukan CollectorCrypt, bukan angka manual.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-5">
-              <fieldset>
+              <fieldset
+                disabled={editSource === "COLLECTORCRYPT"}
+                className={editSource === "COLLECTORCRYPT" ? "pointer-events-none opacity-50" : ""}
+              >
                 <legend className="mb-3 text-[13px] font-semibold uppercase tracking-wider text-zinc-500">Card Info</legend>
                 <div className="space-y-3">
                   <div>
@@ -481,7 +559,10 @@ export default function AdminListingsPage() {
                 </div>
               </fieldset>
 
-              <fieldset>
+              <fieldset
+                disabled={editSource === "COLLECTORCRYPT"}
+                className={editSource === "COLLECTORCRYPT" ? "pointer-events-none opacity-50" : ""}
+              >
                 <legend className="mb-3 text-[13px] font-semibold uppercase tracking-wider text-zinc-500">Grading</legend>
                 <div className="flex gap-3">
                   <div className="flex-1">
@@ -522,14 +603,20 @@ export default function AdminListingsPage() {
                         className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40" />
                     </div>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Buyback</label>
-                    <input type="number" value={editForm.buyback} onChange={(e) => setEditForm((p) => ({ ...p, buyback: Number(e.target.value) }))}
+                  <div className={editSource === "COLLECTORCRYPT" ? "pointer-events-none opacity-50" : ""}>
+                    <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">
+                      Buyback{editSource === "COLLECTORCRYPT" && " (ditentukan CollectorCrypt)"}
+                    </label>
+                    <input type="number" disabled={editSource === "COLLECTORCRYPT"}
+                      value={editForm.buyback} onChange={(e) => setEditForm((p) => ({ ...p, buyback: Number(e.target.value) }))}
                       className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40" />
                   </div>
                 </div>
               </fieldset>
-              <fieldset>
+              <fieldset
+                disabled={editSource === "COLLECTORCRYPT"}
+                className={editSource === "COLLECTORCRYPT" ? "pointer-events-none opacity-50" : ""}
+              >
                 <legend className="mb-3 text-[13px] font-semibold uppercase tracking-wider text-zinc-500">Certificate & Location</legend>
                 <div className="space-y-3">
                   <div className="flex gap-3">

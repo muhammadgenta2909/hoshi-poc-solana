@@ -1,8 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { Era, Element, GradeTier, Grader } from "@/lib/market";
-import { ELEMENTS, ERAS, GRADE_TIERS, GRADERS } from "@/lib/market";
+import type { Era, Element, GradeTier, Grader, VaultSource } from "@/lib/market";
+import {
+  ELEMENTS,
+  ERAS,
+  GRADE_TIERS,
+  GRADERS,
+  VAULT_FILTER_LABEL,
+  VAULT_SOURCES,
+} from "@/lib/market";
 import { formatIdr, GOLD_GRADIENT, Img } from "./ui";
 
 /** Section heading in the tall pixel display font (Figma: Jersey 10). */
@@ -133,6 +140,9 @@ export default function MarketFilterPanel({
   elements,
   onToggleElement,
   elementCounts,
+  vaultSources,
+  onToggleVaultSource,
+  vaultSourceCounts,
 }: {
   onCollapse: () => void;
   onClear: () => void;
@@ -151,6 +161,9 @@ export default function MarketFilterPanel({
   elements: Set<Element>;
   onToggleElement: (e: Element) => void;
   elementCounts: Record<Element, number>;
+  vaultSources: Set<VaultSource>;
+  onToggleVaultSource: (s: VaultSource) => void;
+  vaultSourceCounts: Record<VaultSource, number>;
 }) {
   return (
     <aside className="self-start rounded-2xl bg-[#181507] p-4">
@@ -182,6 +195,22 @@ export default function MarketFilterPanel({
 
       <div className="mt-3 border-t border-white/10 pt-4">
         <div className="flex flex-col gap-6">
+          {/* Vault — Hoshi vs CollectorCrypt provenance (PM requirement) */}
+          <div>
+            <SectionTitle>Vault</SectionTitle>
+            <div className="flex flex-col">
+              {VAULT_SOURCES.map((s) => (
+                <CheckRow
+                  key={s}
+                  label={VAULT_FILTER_LABEL[s]}
+                  count={vaultSourceCounts[s]}
+                  checked={vaultSources.has(s)}
+                  onToggle={() => onToggleVaultSource(s)}
+                />
+              ))}
+            </div>
+          </div>
+
           {/* Price Range */}
           <div>
             <SectionTitle>Price Range</SectionTitle>

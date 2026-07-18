@@ -19,15 +19,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWallet, type Wallet } from "@solana/wallet-adapter-react";
-import { WalletReadyState } from "@solana/wallet-adapter-base";
+import { WalletReadyState, type WalletName } from "@solana/wallet-adapter-base";
 import { onWalletError, useWalletConnect } from "@/lib/useWalletConnect";
 import { useAuth } from "@/lib/useAuth";
+import { warmBackend } from "@/lib/api";
+import { PRIVY_ENABLED } from "@/app/PrivyProviders";
+import PrivyGoogleButton from "./PrivyGoogleButton";
 import { GOLD_GRADIENT } from "./ui";
 
 type Phase = "select" | "connecting" | "signing" | "success" | "error";
 // Which step failed — so "Try again" retries the right thing (a sign failure
 // must NOT reconnect the wallet, and a connect failure must NOT try to sign).
 type ErrorStage = "connect" | "sign";
+
+// Watchdog for the "Waiting for <wallet>…" spinner. Phantom's connect() can
+// wedge forever (a popup dismissed without answering leaves the request pending
+// inside the extension), and the provider's `connecting` flag stays latched
+// until a connect/disconnect EVENT clears it — so without this the spinner
+// never ends. 15s is enough to unlock + approve; a late approval after the
+// timeout is still caught by the error→signing rescue effect below.
+const CONNECT_TIMEOUT_MS = 15_000;
 
 const humanizeSignError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error);
@@ -62,8 +73,16 @@ export default function WalletConnectModal() {
 
 function WalletConnectDialog() {
   const { close } = useWalletConnect();
-  const { wallets, wallet, select, connect, connecting, connected, publicKey } = useWallet();
+  const { wallets, wallet, select, connect, disconnect, connecting, connected, publicKey } =
+    useWallet();
   const { login, isAuthed } = useAuth();
+
+  // Wake the backend the moment the dialog opens: sign-to-verify needs two
+  // round-trips (nonce + login) and the free-tier host cold-starts, so warming
+  // it while the user is still picking/approving hides most of that latency.
+  useEffect(() => {
+    warmBackend();
+  }, []);
 
   const [phase, setPhase] = useState<Phase>("select");
   const [pendingName, setPendingName] = useState<string | null>(null);
@@ -118,6 +137,32 @@ function WalletConnectDialog() {
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [phase, connected, publicKey, connecting]);
 
+  // Watchdog: never let "Waiting for <wallet>" spin forever (see
+  // CONNECT_TIMEOUT_MS). Total time in the connecting phase is the measure —
+  // the timer resets whenever the phase is re-entered (retry, new pick).
+  useEffect(() => {
+    if (phase !== "connecting") return;
+    const t = setTimeout(() => {
+      setErrorStage("connect");
+      setErrorMsg(
+        `${pendingName ?? "The wallet"} isn't responding. Check its extension for a pending request, then try again.`,
+      );
+      setPhase("error");
+    }, CONNECT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [phase, pendingName]);
+
+  // Rescue a late approval: if the watchdog (or a spurious failure) dropped us
+  // on the error card but the user then approves the still-open wallet popup,
+  // carry on to sign-to-verify instead of leaving them stranded.
+  useEffect(() => {
+    if (phase !== "error" || errorStage !== "connect") return;
+    if (connected && publicKey) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync modal phase to the wallet's external connection state
+      setPhase("signing");
+    }
+  }, [phase, errorStage, connected, publicKey]);
+
   // Sign-to-verify: once connected, ask the wallet to sign the login message.
   // login() needs a live publicKey, so we wait for it (the 'connect' event and
   // the context publicKey settle a render apart). Calling login() from an effect
@@ -144,12 +189,19 @@ function WalletConnectDialog() {
   // us from racing the auto-connect path.
   useEffect(() => {
     if (phase !== "connecting" || !pendingName) return;
-    if (!wallet || wallet.adapter.name !== pendingName) return; // wait for select() to land
+    if (!wallet || wallet.adapter.name !== pendingName) {
+      // Re-assert the selection. A hard-reset retry disconnect()s first and the
+      // provider clears walletName on the disconnect event — without this the
+      // retry would sit on "Waiting…" with no wallet selected. Safe from loops:
+      // select() with an unchanged name is a no-op.
+      select(pendingName as WalletName);
+      return;
+    }
     if (connected || connecting) return;
     connect().catch(() => {
       // Failure surfaces via the onError bus + the adapter's disconnect event.
     });
-  }, [phase, pendingName, wallet, connected, connecting, connect]);
+  }, [phase, pendingName, wallet, connected, connecting, connect, select]);
 
   // Humanised connect-time failure pushed up from `<WalletProvider onError>`.
   useEffect(() => {
@@ -163,7 +215,7 @@ function WalletConnectDialog() {
   // Auto-close shortly after a successful connection.
   useEffect(() => {
     if (phase !== "success") return;
-    const t = setTimeout(() => close(), 1100);
+    const t = setTimeout(() => close(), 900);
     return () => clearTimeout(t);
   }, [phase, close]);
 
@@ -185,6 +237,11 @@ function WalletConnectDialog() {
     setErrorMsg(null);
     setPendingName(w.adapter.name);
     signStarted.current = false;
+    // Fresh attempt: a stale `true` from a previous failed attempt makes the
+    // outcome effect fire "cancelled or failed" INSTANTLY on retry (before the
+    // new connect() even starts), bouncing the user straight back to the error
+    // card while an orphaned wallet popup opens behind it.
+    sawConnecting.current = false;
 
     // Already connected → skip straight to sign-to-verify (or done, if signed in).
     if (w.adapter.connected && w.adapter.publicKey) {
@@ -214,6 +271,17 @@ function WalletConnectDialog() {
       setPhase("signing");
       return;
     }
+    // Already connected (e.g. the approval landed right as the watchdog fired):
+    // don't tear it down — startConnect routes straight to sign-to-verify.
+    if (pendingWallet?.adapter.connected && pendingWallet.adapter.publicKey) {
+      startConnect(pendingWallet);
+      return;
+    }
+    // Hard reset before reconnecting: a wedged adapter.connect() latches the
+    // provider's `connecting` flag until a disconnect EVENT clears it, so a
+    // plain reconnect would early-return forever. disconnect() is a safe no-op
+    // when nothing is selected; the drive-connect effect re-selects afterwards.
+    disconnect().catch(() => {});
     if (pendingWallet) startConnect(pendingWallet);
     else setPhase("select");
   };
@@ -345,6 +413,23 @@ function SelectView({
             );
           })}
         </div>
+      )}
+
+      {/* Google login (embedded Solana wallet) — no Phantom needed. Only when
+          Privy is configured; the button + its Privy hooks live in a child that
+          isn't mounted otherwise. */}
+      {PRIVY_ENABLED && (
+        <>
+          <div className="my-4 flex items-center gap-3 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+            <span className="h-px flex-1 bg-white/10" />
+            atau
+            <span className="h-px flex-1 bg-white/10" />
+          </div>
+          <PrivyGoogleButton />
+          <p className="mt-2 text-center text-[12px] text-zinc-500">
+            Belum punya wallet? Login Google — wallet Solana dibuat otomatis.
+          </p>
+        </>
       )}
 
       <ProtectedFooter />

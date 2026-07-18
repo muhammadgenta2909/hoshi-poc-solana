@@ -64,6 +64,34 @@ function setStoredToken(token: string | null, user?: LoginResponse["user"] | nul
   listeners.forEach((l) => l());
 }
 
+/* ---- Privy logout bridge --------------------------------------------------
+
+   A Privy (Google) session outlives our JWT: clearing the JWT alone would make
+   <PrivyBridge> immediately re-mint one, so `logout()` must ALSO end the Privy
+   session. The bridge registers Privy's logout here, and `logout()` flips
+   `suppressAutoLogin` so the bridge doesn't re-login during the tear-down race
+   (it clears once Privy reports `authenticated=false`). Module-level so the two
+   sides don't need a shared React context. */
+let externalLogout: (() => void | Promise<void>) | null = null;
+let suppressAutoLogin = false;
+
+/** The bridge registers Privy's logout; returns an unregister for effect cleanup. */
+export function registerPrivyLogout(fn: () => void | Promise<void>): () => void {
+  externalLogout = fn;
+  return () => {
+    if (externalLogout === fn) externalLogout = null;
+  };
+}
+/** True right after a manual logout — blocks the bridge from auto-re-logging-in. */
+export const isAutoLoginSuppressed = () => suppressAutoLogin;
+/** The bridge clears this once Privy has actually signed out. */
+export const clearAutoLoginSuppression = () => {
+  suppressAutoLogin = false;
+};
+
+/** Signs the raw nonce bytes with whatever wallet the caller controls. */
+export type MessageSigner = (message: Uint8Array) => Promise<Uint8Array>;
+
 type AuthContextValue = {
   token: string | null;
   isAuthed: boolean;
@@ -71,6 +99,16 @@ type AuthContextValue = {
   user: LoginResponse["user"] | null;
   isAdmin: boolean;
   login: () => Promise<string>;
+  /** Nonce→sign→JWT for ANY signer (wallet-adapter, or a Privy embedded wallet
+   *  once Google/email login is wired). Backend /auth/* accept any address whose
+   *  signature verifies, so no backend change is needed for a new login method. */
+  loginWith: (address: string, signMessage: MessageSigner) => Promise<string>;
+  /** The address to DISPLAY as "connected": the wallet-adapter key when a wallet
+   *  is connected, else the signed-in user's wallet from the JWT. This is what
+   *  lets a Privy/Google user (who has no wallet-adapter publicKey) still read as
+   *  connected across the nav / vault / settings. Prefer this over
+   *  `useWallet().publicKey` for DISPLAY; keep `useWallet()` for signing. */
+  activeAddress: string | null;
   logout: () => void;
 };
 
@@ -84,29 +122,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const user = parseUser(userRaw);
 
   const walletAddress = publicKey?.toBase58() ?? null;
+  // Wallet-adapter key wins; otherwise fall back to the JWT user's wallet (a
+  // Google/Privy user is authed with a real address but no wallet-adapter key).
+  const activeAddress = walletAddress ?? (token ? user?.walletAddress ?? null : null);
 
   const isAdmin =
     user?.role === "ADMIN" ||
-    (!!walletAddress && !!ADMIN_WALLET && walletAddress === ADMIN_WALLET);
+    (!!activeAddress && !!ADMIN_WALLET && activeAddress === ADMIN_WALLET);
+
+  // The provider-agnostic core: nonce → sign → JWT for a given address + signer.
+  const loginWith = useCallback<AuthContextValue["loginWith"]>(async (address, signMessageFn) => {
+    const { message } = await requestNonce(address);
+    const sig = await signMessageFn(new TextEncoder().encode(message));
+    const { accessToken, user: userData } = await apiLogin(address, bs58.encode(sig));
+    setStoredToken(accessToken, userData);
+    return accessToken;
+  }, []);
 
   const login = useCallback(async () => {
     if (!publicKey) throw new Error("Connect a wallet first.");
     if (!signMessage)
       throw new Error("This wallet does not support message signing.");
+    return loginWith(publicKey.toBase58(), signMessage);
+  }, [publicKey, signMessage, loginWith]);
 
-    const wallet = publicKey.toBase58();
-    const { message } = await requestNonce(wallet);
-    const sig = await signMessage(new TextEncoder().encode(message));
-    const { accessToken, user: userData } = await apiLogin(wallet, bs58.encode(sig));
-
-    setStoredToken(accessToken, userData);
-    return accessToken;
-  }, [publicKey, signMessage]);
-
-  const logout = useCallback(() => setStoredToken(null), []);
+  const logout = useCallback(() => {
+    suppressAutoLogin = true; // block <PrivyBridge> from re-minting a session
+    void externalLogout?.(); // end the Privy session too (no-op for wallet users)
+    setStoredToken(null);
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ token, isAuthed: !!token, hydrated, user, isAdmin, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        token,
+        isAuthed: !!token,
+        hydrated,
+        user,
+        isAdmin,
+        login,
+        loginWith,
+        activeAddress,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,12 +1,27 @@
 "use client";
 
-// Settings page — the user's own account preferences. POC only: every control
-// is local React state, "Save" flashes a local confirmation, and modals mutate
-// in-memory lists. No backend is wired for any of these features yet.
+// Settings page — the user's own account preferences. Main Info is wired to
+// the backend: profile fields read/write /users/me and shipment addresses
+// persist via /users/me/addresses; Account Balance reads live SOL/USDC over
+// the wallet's RPC connection. Notifications, discoverable and blocked users
+// remain local-only POC UI.
 
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useAuth } from "@/lib/useAuth";
+import {
+  addAddress,
+  deleteAddress,
+  getMyAddresses,
+  getProfile,
+  updateProfile,
+  type Profile,
+  type ShippingAddress,
+  type UpdateProfileInput,
+} from "@/lib/api";
+import { DEVNET_USDC_MINT, fetchSolBalance, fetchSplBalance, formatSol, formatUsdc } from "@/lib/tokens";
+import RenameModal from "@/components/account/RenameModal";
 import {
   AccountShell,
   ProfileBanner,
@@ -56,19 +71,6 @@ const STATES = [
   "Bali",
 ];
 
-type Address = {
-  id: string;
-  fullName: string;
-  country: string;
-  street: string;
-  apt: string;
-  state: string;
-  city: string;
-  phone: string;
-  zip: string;
-  isDefault: boolean;
-};
-
 const emptyForm = {
   fullName: "",
   country: COUNTRIES[0],
@@ -76,20 +78,45 @@ const emptyForm = {
   apt: "",
   state: "",
   city: "",
+  phoneCode: "+62", // matches the default country
   phone: "",
   zip: "",
   isDefault: false,
 };
 
+/** The six editable profile fields as strings (server nulls seeded to ""). Save
+ *  diffs the live form against a seeded baseline of this shape. */
+type ProfileForm = {
+  displayName: string;
+  bio: string;
+  twitter: string;
+  website: string;
+  phoneCountryCode: string;
+  phoneNumber: string;
+};
+
 export default function SettingsPage() {
+  const { token, isAuthed, user } = useAuth();
+  const { connection } = useConnection();
   const { publicKey } = useWallet();
   const address = publicKey?.toBase58() ?? null;
 
   const [tab, setTab] = useState<Tab>("MAIN INFO");
 
-  // MAIN INFO — profile fields
+  // The last server snapshot of /users/me — the banner reads it and Cancel
+  // resets the form to it.
+  const [profile, setProfile] = useState<Profile | null>(null);
+  // The seeded snapshot of the six editable fields. Save diffs the live form
+  // against it and sends only what changed. Stays `null` until getProfile
+  // SUCCEEDS, which also gates the Save button — you can't wipe an unseeded
+  // form by saving "" over fields that never loaded.
+  const [baseline, setBaseline] = useState<ProfileForm | null>(null);
+  const [renaming, setRenaming] = useState(false);
+
+  // MAIN INFO — profile fields (username maps to displayName, site to website)
   const [username, setUsername] = useState("");
   const [discoverable, setDiscoverable] = useState(false);
+  const [phoneCode, setPhoneCode] = useState("");
   const [phone, setPhone] = useState("");
   const [bio, setBio] = useState("");
   const [twitter, setTwitter] = useState("");
@@ -101,59 +128,251 @@ export default function SettingsPage() {
   const [notifyMessages, setNotifyMessages] = useState(true);
 
   // Shipment addresses
-  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [addresses, setAddresses] = useState<ShippingAddress[]>([]);
   const [addrOpen, setAddrOpen] = useState(false);
+  const [addrBusy, setAddrBusy] = useState(false);
+  const [addrError, setAddrError] = useState<string | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
 
-  // Save flash
+  // Save flash / progress / failure
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Deposit modal
-  const [depositOpen, setDepositOpen] = useState(false);
-  const [depositAmount, setDepositAmount] = useState("");
+  // ACCOUNT BALANCE — live wallet balances, stored WITH the wallet they belong
+  // to so switching wallets derives back to "…" instead of flashing the
+  // previous wallet's numbers (no synchronous setState in the effect body).
+  const [balances, setBalances] = useState<{ owner: string; sol: number; usdc: number } | null>(
+    null,
+  );
 
   const onCopy = useCallback(() => {
     if (address) void copyText(address);
   }, [address]);
 
-  const onSave = useCallback(() => {
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1500);
+  /** The ONE place the form is (re)seeded from a server snapshot — the fetch
+   *  effect and Cancel both go through it, so they can't drift apart. */
+  const seedForm = useCallback((p: Profile) => {
+    setUsername(p.displayName ?? "");
+    setBio(p.bio ?? "");
+    setTwitter(p.twitter ?? "");
+    setSite(p.website ?? "");
+    setPhoneCode(p.phoneCountryCode ?? "");
+    setPhone(p.phoneNumber ?? "");
+    setBaseline({
+      displayName: p.displayName ?? "",
+      bio: p.bio ?? "",
+      twitter: p.twitter ?? "",
+      website: p.website ?? "",
+      phoneCountryCode: p.phoneCountryCode ?? "",
+      phoneNumber: p.phoneNumber ?? "",
+    });
   }, []);
+
+  // Same effect pattern as the profile page: pull /users/me once per token so
+  // the banner shows the real name + join year and the form starts filled in.
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    getProfile(token)
+      .then((p) => {
+        if (!alive) return;
+        setProfile(p);
+        seedForm(p);
+      })
+      .catch(() => {
+        /* banner falls back to the wallet address */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, seedForm]);
+
+  // Saved shipping addresses live on the backend now.
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    getMyAddresses(token)
+      .then((rows) => {
+        if (alive) setAddresses(rows);
+      })
+      .catch(() => {
+        /* a failed load is not fatal — the panel just shows the add button */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
+  // Live SOL + devnet-USDC balances for the Account Balance tab.
+  useEffect(() => {
+    if (!publicKey) return;
+    let alive = true;
+    const owner = publicKey.toBase58();
+    Promise.all([
+      fetchSolBalance(connection, publicKey),
+      fetchSplBalance(connection, publicKey, DEVNET_USDC_MINT),
+    ])
+      .then(([sol, usdc]) => {
+        if (alive) setBalances({ owner, sol, usdc });
+      })
+      .catch(() => {
+        // RPC hiccup — a zero reads better than an eternal spinner
+        if (alive) setBalances({ owner, sol: 0, usdc: 0 });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [connection, publicKey]);
+
+  /** PATCH only the fields that changed vs the seeded baseline — never re-send
+   *  "" for a field the user didn't touch. The whole patch is atomic server-side,
+   *  so bio/twitter/website/phone may send "" to clear themselves, but displayName
+   *  is mandatory (@Length 1,32): an empty rename is caught here, not 400'd. */
+  const onSave = useCallback(async () => {
+    if (!token || !baseline) return;
+
+    const payload: UpdateProfileInput = {};
+    if (username !== baseline.displayName) payload.displayName = username;
+    if (bio !== baseline.bio) payload.bio = bio;
+    if (twitter !== baseline.twitter) payload.twitter = twitter;
+    if (site !== baseline.website) payload.website = site;
+    if (phoneCode !== baseline.phoneCountryCode) payload.phoneCountryCode = phoneCode;
+    if (phone !== baseline.phoneNumber) payload.phoneNumber = phone;
+
+    // Client-side guards so a predictable bad value never round-trips a 400.
+    if (payload.displayName !== undefined && !payload.displayName.trim()) {
+      setSaveError("Display name can't be empty");
+      return;
+    }
+    if (payload.phoneNumber && payload.phoneNumber.length < 4) {
+      setSaveError("Enter a valid phone number");
+      return;
+    }
+    setSaveError(null);
+
+    // Nothing changed — flash "Saved" without hitting the server.
+    if (Object.keys(payload).length === 0) {
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1500);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const p = await updateProfile(payload, token);
+      setProfile(p); // banner name updates
+      seedForm(p); // reseed the Cancel + diff baseline from the server truth
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [token, baseline, username, bio, twitter, site, phoneCode, phone, seedForm]);
+
+  /** Cancel = discard edits: back to the last server snapshot (blank pre-login). */
+  const onCancel = useCallback(() => {
+    setSaveError(null);
+    if (profile) {
+      seedForm(profile);
+      return;
+    }
+    setUsername("");
+    setBio("");
+    setTwitter("");
+    setSite("");
+    setPhoneCode("");
+    setPhone("");
+  }, [profile, seedForm]);
 
   const setField = <K extends keyof typeof emptyForm>(key: K, value: (typeof emptyForm)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   const closeAddr = useCallback(() => {
     setAddrOpen(false);
+    setAddrError(null);
     setForm({ ...emptyForm });
   }, []);
 
-  const addAddress = useCallback(() => {
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : String(Date.now());
-    setAddresses((prev) => {
-      const next: Address = { id, ...form };
-      // if this one is default, unset the others
-      const cleaned = next.isDefault ? prev.map((a) => ({ ...a, isDefault: false })) : prev;
-      return [...cleaned, next];
-    });
-    closeAddr();
-  }, [form, closeAddr]);
+  const submitAddress = useCallback(async () => {
+    if (!token) return;
 
-  const removeAddress = useCallback((id: string) => {
-    setAddresses((prev) => prev.filter((a) => a.id !== id));
-  }, []);
+    // Plain-English required-field guard, so one missing field doesn't surface
+    // a raw multi-field class-validator error from the (atomic) CreateAddressDto.
+    const missing: string[] = [];
+    if (!form.fullName.trim()) missing.push("full name");
+    if (!form.country.trim()) missing.push("country");
+    if (!form.street.trim()) missing.push("street address");
+    if (!form.city.trim()) missing.push("city");
+    if (!form.zip.trim()) missing.push("zip/postal code");
+    if (missing.length) {
+      setAddrError(`Please fill in: ${missing.join(", ")}.`);
+      return;
+    }
+    if (form.phone && form.phone.length < 4) {
+      setAddrError("Enter a valid phone number.");
+      return;
+    }
 
-  const depositNum = Number(depositAmount);
-  const depositValid = Number.isFinite(depositNum) && depositNum > 0;
+    setAddrBusy(true);
+    setAddrError(null);
+    try {
+      const created = await addAddress(
+        {
+          fullName: form.fullName,
+          country: form.country,
+          street: form.street,
+          apt: form.apt || undefined, // optional — omit rather than send ""
+          state: form.state || undefined,
+          city: form.city,
+          phoneCountryCode: form.phoneCode || undefined,
+          phoneNumber: form.phone || undefined,
+          zip: form.zip,
+          isDefault: form.isDefault,
+        },
+        token,
+      );
+      setAddresses((prev) => {
+        // the server keeps a single default — mirror that locally
+        const cleaned = created.isDefault ? prev.map((a) => ({ ...a, isDefault: false })) : prev;
+        return [...cleaned, created];
+      });
+      closeAddr();
+    } catch (e) {
+      setAddrError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAddrBusy(false);
+    }
+  }, [token, form, closeAddr]);
 
-  const closeDeposit = useCallback(() => {
-    setDepositOpen(false);
-    setDepositAmount("");
-  }, []);
+  /** Optimistic remove. On failure, re-pull the authoritative list rather than
+   *  restoring a captured snapshot — a stale snapshot could resurrect a row a
+   *  concurrent successful delete already removed. */
+  const removeAddress = useCallback(
+    (id: string) => {
+      if (!token) return;
+      setAddresses((prev) => prev.filter((a) => a.id !== id));
+      deleteAddress(id, token).catch(() => {
+        getMyAddresses(token)
+          .then(setAddresses)
+          .catch(() => {});
+      });
+    },
+    [token],
+  );
+
+  // Same fallback chain as the profile page banner.
+  const bannerName =
+    profile?.displayName?.trim() || user?.displayName?.trim() || (address ? "Unnamed" : "Guest");
+  const joined = profile ? new Date(profile.createdAt).getFullYear().toString() : undefined;
+
+  const balanceFor = (kind: "sol" | "usdc") => {
+    if (!address) return kind === "sol" ? "0.000" : "0.00"; // no wallet — nothing to read
+    if (!balances || balances.owner !== address) return "…"; // fetch in flight
+    return kind === "sol" ? formatSol(balances.sol) : formatUsdc(balances.usdc);
+  };
 
   return (
     <AccountShell active="Vault">
@@ -172,7 +391,13 @@ export default function SettingsPage() {
         />
 
         <div className="min-w-0 flex-1">
-          <ProfileBanner name="Unnamed" address={address} joined="2026" onCopy={onCopy} />
+          <ProfileBanner
+            name={bannerName}
+            address={address}
+            joined={joined}
+            onRename={isAuthed ? () => setRenaming(true) : undefined}
+            onCopy={onCopy}
+          />
         </div>
       </div>
 
@@ -187,6 +412,7 @@ export default function SettingsPage() {
               <FieldRow label="Username">
                 <TextInput
                   value={username}
+                  maxLength={32}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="Enter username"
                 />
@@ -194,7 +420,7 @@ export default function SettingsPage() {
 
               <FieldRow label="Email">
                 <div className="space-y-3">
-                  <TextInput readOnly value="you@example.com" />
+                  <TextInput readOnly value={profile?.email ?? ""} placeholder="No email set" />
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <GhostButton className="px-3.5 py-1.5 text-[13px]">Change</GhostButton>
                     <Toggle
@@ -207,12 +433,18 @@ export default function SettingsPage() {
               </FieldRow>
 
               <FieldRow label="Phone Number">
-                <PhoneField value={phone} onChange={setPhone} />
+                <PhoneField
+                  code={phoneCode}
+                  onCodeChange={setPhoneCode}
+                  value={phone}
+                  onChange={setPhone}
+                />
               </FieldRow>
 
               <FieldRow label="Bio">
                 <TextArea
                   value={bio}
+                  maxLength={280}
                   onChange={(e) => setBio(e.target.value)}
                   placeholder="Tell the world your story!"
                 />
@@ -225,6 +457,7 @@ export default function SettingsPage() {
                   </span>
                   <TextInput
                     value={twitter}
+                    maxLength={50}
                     onChange={(e) => setTwitter(e.target.value)}
                     placeholder="Enter your Twitter handle"
                     className="pl-8"
@@ -235,6 +468,7 @@ export default function SettingsPage() {
               <FieldRow label="Personal site">
                 <TextInput
                   value={site}
+                  maxLength={200}
                   onChange={(e) => setSite(e.target.value)}
                   placeholder="https://"
                 />
@@ -291,26 +525,43 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => setAddrOpen(true)}
-                    className="w-full rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-3 text-[13px] font-medium text-zinc-400 transition hover:border-yellow-400/40 hover:text-zinc-200"
-                  >
-                    + Add new address
-                  </button>
+                  {isAuthed ? (
+                    <button
+                      type="button"
+                      onClick={() => setAddrOpen(true)}
+                      className="w-full rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-3 text-[13px] font-medium text-zinc-400 transition hover:border-yellow-400/40 hover:text-zinc-200"
+                    >
+                      + Add new address
+                    </button>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-3 text-center text-[13px] text-zinc-500">
+                      Sign in with your wallet to manage addresses
+                    </p>
+                  )}
                 </div>
               </FieldRow>
             </Panel>
 
-            <div className="mt-5 flex items-center justify-end gap-3">
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+              {saveError && (
+                <span className="text-[13px] text-red-400" role="alert">
+                  {saveError}
+                </span>
+              )}
               {saved && (
                 <span className="text-[13px] font-medium text-emerald-400" role="status">
                   Saved
                 </span>
               )}
-              <GhostButton type="button">Cancel</GhostButton>
-              <PrimaryButton type="button" onClick={onSave}>
-                Save
+              <GhostButton type="button" onClick={onCancel}>
+                Cancel
+              </GhostButton>
+              <PrimaryButton
+                type="button"
+                onClick={onSave}
+                disabled={saving || !isAuthed || !baseline}
+              >
+                {saving ? "Saving…" : "Save"}
               </PrimaryButton>
             </div>
 
@@ -327,15 +578,11 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-              <BalanceTile dot="#9945FF" label="Solana" amount="0.00" unit="SOL" />
-              <BalanceTile dot="#2775CA" label="USDC" amount="0.00" unit="USDC" />
-              <BalanceTile dot="#7C5CFF" label="Escrow Balance" amount="0.00" unit="USDC" />
+              <BalanceTile dot="#9945FF" label="Solana" amount={balanceFor("sol")} unit="SOL" />
+              <BalanceTile dot="#2775CA" label="USDC" amount={balanceFor("usdc")} unit="USDC" />
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <PrimaryButton type="button" onClick={() => setDepositOpen(true)}>
-                Deposit
-              </PrimaryButton>
               <GhostButton type="button" disabled>
                 Withdraw
               </GhostButton>
@@ -361,6 +608,7 @@ export default function SettingsPage() {
           <ModalField label="Full Name">
             <TextInput
               value={form.fullName}
+              maxLength={80}
               onChange={(e) => setField("fullName", e.target.value)}
               placeholder="Full name"
             />
@@ -378,6 +626,7 @@ export default function SettingsPage() {
           <ModalField label="Street Address">
             <TextInput
               value={form.street}
+              maxLength={160}
               onChange={(e) => setField("street", e.target.value)}
               placeholder="Street address"
             />
@@ -386,6 +635,7 @@ export default function SettingsPage() {
           <ModalField label="Apartment/Suite/Unit">
             <TextInput
               value={form.apt}
+              maxLength={80}
               onChange={(e) => setField("apt", e.target.value)}
               placeholder="Apt, suite, unit (optional)"
             />
@@ -405,6 +655,7 @@ export default function SettingsPage() {
             <ModalField label="City/Department">
               <TextInput
                 value={form.city}
+                maxLength={80}
                 onChange={(e) => setField("city", e.target.value)}
                 placeholder="City"
               />
@@ -414,6 +665,8 @@ export default function SettingsPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <ModalField label="Phone Number">
               <PhoneField
+                code={form.phoneCode}
+                onCodeChange={(v) => setField("phoneCode", v)}
                 value={form.phone}
                 onChange={(v) => setField("phone", v)}
               />
@@ -422,6 +675,7 @@ export default function SettingsPage() {
             <ModalField label="Zip/Postal code">
               <TextInput
                 value={form.zip}
+                maxLength={16}
                 onChange={(e) => setField("zip", e.target.value)}
                 placeholder="Postal code"
               />
@@ -434,64 +688,90 @@ export default function SettingsPage() {
             label="Use as default"
           />
 
-          <PrimaryButton type="button" onClick={addAddress} className="w-full">
-            Add new address
-          </PrimaryButton>
-        </div>
-      </ModalShell>
-
-      {/* Deposit to Escrow */}
-      <ModalShell
-        open={depositOpen}
-        onClose={closeDeposit}
-        title="Deposit to Escrow"
-        subtitle="Deposit USDC to your shared escrow. This lets you make multiple offers without depositing each time."
-      >
-        <div className="space-y-4">
-          <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-3 text-[13px]">
-            <span className="text-zinc-400">Wallet Balance</span>
-            <span className="font-medium tabular-nums text-zinc-200">0.00 USDC</span>
-          </div>
-
-          <ModalField label="Amount">
-            <TextInput
-              inputMode="decimal"
-              type="number"
-              min={0}
-              step="any"
-              value={depositAmount}
-              onChange={(e) => setDepositAmount(e.target.value)}
-              placeholder="0.00"
-            />
-          </ModalField>
+          {addrError && (
+            <p className="text-[12px] text-red-400" role="alert">
+              {addrError}
+            </p>
+          )}
 
           <PrimaryButton
             type="button"
-            onClick={closeDeposit}
-            disabled={!depositValid}
+            onClick={submitAddress}
+            disabled={addrBusy}
             className="w-full"
           >
-            Deposit
+            {addrBusy ? "Adding…" : "Add new address"}
           </PrimaryButton>
         </div>
       </ModalShell>
+
+      {renaming && token && (
+        // key on the loaded name so the modal reseeds if it opened before the
+        // profile fetch resolved (the pencil is gated only on isAuthed).
+        <RenameModal
+          key={profile?.displayName ?? ""}
+          current={profile?.displayName ?? ""}
+          onClose={() => setRenaming(false)}
+          onSave={async (name) => {
+            const p = await updateProfile({ displayName: name }, token);
+            setProfile(p); // banner picks the new name up immediately
+            setUsername(p.displayName ?? ""); // the Username field maps to displayName too
+            // keep the diff baseline's displayName in sync WITHOUT touching the
+            // other fields (they may hold unsaved edits in the Main Info form).
+            setBaseline((prev) => (prev ? { ...prev, displayName: p.displayName ?? "" } : prev));
+          }}
+        />
+      )}
     </AccountShell>
   );
 }
 
 /* ------------------------------ local pieces ------------------------------ */
 
-function PhoneField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+/** Country dial codes the POC ships to. `— none —` (value "") lets a user clear
+ *  a chosen code, which the backend accepts to null the field. Indonesia leads
+ *  the real codes as the home market. */
+const PHONE_CODES: readonly { value: string; label: string }[] = [
+  { value: "", label: "— none —" },
+  { value: "+62", label: "+62 Indonesia" },
+  { value: "+1", label: "+1 US/Canada" },
+  { value: "+65", label: "+65 Singapore" },
+  { value: "+60", label: "+60 Malaysia" },
+  { value: "+81", label: "+81 Japan" },
+  { value: "+44", label: "+44 UK" },
+  { value: "+61", label: "+61 Australia" },
+  { value: "+91", label: "+91 India" },
+];
+
+function PhoneField({
+  code,
+  onCodeChange,
+  value,
+  onChange,
+}: {
+  code: string;
+  onCodeChange: (v: string) => void;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="flex items-stretch gap-2">
-      <span className="inline-flex shrink-0 items-center rounded-xl border border-white/10 bg-white/[0.04] px-3.5 text-[14px] text-zinc-300">
-        +1
-      </span>
+      <Select
+        value={code}
+        onChange={onCodeChange}
+        options={PHONE_CODES}
+        placeholder="Code"
+        ariaLabel="Phone country code"
+        className="w-[148px] shrink-0"
+      />
       <div className="min-w-0 flex-1">
         <TextInput
           inputMode="tel"
+          maxLength={20}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          // Backend accepts digits, spaces and hyphens only — strip the rest as
+          // the user types so an illegal character never reaches the server.
+          onChange={(e) => onChange(e.target.value.replace(/[^\d\s-]/g, ""))}
           placeholder="Phone number"
         />
       </div>
@@ -533,7 +813,7 @@ function BalanceTile({
   );
 }
 
-function AddressCard({ address, onRemove }: { address: Address; onRemove: () => void }) {
+function AddressCard({ address, onRemove }: { address: ShippingAddress; onRemove: () => void }) {
   const line = [
     address.street,
     address.apt,
@@ -557,7 +837,11 @@ function AddressCard({ address, onRemove }: { address: Address; onRemove: () => 
           )}
         </div>
         {line && <p className="mt-1 leading-relaxed text-zinc-400">{line}</p>}
-        {address.phone && <p className="mt-0.5 text-zinc-500">+1 {address.phone}</p>}
+        {address.phoneNumber && (
+          <p className="mt-0.5 text-zinc-500">
+            {[address.phoneCountryCode, address.phoneNumber].filter(Boolean).join(" ")}
+          </p>
+        )}
       </div>
       <button
         type="button"

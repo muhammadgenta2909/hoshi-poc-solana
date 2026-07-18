@@ -95,18 +95,32 @@ export default function MarketCard({
           <Badge>{listing.era}</Badge>
         </div>
 
-        {/* title + Hoshi-backed mark */}
+        {/* title + vault mark — tells WHOSE vault holds the card (PM requirement).
+            Previously the gold HOSHI text meant "buyback-backed" (buyback > 0);
+            provenance now comes from listing.source, and the buyback signal
+            lives in the details panel instead. Legacy rows without source are
+            Hoshi-vaulted by definition. */}
         <div className="mt-3 flex items-center gap-2">
           <span className="truncate text-[17px] font-bold uppercase leading-tight text-white">
             {listing.name}
           </span>
-          {listing.buyback > 0 && (
-            <GradientText
-              className="shrink-0 text-lg leading-none"
+          {(listing.source ?? "HOSHI") === "COLLECTORCRYPT" ? (
+            <span
+              className="shrink-0 text-lg leading-none text-[#38E5D0]"
               style={{ fontFamily: "var(--font-jersey)" }}
+              title="Vault: CollectorCrypt"
             >
-              HOSHI
-            </GradientText>
+              CC
+            </span>
+          ) : (
+            <span className="shrink-0" title="Vault: Hoshi">
+              <GradientText
+                className="text-lg leading-none"
+                style={{ fontFamily: "var(--font-jersey)" }}
+              >
+                HOSHI
+              </GradientText>
+            </span>
           )}
         </div>
 

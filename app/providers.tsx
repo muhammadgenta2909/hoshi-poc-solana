@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { clusterApiUrl } from "@solana/web3.js";
@@ -8,6 +8,9 @@ import { AuthProvider } from "@/lib/useAuth";
 import { AdminAuthProvider } from "@/lib/adminAuth";
 import { CartProvider } from "@/lib/useCart";
 import { WalletConnectProvider, emitWalletError } from "@/lib/useWalletConnect";
+import { warmBackend } from "@/lib/api";
+import PrivyProviders, { PRIVY_ENABLED } from "./PrivyProviders";
+import PrivyBridge from "@/components/account/PrivyBridge";
 
 // Required for the legacy wallet-adapter-react-ui modal (still used by the POC
 // landing page `/`). Our own Hoshi modal lives in <WalletConnectProvider>.
@@ -15,6 +18,12 @@ import "@solana/wallet-adapter-react-ui/styles.css";
 
 export default function Providers({ children }: { children: ReactNode }) {
   const endpoint = process.env.NEXT_PUBLIC_RPC_URL ?? clusterApiUrl("devnet");
+
+  // Wake the (free-tier, cold-starting) backend as soon as the app loads, so
+  // it's already warm by the time the user connects a wallet and signs in.
+  useEffect(() => {
+    warmBackend();
+  }, []);
 
   // Phantom (and other modern wallets) auto-register as Standard Wallets, so they
   // appear in the connect modal without an explicit adapter. We deliberately do
@@ -25,20 +34,26 @@ export default function Providers({ children }: { children: ReactNode }) {
   const wallets = useMemo(() => [], []);
 
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect onError={emitWalletError}>
-        <WalletModalProvider>
-          <AuthProvider>
-            {/* WalletConnectProvider sits inside AuthProvider so the modal can run
-                login() (sign-to-verify) itself after the wallet connects. */}
-            <WalletConnectProvider>
-              <AdminAuthProvider>
-                <CartProvider>{children}</CartProvider>
-              </AdminAuthProvider>
-            </WalletConnectProvider>
-          </AuthProvider>
-        </WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    // PrivyProviders is a no-op passthrough unless NEXT_PUBLIC_PRIVY_APP_ID is set.
+    <PrivyProviders>
+      <ConnectionProvider endpoint={endpoint}>
+        <WalletProvider wallets={wallets} autoConnect onError={emitWalletError}>
+          <WalletModalProvider>
+            <AuthProvider>
+              {/* WalletConnectProvider sits inside AuthProvider so the modal can run
+                  login() (sign-to-verify) itself after the wallet connects. */}
+              <WalletConnectProvider>
+                {/* Turns a Privy (Google) login into our JWT session. Only mounted
+                    when Privy is enabled, so it never calls Privy hooks otherwise. */}
+                {PRIVY_ENABLED && <PrivyBridge />}
+                <AdminAuthProvider>
+                  <CartProvider>{children}</CartProvider>
+                </AdminAuthProvider>
+              </WalletConnectProvider>
+            </AuthProvider>
+          </WalletModalProvider>
+        </WalletProvider>
+      </ConnectionProvider>
+    </PrivyProviders>
   );
 }

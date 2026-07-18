@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { LAMPORTS_PER_SOL, PublicKey, type Connection } from "@solana/web3.js";
+import { formatSol } from "@/lib/tokens";
 import { formatIdr, Img } from "./ui";
 
 const IDRX_MINT = process.env.NEXT_PUBLIC_IDRX_MINT;
@@ -31,7 +32,7 @@ async function fetchBalance(
 }
 
 function format(balance: number): string {
-  return UNIT === "SOL" ? balance.toFixed(3) : formatIdr(Math.round(balance));
+  return UNIT === "SOL" ? formatSol(balance) : formatIdr(Math.round(balance));
 }
 
 /** `className` carries the layout (and therefore the visibility): the top bar
@@ -79,7 +80,16 @@ export default function BalancePill({
       title={publicKey ? "Refresh balance" : "Connect a wallet to see your balance"}
       className={`items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-[15px] font-semibold text-zinc-100 transition hover:bg-white/10 disabled:opacity-60 ${className}`}
     >
-      <Img src="/idrx.png" alt="" className="h-5 w-5" />
+      {/* Icon matches the unit: the IDRX coin next to a SOL number was a lie. */}
+      {UNIT === "IDRX" ? (
+        <Img src="/idrx.png" alt="" className="h-5 w-5" />
+      ) : (
+        <span
+          aria-hidden
+          className="h-5 w-5 shrink-0 rounded-full"
+          style={{ background: "linear-gradient(135deg,#9945FF,#14F195)" }}
+        />
+      )}
       {value !== null && <span className="tabular-nums">{value}</span>}
       <span className="text-zinc-400">{UNIT}</span>
       <Img src="/cached.png" alt="" className="h-[18px] w-[18px]" />

@@ -108,6 +108,7 @@ export default function TopNav({ active }: { active?: NavLabel }) {
           <div className="hidden lg:block">
             <AccountMenu />
           </div>
+          <QuickLogout />
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
@@ -122,6 +123,35 @@ export default function TopNav({ active }: { active?: NavLabel }) {
 
       <MobileMenu open={menuOpen} onClose={closeMenu} active={active} />
     </header>
+  );
+}
+
+/** One-click log out for the desktop bar — clears the JWT AND disconnects the
+ *  wallet in a single tap, no dropdown to open (that menu keeps its own Log out).
+ *  Hidden below lg (the drawer has one) and when there's nothing to log out of.
+ *  Hydration-safe: publicKey and the auth token are both null on the server AND
+ *  the first client render, so the button pops in only after hydration. */
+function QuickLogout() {
+  const { publicKey, disconnect } = useWallet();
+  const { isAuthed, logout } = useAuth();
+
+  if (!publicKey && !isAuthed) return null;
+
+  const onLogout = () => {
+    logout();
+    disconnect().catch(() => {});
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onLogout}
+      title="Log out"
+      aria-label="Log out"
+      className="hidden h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/[0.06] text-zinc-300 transition hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-300 lg:grid"
+    >
+      <LogoutIcon className="h-[18px] w-[18px]" />
+    </button>
   );
 }
 

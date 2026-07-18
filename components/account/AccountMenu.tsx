@@ -5,10 +5,11 @@
 // account pages and a log-out action. When no wallet is connected it falls back
 // to the Connect Wallet pill, which opens the Hoshi connect modal.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { DEVNET_USDC_MINT, fetchSplBalance, formatSol, formatUsdc } from "@/lib/tokens";
 import { useAuth } from "@/lib/useAuth";
 import WalletPill from "@/components/packs/WalletPill";
 import {
@@ -48,13 +49,15 @@ export default function AccountMenu() {
     { label: "Withdraw History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];
 
-  const { publicKey, disconnect } = useWallet();
-  const { logout } = useAuth();
+  const { disconnect } = useWallet();
+  const { logout, activeAddress } = useAuth();
 
   const [open, setOpen] = useState(false);
   const ref = useOutsideClose(open, () => setOpen(false));
 
-  const address = publicKey?.toBase58() ?? null;
+  // activeAddress covers BOTH a connected Phantom wallet and a Google/Privy user
+  // (who has a JWT wallet but no wallet-adapter key), so both read as connected.
+  const address = activeAddress;
 
   if (!address) return <WalletPill />;
 
@@ -135,22 +138,34 @@ export default function AccountMenu() {
  *  no need to key the effect on an `open` flag. */
 export function WalletIdentityPanel({ address }: { address: string }) {
   const { connection } = useConnection();
-  const { publicKey } = useWallet();
   const [sol, setSol] = useState<number | null>(null);
+  const [usdc, setUsdc] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // All setState in async callbacks — no sync-in-effect.
+  // Read balances by ADDRESS (not the wallet-adapter key) so a Google/Privy user
+  // sees their balance too. All setState in async callbacks — no sync-in-effect.
+  const owner = useMemo(() => {
+    try {
+      return new PublicKey(address);
+    } catch {
+      return null;
+    }
+  }, [address]);
+
   useEffect(() => {
-    if (!publicKey) return;
+    if (!owner) return;
     let alive = true;
     connection
-      .getBalance(publicKey, "confirmed")
+      .getBalance(owner, "confirmed")
       .then((l) => alive && setSol(l / LAMPORTS_PER_SOL))
       .catch(() => alive && setSol(null));
+    fetchSplBalance(connection, owner, DEVNET_USDC_MINT)
+      .then((b) => alive && setUsdc(b))
+      .catch(() => alive && setUsdc(null));
     return () => {
       alive = false;
     };
-  }, [publicKey, connection]);
+  }, [owner, connection]);
 
   const onCopy = async () => {
     if (await copyText(address)) {
@@ -185,10 +200,12 @@ export function WalletIdentityPanel({ address }: { address: string }) {
         </button>
       </div>
 
+      {/* Live devnet balances only. The old ESCROW row is gone on purpose: no
+          escrow ledger exists anywhere in the backend, so showing a number for
+          it was pure fiction. */}
       <div className="mt-2 space-y-1 rounded-xl bg-white/[0.03] p-2.5">
-        <BalanceRow label="SOL" value={sol === null ? "…" : sol.toFixed(2)} dot="#9945FF" />
-        <BalanceRow label="USDC" value="0.00" dot="#2775CA" />
-        <BalanceRow label="ESCROW" value="0.00" dot="#7C5CFF" />
+        <BalanceRow label="SOL" value={sol === null ? "…" : formatSol(sol)} dot="#9945FF" />
+        <BalanceRow label="USDC" value={usdc === null ? "…" : formatUsdc(usdc)} dot="#2775CA" />
       </div>
       {copied && <p className="mt-2 text-center text-[11px] text-emerald-400">Address copied</p>}
     </>

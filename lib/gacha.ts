@@ -48,13 +48,18 @@ export type GachaPull = {
   /** 'OPENED' on success. */
   status: string;
   turbo: boolean;
-  /** Recipient wallet (the logged-in admin). */
+  /** PAYER wallet. On the treasury flow this is the Hoshi treasury, NOT the
+   *  recipient — the card recipient is derived server-side from the JWT and is
+   *  never echoed back, so the reveal shows the CONNECTED wallet instead. */
   playerAddress: string;
   /** Price paid, in 6-decimal base units. */
   priceUsdc: number | null;
   rarity: GachaRarity | null;
   nftAddress: string | null;
   nftName: string | null;
+  /** Real card art resolved server-side from the CC payload (content.links.image
+   *  → files[0].cdn_uri → files[0].uri). Null on older backend rows. */
+  nftImage: string | null;
   roll: string | null;
   points: number | null;
   buybackAmountUsdc: number | null;
@@ -95,35 +100,29 @@ const ccDropRate = (rarity: GachaRarity, pct: number): DropRate => ({
 
 type PackArt = { group: Pack["group"]; accent: string; image: string; heroImage: string };
 
-/** Reuse existing Hoshi pack art (never CC's own thumbnail), picked by price tier. */
+/**
+ * Pack wrapper art by price band — the wrapper's colour IS its rarity read:
+ * rare = blue, epic = purple, holo = holographic (top tier). One table so the
+ * bands are trivial to re-tune and adding a tier (e.g. a common/legendary
+ * wrapper) is a single row. The same wrapper drives both the Select-Pack tile
+ * (`image`) and the centre showcase (`heroImage`), so a $99 pack no longer shows
+ * the old yellow Arceus art — it shows the pack that matches its band.
+ * Ordered high→low; the first band whose `minUsd` the price clears wins.
+ */
+const PACK_TIERS: {
+  minUsd: number;
+  group: Pack["group"];
+  accent: string;
+  art: string;
+}[] = [
+  { minUsd: 100, group: "Special Hoshi Pack", accent: "linear-gradient(160deg,#4b3b7a,#0a0713)", art: "/holo.png" },
+  { minUsd: 50, group: "Normal Hoshi Pack", accent: "linear-gradient(160deg,#a855f7,#4c1d95)", art: "/epic.png" },
+  { minUsd: 0, group: "Normal Hoshi Pack", accent: "linear-gradient(160deg,#3b82f6,#0c4a6e)", art: "/rare.png" },
+];
+
 const artForPrice = (usd: number): PackArt => {
-  if (usd >= 250)
-    return {
-      group: "Special Hoshi Pack",
-      accent: "linear-gradient(160deg,#fbbf24,#b45309)",
-      image: "/card-enable2.png",
-      heroImage: "/card-main.png",
-    };
-  if (usd >= 100)
-    return {
-      group: "Special Hoshi Pack",
-      accent: "linear-gradient(160deg,#a855f7,#4c1d95)",
-      image: "/card-enable1.png",
-      heroImage: "/card-main.png",
-    };
-  if (usd >= 50)
-    return {
-      group: "Normal Hoshi Pack",
-      accent: "linear-gradient(160deg,#3b82f6,#0c4a6e)",
-      image: "/card-enable1.png",
-      heroImage: "/card-main.png",
-    };
-  return {
-    group: "Normal Hoshi Pack",
-    accent: "linear-gradient(160deg,#52525b,#18181b)",
-    image: "/card-disable1.png",
-    heroImage: "/card-main.png",
-  };
+  const tier = PACK_TIERS.find((t) => usd >= t.minUsd) ?? PACK_TIERS[PACK_TIERS.length - 1];
+  return { group: tier.group, accent: tier.accent, image: tier.art, heroImage: tier.art };
 };
 
 /**
@@ -165,18 +164,32 @@ const CC_TO_HOSHI_TIER: Record<GachaRarity, Tier> = {
 const ccToHoshiTier = (rarity: GachaRarity | null): Tier =>
   rarity ? CC_TO_HOSHI_TIER[rarity] : "Common";
 
-/** Solana devnet explorer link for a minted card address. */
-const explorerAddressUrl = (address: string | null): string =>
-  address ? `https://explorer.solana.com/address/${address}?cluster=devnet` : "";
+/** Solana cluster used for explorer links. Defaults to devnet; set
+ *  NEXT_PUBLIC_SOLANA_CLUSTER=mainnet-beta for mainnet (Explorer treats a missing
+ *  ?cluster as mainnet, so we drop the param there). Switching networks is an env
+ *  change — no code edit. */
+const SOLANA_CLUSTER = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
+
+export const explorerAddressUrl = (address: string | null): string => {
+  if (!address) return "";
+  const base = `https://explorer.solana.com/address/${address}`;
+  return SOLANA_CLUSTER === "mainnet-beta" ? base : `${base}?cluster=${SOLANA_CLUSTER}`;
+};
 
 /**
  * Adapt a REAL pull into OpenResult for RipReveal. The card's true identity
- * (nftName, exact rarity, address, explorer link, recipient wallet) rides in
- * `real`; `card.imageUrl` is a Hoshi placeholder (the pull endpoint returns no
- * image) and the IDRX value/buyback are 0 — a real card carries no synthetic
- * IDRX value, so the reveal shows USD + explorer instead.
+ * (nftName, exact rarity, address, explorer link) rides in `real`. Image order:
+ * caller override (winners-feed lookup for old backend rows) → the pull's own
+ * `nftImage` → the Hoshi card back as an honest "no art" placeholder (NEVER the
+ * yellow pack wrapper — that made every reveal look like the wrong card).
+ * `wallet` is the caller-supplied RECIPIENT (the connected wallet): the pull's
+ * playerAddress is the treasury payer on this flow, not who received the card.
  */
-export function pullToOpenResult(pull: GachaPull, fallbackPackId: string): OpenResult {
+export function pullToOpenResult(
+  pull: GachaPull,
+  fallbackPackId: string,
+  opts?: { image?: string | null; recipient?: string | null },
+): OpenResult {
   const rarity = ccToHoshiTier(pull.rarity);
   return {
     packId: pull.packType || fallbackPackId,
@@ -184,7 +197,7 @@ export function pullToOpenResult(pull: GachaPull, fallbackPackId: string): OpenR
     card: {
       name: pull.nftName ?? "Your card",
       rarity,
-      imageUrl: "/card-main.png",
+      imageUrl: opts?.image ?? pull.nftImage ?? "/card-back.svg",
       valueIdr: 0,
     },
     buybackQuoteIdr: 0,
@@ -193,7 +206,7 @@ export function pullToOpenResult(pull: GachaPull, fallbackPackId: string): OpenR
       nftAddress: pull.nftAddress,
       explorerUrl: explorerAddressUrl(pull.nftAddress),
       priceUsdc: pull.priceUsdc,
-      wallet: pull.playerAddress,
+      wallet: opts?.recipient ?? undefined,
       sent: pull.status === "OPENED",
     },
   };

@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import Link from "next/link";
-import { secondaryPrice, type Listing, type RelistInput } from "@/lib/market";
+import { secondaryPrice, type Listing, type RelistInput, type VaultSource } from "@/lib/market";
 import type { CardDetail, Offer } from "@/lib/cardDetail";
 import {
   ApiError,
@@ -229,7 +229,25 @@ function Stat({ label, value, valueColor, href }: { label: string; value: string
   );
 }
 
-function VaultVerified() {
+/** Provenance chip — reads the listing's vault source instead of hardcoding
+ *  Hoshi, so a CollectorCrypt-synced card is labelled honestly (PM requirement).
+ *  Legacy rows without a source are Hoshi-vaulted by definition. */
+function VaultVerified({ source }: { source?: VaultSource }) {
+  const isCC = (source ?? "HOSHI") === "COLLECTORCRYPT";
+  if (isCC) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-[#38E5D0]/30 bg-[#38E5D0]/[0.08] px-2 py-1">
+        <Img src="/icon-verified.png" alt="" className="h-3.5 w-3.5" />
+        <span className="text-sm leading-none text-[#38E5D0]" style={JERSEY}>
+          Vault Verified
+        </span>
+        <span className="text-[11px] text-zinc-400">by</span>
+        <span className="text-sm leading-none text-[#38E5D0]" style={JERSEY}>
+          COLLECTOR CRYPT
+        </span>
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1.5 rounded-md border border-yellow-400/25 bg-yellow-400/[0.06] px-2 py-1">
       <Img src="/icon-verified.png" alt="" className="h-3.5 w-3.5" />
@@ -458,7 +476,7 @@ function RightColumn({
             Consigned by <span className="font-semibold text-zinc-100">{detail.consignedBy}</span>
           </span>
         </span>
-        <VaultVerified />
+        <VaultVerified source={listing.source} />
       </div>
 
       {/* content panel (#181507): CARD GRADE → offers, consistent left/right padding */}
@@ -514,6 +532,18 @@ function RightColumn({
             onCancel={onCancel}
           />
         </>
+      ) : listing.source === "COLLECTORCRYPT" ? (
+        // Kartu ini tersimpan di vault CollectorCrypt, bukan custody Hoshi.
+        // Beli/offer lewat Hoshi belum tersedia (butuh settlement dengan CC),
+        // jadi tampilkan info alih-alih tombol Buy yang akan gagal 400.
+        <div className="mt-5 rounded-2xl border border-[#38E5D0]/25 bg-[#38E5D0]/[0.06] px-5 py-4 text-center">
+          <p className="text-sm text-[#38E5D0]" style={JERSEY}>
+            Kartu ini disimpan di vault CollectorCrypt.
+          </p>
+          <p className="mt-1 text-[13px] text-zinc-400">
+            Pembelian langsung lewat Hoshi belum tersedia untuk kartu vault CollectorCrypt.
+          </p>
+        </div>
       ) : (
         <>
           <button

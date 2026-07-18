@@ -41,22 +41,45 @@ export default function CardDetailsPanel({
             <p className="text-[11px] uppercase tracking-wider text-zinc-500">{listing.set}</p>
           </div>
 
-          {/* Guarantee — only when Hoshi-backed */}
-          {listing.buyback > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">— Guarantee</p>
-              <div className="flex items-center gap-2 rounded-xl bg-black/20 px-3 py-2.5 text-sm">
-                <Img src="/icon-buyback.png" alt="" className="h-4 w-4 shrink-0" />
-                <span className="flex items-baseline gap-1">
-                  <GradientText className="font-semibold">Buyback Guarantee</GradientText>
-                  <span className="text-xs font-normal text-zinc-400">by</span>
-                  <GradientText className="text-base" style={{ fontFamily: "var(--font-jersey)" }}>
-                    HOSHI
-                  </GradientText>
-                </span>
-                <Idrx amount={listing.buyback} size={14} className="ml-auto text-sm text-zinc-200" />
+          {/* Guarantee. Two independent sources:
+              - Hoshi-backed: a fixed IDRX buyback amount we promise (buyback > 0).
+              - CollectorCrypt: CC has an active buyback offer (ccHasBuyback). The
+                price and execution are CC's — we never show an IDRX number for it,
+                because "the only legitimate buyback price is theirs". */}
+          {(listing.source ?? "HOSHI") === "COLLECTORCRYPT" ? (
+            listing.ccHasBuyback && (
+              <div>
+                <p className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">— Guarantee</p>
+                <div className="flex items-center gap-2 rounded-xl bg-black/20 px-3 py-2.5 text-sm">
+                  <Img src="/icon-buyback.png" alt="" className="h-4 w-4 shrink-0" />
+                  <span className="flex items-baseline gap-1">
+                    <span className="font-semibold text-[#38E5D0]">Buyback Offer</span>
+                    <span className="text-xs font-normal text-zinc-400">by</span>
+                    <span className="text-base text-[#38E5D0]" style={{ fontFamily: "var(--font-jersey)" }}>
+                      COLLECTOR CRYPT
+                    </span>
+                  </span>
+                  <span className="ml-auto text-xs text-zinc-400">at CC price</span>
+                </div>
               </div>
-            </div>
+            )
+          ) : (
+            listing.buyback > 0 && (
+              <div>
+                <p className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">— Guarantee</p>
+                <div className="flex items-center gap-2 rounded-xl bg-black/20 px-3 py-2.5 text-sm">
+                  <Img src="/icon-buyback.png" alt="" className="h-4 w-4 shrink-0" />
+                  <span className="flex items-baseline gap-1">
+                    <GradientText className="font-semibold">Buyback Guarantee</GradientText>
+                    <span className="text-xs font-normal text-zinc-400">by</span>
+                    <GradientText className="text-base" style={{ fontFamily: "var(--font-jersey)" }}>
+                      HOSHI
+                    </GradientText>
+                  </span>
+                  <Idrx amount={listing.buyback} size={14} className="ml-auto text-sm text-zinc-200" />
+                </div>
+              </div>
+            )
           )}
 
           {/* Expected value */}

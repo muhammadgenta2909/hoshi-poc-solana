@@ -38,7 +38,6 @@ import {
   Tabs,
   Panel,
   EmptyState,
-  ModalShell,
   TextInput,
   Select,
   PrimaryButton,
@@ -46,6 +45,7 @@ import {
   SearchIcon,
   InboxIcon,
 } from "@/components/account/ui";
+import RenameModal from "@/components/account/RenameModal";
 import {
   ActivityTable,
   ActiveListingsTable,
@@ -537,11 +537,14 @@ export default function ProfilePage() {
       )}
 
       {renaming && token && (
+        // key on the loaded name so the modal reseeds if it opened before the
+        // profile fetch resolved.
         <RenameModal
+          key={displayName ?? ""}
           current={displayName ?? ""}
           onClose={() => setRenaming(false)}
           onSave={async (name) => {
-            const p = await updateProfile(name, token);
+            const p = await updateProfile({ displayName: name }, token);
             setDisplayName(p.displayName);
           }}
         />
@@ -621,61 +624,6 @@ function FilterRow({
         className="sm:w-36"
       />
     </div>
-  );
-}
-
-function RenameModal({
-  current,
-  onClose,
-  onSave,
-}: {
-  current: string;
-  onClose: () => void;
-  onSave: (name: string) => Promise<void>;
-}) {
-  const [name, setName] = useState(current);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const trimmed = name.trim();
-  const save = async () => {
-    if (!trimmed) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await onSave(trimmed);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save.");
-      setSaving(false);
-    }
-  };
-
-  return (
-    <ModalShell
-      open
-      onClose={onClose}
-      title="Edit display name"
-      subtitle="This is the name other collectors see on your listings, offers and activity."
-    >
-      <TextInput
-        autoFocus
-        value={name}
-        maxLength={32}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Satoshi"
-        onKeyDown={(e) => e.key === "Enter" && void save()}
-      />
-      {error && <p className="mt-2 text-[12px] text-red-400">{error}</p>}
-      <div className="mt-5 flex justify-end gap-2">
-        <GhostButton onClick={onClose} disabled={saving}>
-          Cancel
-        </GhostButton>
-        <PrimaryButton onClick={save} disabled={!trimmed || saving}>
-          {saving ? "Saving…" : "Save"}
-        </PrimaryButton>
-      </div>
-    </ModalShell>
   );
 }
 
