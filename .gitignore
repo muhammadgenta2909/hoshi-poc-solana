@@ -49,7 +49,6 @@ next-env.d.ts
 note.txt
 
 # Agent tooling; not part of the app and not needed by the Vercel build.
-.claude/
 .agents/
 agent/
 skills-lock.json
