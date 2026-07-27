@@ -1,0 +1,17 @@
+# Vercel builds from source on its own machine, so never upload local artifacts.
+# Uploading .next/ (a full local production build) stalls the CLI's file upload.
+.next
+node_modules
+.git
+
+# Tooling and notes that the build never reads.
+.agents
+agent
+skills-lock.json
+note.txt
+docs
+
+# Solana keypairs — the app reads the key from the PLATFORM_SECRET_KEY env var
+# (lib/umi.ts), so these files must never be uploaded to Vercel.
+platform.json
+platform-prev-keypair.json
