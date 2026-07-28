@@ -129,6 +129,14 @@ export function PayModal({
   const [order, setOrder] = useState<PaymentOrder | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const startedRef = useRef(false);
+  // Simpan callback terbaru di ref. Parent (open-packs) meneruskan onFulfilled INLINE (fungsi
+  // baru tiap render), jadi kalau ia jadi dependency effect polling, tiap re-render parent
+  // membongkar+memasang ulang interval → clock 4 detik tak pernah selesai → order tak pernah
+  // dipoll sampai FULFILLED (cuma reconciler ~2 menit yang menyelamatkan). Ref memutus itu.
+  const onFulfilledRef = useRef(onFulfilled);
+  useEffect(() => {
+    onFulfilledRef.current = onFulfilled;
+  }, [onFulfilled]);
 
   // Create the order once on mount (needs a JWT — sign in first if needed).
   useEffect(() => {
@@ -169,7 +177,7 @@ export function PayModal({
           if (existing.status === "FULFILLED") {
             clearPendingPayment();
             setStage("done");
-            onFulfilled?.(existing);
+            onFulfilledRef.current?.(existing);
           } else if (isTerminalPaymentStatus(existing.status)) {
             clearPendingPayment();
             setErrorMsg(
@@ -201,7 +209,7 @@ export function PayModal({
     return () => {
       alive = false;
     };
-  }, [packType, token, login, setVisible, demo, resumeOrderId, onFulfilled]);
+  }, [packType, token, login, setVisible, demo, resumeOrderId]);
 
   // Poll the order until it settles. Skipped in demo — the fake payment drives the stages.
   useEffect(() => {
@@ -220,7 +228,7 @@ export function PayModal({
           clearPendingPayment(); // resolved either way — don't resume it again
           if (next.status === "FULFILLED") {
             setStage("done");
-            onFulfilled?.(next);
+            onFulfilledRef.current?.(next);
           } else {
             setErrorMsg(
               next.status === "EXPIRED"
@@ -238,7 +246,7 @@ export function PayModal({
       alive = false;
       clearInterval(id);
     };
-  }, [stage, order, token, onFulfilled, demo]);
+  }, [stage, order, token, demo]);
 
   const openHostedPage = useCallback(() => {
     if (!order?.paymentUrl) return;
@@ -255,9 +263,9 @@ export function PayModal({
     setStage("fulfilling");
     window.setTimeout(() => {
       setStage("done");
-      onFulfilled?.(order ?? ({ merchantOrderId: "demo-order", packType } as PaymentOrder));
+      onFulfilledRef.current?.(order ?? ({ merchantOrderId: "demo-order", packType } as PaymentOrder));
     }, 1800);
-  }, [onFulfilled, order, packType]);
+  }, [order, packType]);
 
   return createPortal(
     <div
