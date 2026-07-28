@@ -11,7 +11,6 @@ import {
   getGachaMachines,
   getGachaWinners,
   getMyPacks,
-  getPackStatus,
   openPackByMemo,
   purchaseGachaPack,
   PAYMENTS_ENABLED,
@@ -374,8 +373,13 @@ export default function OpenPacksPage() {
         .catch(() => {});
       try {
         if (!order.packMemo || !token) throw new Error("no-memo");
-        const pull = await getPackStatus(order.packMemo, token);
-        if (pull.status !== "OPENED") throw new Error("not-opened");
+        // getMyPacks membaca LEDGER kita (DB) dan mengembalikan pack DTO apa adanya —
+        // status di top-level, TANPA panggilan CC-remote. Beda dari getPackStatus yang
+        // membungkus { pack, collectorcrypt } DAN memanggil CC client (yang melempar untuk
+        // pack mock, dan status-nya tak pernah di top-level). Cari pull hasil order ini.
+        const packs = await getMyPacks(token);
+        const pull = packs.find((p) => p.memo === order.packMemo);
+        if (!pull || pull.status !== "OPENED") throw new Error("not-opened");
         let image = pull.nftImage ?? null;
         if (!image && pull.nftAddress) {
           try {
