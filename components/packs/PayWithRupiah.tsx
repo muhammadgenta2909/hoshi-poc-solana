@@ -352,10 +352,13 @@ export function PayModal({
         {stage === "fulfilling" && (
           <Center>
             <Spinner />
-            <p className="text-sm font-medium text-emerald-400">Pembayaran diterima!</p>
-            <p className="max-w-[18rem] text-[13px] text-zinc-400">
-              Menyiapkan pack &amp; mengirim kartu ke wallet-mu…
+            <p className="text-sm font-medium text-emerald-400">Pembayaran diterima ✓</p>
+            <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+              Lagi dikonfirmasi di jaringan blockchain — biasanya{" "}
+              <span className="font-semibold text-zinc-200">1–3 menit</span>. Tunggu
+              sebentar ya, animasi pack-nya bakal main otomatis di sini. 🎬
             </p>
+            <p className="text-[11px] text-zinc-500">Jangan tutup halaman ini.</p>
           </Center>
         )}
 
