@@ -97,6 +97,21 @@ export default function OpenPacksPage() {
   }, []);
 
   useEffect(() => {
+    // Duitku/IDRX redirects back to /open-packs with ?resultCode&merchantOrderId&reference
+    // appended. Resume runs off localStorage (readPendingPayment), NOT these params — so
+    // strip them from the URL the moment we land. Left in place they linger in the tab's
+    // history/address bar, and a later "Open Packs" navigation can snap back to the stale
+    // payment URL (the "maksa ke url tsb" bug). Preserve ?demo=1 so demo mode survives.
+    const params = new URLSearchParams(window.location.search);
+    if (
+      params.has("merchantOrderId") ||
+      params.has("resultCode") ||
+      params.has("reference")
+    ) {
+      const clean = params.get("demo") === "1" ? "/open-packs?demo=1" : "/open-packs";
+      window.history.replaceState(null, "", clean);
+    }
+
     const pending = readPendingPayment();
     if (!pending) return;
     /* eslint-disable react-hooks/set-state-in-effect */

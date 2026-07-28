@@ -55,9 +55,21 @@ export default function ListForSaleModal({
   // Tawaran buyback CC — patokan nilai TERBAIK saat tersedia (≈85–93% nilai
   // pasar CC). Read-only: fetch-nya tidak mengeksekusi apa pun.
   const [ccUsd, setCcUsd] = useState<number | null>(null);
+  // Selagi tawaran CC masih di-fetch, JANGAN tampilkan saran harga dulu: dulu ia
+  // sempat mem-flash saran berbasis "modal pack" sepersekian detik sebelum angka
+  // CC yang benar datang. Lebih baik tahan (skeleton) sampai patokan asli siap.
+  const [ccPending, setCcPending] = useState<boolean>(() =>
+    Boolean(token && pull.nftAddress),
+  );
   useEffect(() => {
-    if (!token || !pull.nftAddress) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (!token || !pull.nftAddress) {
+      setCcPending(false);
+      return;
+    }
     let alive = true;
+    setCcPending(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
     getBuybackValue(pull.nftAddress, token)
       .then((v) => {
         if (alive && v.available && v.refundAmountUsdc != null) {
@@ -66,6 +78,9 @@ export default function ListForSaleModal({
       })
       .catch(() => {
         /* patokan itu bonus — jangan pernah blokir listing karenanya */
+      })
+      .finally(() => {
+        if (alive) setCcPending(false);
       });
     return () => {
       alive = false;
@@ -155,7 +170,18 @@ export default function ListForSaleModal({
           </div>
         </div>
 
-        {/* Patokan harga — selalu tampil agar field harga bisa diputuskan. */}
+        {/* Patokan harga — tampil setelah patokan CC selesai dijemput, supaya
+            box-nya muncul sudah lengkap (bukan nambah baris "beli instan" +
+            ganti teks bantuan di tengah jalan). */}
+        {ccPending ? (
+          <div className="mb-3 space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="h-3.5 w-28 animate-pulse rounded bg-white/[0.06]" />
+              <span className="h-3.5 w-20 animate-pulse rounded bg-white/[0.06]" />
+            </div>
+            <span className="block h-3 w-3/4 animate-pulse rounded bg-white/[0.05]" />
+          </div>
+        ) : (
         <div className="mb-3 space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
           {ccUsd != null && (
             <div className="flex items-baseline justify-between gap-2">
@@ -181,9 +207,18 @@ export default function ListForSaleModal({
                 : "Belum ada patokan harga otomatis untuk kartu ini — cek harga kartu serupa di CollectorCrypt."}
           </p>
         </div>
+        )}
 
-        {/* Saran harga cepat (klik untuk mengisi field). */}
-        {suggestions.length > 0 && (
+        {/* Saran harga cepat (klik untuk mengisi field). Selagi patokan CC
+            di-fetch, tampilkan skeleton — bukan saran berbasis modal pack yang
+            langsung "loncat" begitu angka CC yang benar datang. */}
+        {ccPending ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-zinc-500">Saran:</span>
+            <span className="h-[26px] w-24 animate-pulse rounded-lg bg-white/[0.06]" />
+            <span className="h-[26px] w-24 animate-pulse rounded-lg bg-white/[0.06]" />
+          </div>
+        ) : suggestions.length > 0 ? (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className="text-[11px] text-zinc-500">Saran:</span>
             {suggestions.map((s) => (
@@ -198,7 +233,7 @@ export default function ListForSaleModal({
               </button>
             ))}
           </div>
-        )}
+        ) : null}
 
         {/* Harga — satu-satunya field yang benar-benar diisi penjual. */}
         <label className="mb-1.5 block">
