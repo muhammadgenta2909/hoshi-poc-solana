@@ -121,7 +121,11 @@ export function PayModal({
 }) {
   const { token, login } = useAuth();
   const { setVisible } = useWalletConnect();
-  const [stage, setStage] = useState<Stage>("creating");
+  // Resume (balik dari halaman bayar) langsung mulai di "fulfilling" — bukan "creating" —
+  // supaya tidak flash "Membuat tagihan…" padahal tagihannya sudah ada & sudah dibayar.
+  const [stage, setStage] = useState<Stage>(
+    resumeOrderId ? "fulfilling" : "creating",
+  );
   const [order, setOrder] = useState<PaymentOrder | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const startedRef = useRef(false);
