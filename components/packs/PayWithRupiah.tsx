@@ -28,6 +28,41 @@ import { GOLD_GRADIENT } from "./ui";
 const POLL_MS = 4_000;
 const idr = new Intl.NumberFormat("id-ID");
 
+// Payment resume across the hosted-page redirect. Before leaving to the Duitku/IDRX page
+// (same tab) we stash the order id here; when the user is redirected back, the open-packs
+// page reads it and re-opens this modal in resume mode to poll + auto-reveal. localStorage
+// (not the URL) so it survives whatever the gateway appends and works on a manual return too.
+const PENDING_KEY = "hoshi_pending_pay";
+
+function savePendingPayment(merchantOrderId: string, packType: string): void {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ merchantOrderId, packType }));
+  } catch {
+    /* private mode / storage full — resume just won't be available */
+  }
+}
+
+export function clearPendingPayment(): void {
+  try {
+    localStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readPendingPayment(): { merchantOrderId: string; packType: string } | null {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { merchantOrderId?: string; packType?: string };
+    return parsed?.merchantOrderId
+      ? { merchantOrderId: parsed.merchantOrderId, packType: parsed.packType ?? "" }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function PayWithRupiah({
   packType,
   onFulfilled,
@@ -71,10 +106,18 @@ export function PayModal({
   packType,
   onFulfilled,
   onClose,
+  demo = false,
+  resumeOrderId,
 }: {
   packType: string;
   onFulfilled?: (order: PaymentOrder) => void;
   onClose: () => void;
+  /** Demo/test mode (?demo=1): no real order, no real IDRX redirect, no money. A fake
+   *  QRIS + "Bayar (Demo)" button drives the SAME stages so the payment UX can be tried. */
+  demo?: boolean;
+  /** Resume an existing order after returning from the hosted payment page — instead of
+   *  creating a new one, poll this id until FULFILLED and auto-reveal. */
+  resumeOrderId?: string;
 }) {
   const { token, login } = useAuth();
   const { setVisible } = useWalletConnect();
@@ -90,6 +133,54 @@ export function PayModal({
     let alive = true;
     (async () => {
       try {
+        if (demo) {
+          // No backend, no money: a fake order so the "awaiting" screen renders.
+          if (!alive) return;
+          setOrder({
+            merchantOrderId: "demo-order",
+            packType,
+            priceIdr: 450000,
+            priceUsdc: 25_000_000,
+            paymentMethod: "QRIS",
+            status: "PENDING",
+            qrContent: null,
+            virtualAccountNo: null,
+            paymentUrl: null,
+            packMemo: null,
+            expiresAt: null,
+            createdAt: new Date().toISOString(),
+            paidAt: null,
+            fulfilledAt: null,
+          });
+          setStage("awaiting");
+          return;
+        }
+        if (resumeOrderId) {
+          // Returned from the payment page — poll the existing order, don't make a new one.
+          let rt = token;
+          if (!rt) rt = await login();
+          const existing = await getPaymentOrder(resumeOrderId, rt);
+          if (!alive) return;
+          setOrder(existing);
+          if (existing.status === "FULFILLED") {
+            clearPendingPayment();
+            setStage("done");
+            onFulfilled?.(existing);
+          } else if (isTerminalPaymentStatus(existing.status)) {
+            clearPendingPayment();
+            setErrorMsg(
+              existing.status === "EXPIRED"
+                ? "Pembayaran kedaluwarsa. Silakan ulangi."
+                : "Pembayaran gagal. Silakan ulangi.",
+            );
+            setStage("error");
+          } else {
+            // PENDING/PAID/FULFILLING → treat as paid-and-processing: show "menyiapkan"
+            // and let the poll effect drive it to FULFILLED (IDRX confirm is async).
+            setStage("fulfilling");
+          }
+          return;
+        }
         let t = token;
         if (!t) t = await login(); // pops the connect/sign flow if not signed in
         const created = await createPackOrder({ packType, method: "HOSTED" }, t);
@@ -106,10 +197,11 @@ export function PayModal({
     return () => {
       alive = false;
     };
-  }, [packType, token, login, setVisible]);
+  }, [packType, token, login, setVisible, demo, resumeOrderId, onFulfilled]);
 
-  // Poll the order until it settles.
+  // Poll the order until it settles. Skipped in demo — the fake payment drives the stages.
   useEffect(() => {
+    if (demo) return;
     if (stage !== "awaiting" && stage !== "fulfilling") return;
     if (!order || !token) return;
     let alive = true;
@@ -121,6 +213,7 @@ export function PayModal({
         if (next.status === "PAID" || next.status === "FULFILLING") setStage("fulfilling");
         if (isTerminalPaymentStatus(next.status)) {
           clearInterval(id);
+          clearPendingPayment(); // resolved either way — don't resume it again
           if (next.status === "FULFILLED") {
             setStage("done");
             onFulfilled?.(next);
@@ -141,11 +234,26 @@ export function PayModal({
       alive = false;
       clearInterval(id);
     };
-  }, [stage, order, token, onFulfilled]);
+  }, [stage, order, token, onFulfilled, demo]);
 
   const openHostedPage = useCallback(() => {
-    if (order?.paymentUrl) window.open(order.paymentUrl, "_blank", "noopener,noreferrer");
-  }, [order]);
+    if (!order?.paymentUrl) return;
+    // Stash the order so the return trip can resume it, then go to the payment page in the
+    // SAME tab — so after paying, Duitku/IDRX redirects back here (returnUrl) and the
+    // open-packs page auto-resumes + reveals. No second tab to get lost in.
+    savePendingPayment(order.merchantOrderId, packType);
+    window.location.href = order.paymentUrl;
+  }, [order, packType]);
+
+  // Demo "payment": walk the same stages a real settlement does (awaiting → fulfilling →
+  // done) with fake timing, then fire onFulfilled so the caller runs its post-payment flow.
+  const payDemo = useCallback(() => {
+    setStage("fulfilling");
+    window.setTimeout(() => {
+      setStage("done");
+      onFulfilled?.(order ?? ({ merchantOrderId: "demo-order", packType } as PaymentOrder));
+    }, 1800);
+  }, [onFulfilled, order, packType]);
 
   return createPortal(
     <div
@@ -186,21 +294,46 @@ export function PayModal({
               Total{" "}
               <span className="font-semibold text-white">Rp {idr.format(order.priceIdr)}</span>
             </p>
-            <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
-              Klik tombol di bawah untuk membuka halaman pembayaran IDRX (QRIS, e-wallet, atau
-              virtual account). Setelah bayar, jendela ini otomatis update.
-            </p>
-            <button
-              type="button"
-              onClick={openHostedPage}
-              className="w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105"
-              style={{ backgroundImage: GOLD_GRADIENT }}
-            >
-              Buka Halaman Pembayaran ↗
-            </button>
-            <p className="flex items-center gap-2 text-xs text-zinc-500">
-              <Spinner small /> Menunggu pembayaran…
-            </p>
+            {demo ? (
+              <>
+                <span className="rounded-full border border-dashed border-emerald-400/40 bg-emerald-400/[0.06] px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
+                  Mode Demo — tanpa uang asli
+                </span>
+                {/* Fake QRIS placeholder — no real code, purely to mimic the real screen. */}
+                <div className="grid h-40 w-40 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-xs text-zinc-500">
+                  QRIS (demo)
+                </div>
+                <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+                  Ini simulasi. Pencet tombol di bawah untuk pura-pura bayar & lihat apa yang
+                  terjadi setelahnya.
+                </p>
+                <button
+                  type="button"
+                  onClick={payDemo}
+                  className="w-full rounded-xl border border-emerald-400/40 bg-emerald-400/[0.1] px-4 py-3 text-[15px] font-semibold text-emerald-300 transition hover:bg-emerald-400/20"
+                >
+                  💳 Bayar (Demo)
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+                  Klik tombol di bawah untuk membuka halaman pembayaran IDRX (QRIS, e-wallet,
+                  atau virtual account). Setelah bayar, jendela ini otomatis update.
+                </p>
+                <button
+                  type="button"
+                  onClick={openHostedPage}
+                  className="w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105"
+                  style={{ backgroundImage: GOLD_GRADIENT }}
+                >
+                  Buka Halaman Pembayaran ↗
+                </button>
+                <p className="flex items-center gap-2 text-xs text-zinc-500">
+                  <Spinner small /> Menunggu pembayaran…
+                </p>
+              </>
+            )}
           </div>
         )}
 

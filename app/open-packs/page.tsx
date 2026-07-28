@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { type LiveCard, type Pack } from "@/lib/packs";
-import type { OpenResult } from "@/lib/openPack";
+import { openPackLocal, type OpenResult } from "@/lib/openPack";
 import { ALL_PACK_VIDEOS } from "@/lib/packVideo";
 import { PAGE_BG } from "@/lib/theme";
 import {
@@ -11,9 +11,11 @@ import {
   getGachaMachines,
   getGachaWinners,
   getMyPacks,
+  getPackStatus,
   openPackByMemo,
   purchaseGachaPack,
   PAYMENTS_ENABLED,
+  type PaymentOrder,
 } from "@/lib/api";
 import {
   isMachineAvailable,
@@ -32,7 +34,11 @@ import SelectPackPanel from "@/components/packs/SelectPackPanel";
 import PackShowcase from "@/components/packs/PackShowcase";
 import PackDetailsPanel from "@/components/packs/PackDetailsPanel";
 import RipReveal from "@/components/packs/RipReveal";
-import { PayModal } from "@/components/packs/PayWithRupiah";
+import {
+  PayModal,
+  readPendingPayment,
+  clearPendingPayment,
+} from "@/components/packs/PayWithRupiah";
 import TermsGate from "@/components/packs/TermsGate";
 import CollectorCryptBadge from "@/components/packs/CollectorCryptBadge";
 import { hasAcceptedCcTerms, acceptCcTerms } from "@/lib/ccTerms";
@@ -73,6 +79,33 @@ export default function OpenPacksPage() {
   // manually below, and only THEN is the card drawn (real suspense, not theatre).
   const [unopened, setUnopened] = useState<GachaPull[]>([]);
   const [openingMemo, setOpeningMemo] = useState<string | null>(null);
+
+  // Demo/test mode via ?demo=1 — shows a "try without paying" button that simulates the
+  // full Flow B (sealed pack → open → animation) LOCALLY: no money, no CC, no QRIS. Hidden
+  // from normal customers (no query param = off), so it's safe to ship.
+  const [demoMode, setDemoMode] = useState(false);
+  // True while the pay modal is running in demo mode (fake payment, no money).
+  const [demoPay, setDemoPay] = useState(false);
+  // Resume a payment after returning from the hosted page: on load we read the stashed
+  // order id and re-open the pay modal in resume mode → poll → auto-reveal.
+  const [resumeOrderId, setResumeOrderId] = useState<string | null>(null);
+  const [resumePackType, setResumePackType] = useState<string>("");
+  useEffect(() => {
+    // One-time client-only read of ?demo=1. Deliberately synchronous (no SSR window),
+    // and it flips a hidden button once — no cascading render worth worrying about.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDemoMode(new URLSearchParams(window.location.search).get("demo") === "1");
+  }, []);
+
+  useEffect(() => {
+    const pending = readPendingPayment();
+    if (!pending) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setResumeOrderId(pending.merchantOrderId);
+    setResumePackType(pending.packType);
+    setPayModalOpen(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   const loadUnopened = useCallback(async () => {
     if (!token) return; // not signed in → nothing to load (no synchronous setState here)
@@ -326,19 +359,47 @@ export default function OpenPacksPage() {
   // user opens it themselves (handleOpenSealedPack) whenever they want. Buy now, open
   // later — like a real booster pack.
   const handlePaidOrder = useCallback(
-    () => {
+    async (order: PaymentOrder) => {
       setPayModalOpen(false);
-      setOpenMsg(
-        'Pembayaran berhasil! Pack-mu masuk ke inventory di bawah — pencet "Buka Pack" kapan pun kamu siap.',
-      );
-      void loadUnopened();
+      setDemoPay(false);
+      setResumeOrderId(null);
+      // Auto-reveal: mount RipReveal now so the video plays while we fetch the card the
+      // paid pull produced, then reveal it — no manual "Open Pack" step.
+      setRipSeq((s) => s + 1);
+      setRip({ result: null, error: null });
       getGachaWinners()
         .then((ws) => {
           if (ws.length > 0) setLiveCards(winnersToLiveCards(ws));
         })
         .catch(() => {});
+      try {
+        if (!order.packMemo || !token) throw new Error("no-memo");
+        const pull = await getPackStatus(order.packMemo, token);
+        if (pull.status !== "OPENED") throw new Error("not-opened");
+        let image = pull.nftImage ?? null;
+        if (!image && pull.nftAddress) {
+          try {
+            const ws = await getGachaWinners();
+            image = ws.find((w) => w.nftAddress === pull.nftAddress)?.image ?? null;
+          } catch {
+            /* fallback stays null -> card-back */
+          }
+        }
+        setRip({
+          result: pullToOpenResult(pull, order.packType, {
+            image,
+            recipient: user?.walletAddress ?? publicKey?.toBase58() ?? null,
+          }),
+          error: null,
+        });
+      } catch {
+        // Reveal is cosmetic — the card is already delivered — so don't scare the user;
+        // fall back to a Vault note.
+        setRip(null);
+        setOpenMsg("Pembayaran berhasil — kartu sudah dikirim ke wallet-mu. Cek di Vault.");
+      }
     },
-    [loadUnopened],
+    [token, user, publicKey],
   );
 
   // Open ONE sealed pack the user owns. This is where the card is actually drawn (CC
@@ -346,7 +407,25 @@ export default function OpenPacksPage() {
   // genuine — not decided at purchase. On success the pack leaves the inventory.
   const handleOpenSealedPack = useCallback(
     async (memo: string) => {
-      if (!token || openingMemo) return;
+      if (openingMemo) return;
+      // DEMO pack (?demo=1): reveal a fake card LOCALLY — no backend, no token, no money.
+      // Exercises the exact same RipReveal takeover the real flow uses.
+      if (memo.startsWith("demo-")) {
+        setUnopened((u) => u.filter((p) => p.memo !== memo));
+        setRipSeq((s) => s + 1);
+        setRip({ result: null, error: null });
+        const pack = selected ?? packs[0];
+        window.setTimeout(
+          () =>
+            setRip({
+              result: pack ? openPackLocal(pack) : null,
+              error: pack ? null : "Demo: pilih pack dulu.",
+            }),
+          2600,
+        );
+        return;
+      }
+      if (!token) return;
       setOpeningMemo(memo);
       // Mount the takeover so the video plays while CC runs the VRF reveal.
       setRipSeq((s) => s + 1);
@@ -384,8 +463,27 @@ export default function OpenPacksPage() {
         void loadUnopened(); // the just-opened pack drops out of SUBMITTED
       }
     },
-    [token, openingMemo, user, publicKey, loadUnopened],
+    [token, openingMemo, user, publicKey, loadUnopened, selected, packs],
   );
+
+  // DEMO auto-reveal: mimics a settled rupiah payment — play the video, then reveal a
+  // locally-drawn fake card. Same UX as the real auto-reveal, no money/CC/backend.
+  const handleDemoPack = useCallback(() => {
+    setPayModalOpen(false);
+    setDemoPay(false);
+    setResumeOrderId(null);
+    setRipSeq((s) => s + 1);
+    setRip({ result: null, error: null });
+    const pack = selected ?? packs[0];
+    window.setTimeout(
+      () =>
+        setRip({
+          result: pack ? openPackLocal(pack) : null,
+          error: pack ? null : "Demo: pilih pack dulu.",
+        }),
+      2600,
+    );
+  }, [selected, packs]);
 
   // The actual open. With rupiah payments live, "Rip Pack" goes STRAIGHT to real
   // QRIS payment — the free "buka langsung (demo)" option is gone now that this is
@@ -444,6 +542,24 @@ export default function OpenPacksPage() {
               ) : gateHint ? (
                 <p className="mt-3 text-center text-xs text-zinc-500">{gateHint}</p>
               ) : null}
+
+              {demoMode && (
+                <div className="mt-4 flex flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDemoPay(true);
+                      setPayModalOpen(true);
+                    }}
+                    className="rounded-xl border border-dashed border-emerald-400/40 bg-emerald-400/[0.06] px-5 py-2.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-400/[0.12]"
+                  >
+                    🧪 Coba Demo (simulasi bayar)
+                  </button>
+                  <span className="text-[11px] text-zinc-500">
+                    Mode tes — buka modal bayar QRIS versi demo, tanpa uang asli & tanpa CC
+                  </span>
+                </div>
+              )}
             </>
           ) : (
             <div className="flex min-h-[420px] flex-col items-center justify-center gap-3 text-center">
@@ -519,11 +635,20 @@ export default function OpenPacksPage() {
       )}
 
       {/* IDRX rupiah pay modal — mounting it creates the order (see PayModal). */}
-      {payModalOpen && selectedMachine && (
+      {payModalOpen && (selectedMachine || resumeOrderId) && (
         <PayModal
-          packType={selectedMachine.code}
-          onFulfilled={() => handlePaidOrder()}
-          onClose={() => setPayModalOpen(false)}
+          packType={resumeOrderId ? resumePackType : (selectedMachine?.code ?? "")}
+          demo={demoPay}
+          resumeOrderId={resumeOrderId ?? undefined}
+          onFulfilled={(order) => (demoPay ? handleDemoPack() : handlePaidOrder(order))}
+          onClose={() => {
+            setPayModalOpen(false);
+            setDemoPay(false);
+            if (resumeOrderId) {
+              clearPendingPayment();
+              setResumeOrderId(null);
+            }
+          }}
         />
       )}
 
