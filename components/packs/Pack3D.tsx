@@ -33,13 +33,11 @@ function FadeLayer({
   alt,
   active,
   onExited,
-  imgRef,
 }: {
   src: string;
   alt: string;
   active: boolean;
   onExited: () => void;
-  imgRef?: React.RefObject<HTMLImageElement | null>;
 }) {
   const [opacity, setOpacity] = useState(0);
 
@@ -48,6 +46,7 @@ function FadeLayer({
       const r = requestAnimationFrame(() => setOpacity(1));
       return () => cancelAnimationFrame(r);
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset opacity so a re-activated layer fades from 0
     setOpacity(0);
   }, [active]);
 
@@ -64,7 +63,7 @@ function FadeLayer({
       }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img ref={imgRef} src={src} alt={alt} draggable={false} style={face} />
+      <img src={src} alt={alt} draggable={false} style={face} />
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
@@ -78,7 +77,7 @@ function FadeLayer({
 }
 
 /** Center pack artwork you can grab and spin 360° in 3D; swaps crossfade cleanly. */
-export default function Pack3D({ pack, className = "", imgRef }: { pack: Pack; className?: string; imgRef?: React.RefObject<HTMLImageElement | null> }) {
+export default function Pack3D({ pack, className = "" }: { pack: Pack; className?: string }) {
   const src = pack.heroImage ?? pack.image ?? "";
   const keyRef = useRef(0);
   const [layers, setLayers] = useState<{ key: number; src: string }[]>(() =>
@@ -160,7 +159,6 @@ export default function Pack3D({ pack, className = "", imgRef }: { pack: Pack; c
             alt={i === layers.length - 1 ? pack.name : ""}
             active={i === layers.length - 1}
             onExited={() => removeLayer(l.key)}
-            imgRef={imgRef}
           />
         ))}
       </div>

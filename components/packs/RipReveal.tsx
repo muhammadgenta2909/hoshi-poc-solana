@@ -107,16 +107,39 @@ export default function RipReveal({
     });
   }, [result, error]);
 
-  // Kick playback imperatively too: `autoPlay` alone rejects silently on some
-  // mobile browsers, and a rejected play promise is a NotAllowedError — NOT a
-  // media `error` event — so onError never fires. If it rejects, don't sit on a
-  // black frame; advance immediately (the watchdog is the backstop for stalls).
+  // Kick playback imperatively (no `autoPlay`/`muted` attrs — we drive muted state
+  // here). The clips carry an AUDIO track and the user wants to hear them, so try
+  // WITH sound first: reaching the reveal always follows a user gesture (opening /
+  // paying for the pack), which satisfies the browser autoplay policy in the common
+  // flows. If unmuted playback is still blocked (e.g. a fresh page after the payment
+  // redirect, no gesture yet), fall back to MUTED playback rather than skipping the
+  // reveal — never strand the takeover on a black frame. A rejected play promise is
+  // a NotAllowedError, not a media `error` event, so onError never fires; the final
+  // fallback advances manually, and the watchdog backstops genuine stalls.
   useEffect(() => {
     if (phase !== "video") return;
     const el = videoRef.current;
     if (!el) return;
-    const p = el.play?.();
-    if (p && typeof p.catch === "function") p.catch(() => onVideoEnd());
+    let cancelled = false;
+    const start = async () => {
+      el.muted = false;
+      el.volume = 1;
+      try {
+        await el.play();
+      } catch {
+        if (cancelled) return;
+        el.muted = true; // sound blocked → retry silently
+        try {
+          await el.play();
+        } catch {
+          if (!cancelled) onVideoEnd(); // truly can't play → don't wedge
+        }
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+    };
   }, [phase, onVideoEnd]);
 
   // Never let the "video" phase wedge (see VIDEO_WATCHDOG_MS).
@@ -186,8 +209,6 @@ export default function RipReveal({
       {phase === "video" && (
         <video
           ref={videoRef}
-          autoPlay
-          muted
           playsInline
           preload="auto"
           onEnded={onVideoEnd}

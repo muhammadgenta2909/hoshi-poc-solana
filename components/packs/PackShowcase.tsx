@@ -6,10 +6,16 @@ import Pack3D from "./Pack3D";
 import { GOLD_GRADIENT, GradientText, Idrx, Img } from "./ui";
 
 export default function PackShowcase({ pack, onRip }: { pack: Pack; onRip?: () => void }) {
-  const imgRef = useRef<HTMLImageElement>(null);
+  // Float the PERSISTENT wrapper, not the pack image. Pack3D swaps its <img>
+  // elements internally to crossfade on pack change, so a ref captured on the
+  // image goes stale the moment you pick another pack (the animated node gets
+  // unmounted → the float visibly freezes). This div never remounts, so the
+  // bob keeps running across pack switches. Rotation (drag) lives inside Pack3D
+  // on its own element, so translateY here composes cleanly with it.
+  const floatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const el = imgRef.current;
+    const el = floatRef.current;
     if (!el) return;
     if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     let start: number | null = null;
@@ -32,8 +38,10 @@ export default function PackShowcase({ pack, onRip }: { pack: Pack; onRip?: () =
           className="absolute -inset-10 -z-10 rounded-full opacity-70 blur-2xl"
           style={{ background: "radial-gradient(circle, rgba(245,158,11,0.45), transparent 70%)" }}
         />
-        {/* Persistent: Pack3D crossfades the art internally on pack change. */}
-        <Pack3D pack={pack} className="h-[340px] w-[260px] sm:h-[380px] sm:w-[290px]" imgRef={imgRef} />
+        {/* Persistent float wrapper: Pack3D crossfades the art internally on pack change. */}
+        <div ref={floatRef} className="will-change-transform">
+          <Pack3D pack={pack} className="h-[340px] w-[260px] sm:h-[380px] sm:w-[290px]" />
+        </div>
       </div>
 
       <div className="flex w-full max-w-[340px] flex-col items-center gap-4">
