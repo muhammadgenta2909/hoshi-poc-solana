@@ -159,9 +159,11 @@ function LeftColumn({ detail }: { detail: CardDetail }) {
       <div className="rounded-2xl bg-[#181507] p-4">
         <Label className="mb-3">Card Details</Label>
         <div className="flex flex-col gap-2">
-          {detail.details.map((d) => (
-            <DetailRow key={d.label} label={d.label} value={d.value} />
-          ))}
+          {detail.details
+            .filter((d) => d.value != null && String(d.value).trim() !== "")
+            .map((d) => (
+              <DetailRow key={d.label} label={d.label} value={d.value} />
+            ))}
         </div>
       </div>
     </div>
@@ -375,11 +377,16 @@ function RightColumn({
   ].filter(Boolean) as { label: string; value: string; valueColor?: string; href?: string }[];
   return (
     <div className="flex flex-col">
-      {/* badges + views */}
+      {/* badges + views — lewati tag kosong. `tags` = [grade, language, era];
+          CollectorCrypt kadang tidak mengisi language/era untuk kartu tertentu
+          (mis. Fuecoco Japanese: field language CC kosong walau set-nya menyebut
+          "Japanese"). Merender string kosong menghasilkan pill kosong yang aneh. */}
       <div className="flex flex-wrap items-center gap-2">
-        {detail.tags.map((t) => (
-          <Badge key={t}>{t}</Badge>
-        ))}
+        {detail.tags
+          .filter((t) => t.trim() !== "")
+          .map((t) => (
+            <Badge key={t}>{t}</Badge>
+          ))}
         <span className="ml-1 inline-flex items-center gap-1.5 text-zinc-300">
           <Img src="/visibility.png" alt="" className="h-[18px] w-[18px] opacity-80" />
           <span className="text-[17px] leading-none" style={JERSEY}>
