@@ -6,6 +6,10 @@ import { usePathname } from "next/navigation";
 export default function BgmPlayer() {
   const ref = useRef<HTMLAudioElement>(null);
   const [on, setOn] = useState(false);
+  // Ducked = temporarily silenced by another surface (the pack-opening reveal),
+  // so its clip's audio is heard cleanly. Independent of the on/off toggle: the
+  // toggle keeps its state, we just hold playback until the reveal is done.
+  const [ducked, setDucked] = useState(false);
   const pathname = usePathname();
   const hide = pathname?.startsWith("/admin");
 
@@ -14,13 +18,26 @@ export default function BgmPlayer() {
   }, []);
 
   useEffect(() => {
-    if (hide) {
+    if (hide || ducked) {
       ref.current?.pause();
       return;
     }
     if (on && ref.current) ref.current.play().catch(() => {});
     else ref.current?.pause();
-  }, [on, hide]);
+  }, [on, hide, ducked]);
+
+  // The pack-opening takeover (RipReveal) dispatches these so its video's sound is
+  // never fighting the BGM — the BGM toggle button has NO effect on the reveal audio.
+  useEffect(() => {
+    const duck = () => setDucked(true);
+    const restore = () => setDucked(false);
+    window.addEventListener("hoshi:bgm-duck", duck);
+    window.addEventListener("hoshi:bgm-restore", restore);
+    return () => {
+      window.removeEventListener("hoshi:bgm-duck", duck);
+      window.removeEventListener("hoshi:bgm-restore", restore);
+    };
+  }, []);
 
   const toggle = useCallback(() => {
     setOn((p) => !p);

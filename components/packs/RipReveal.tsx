@@ -99,6 +99,16 @@ export default function RipReveal({
     };
   }, []);
 
+  // Duck the page background music for the whole takeover so the rip clip's OWN
+  // audio is heard cleanly — the BGM toggle button never competes with or mutes
+  // the reveal sound. BgmPlayer restores its prior state when we dispatch restore.
+  useEffect(() => {
+    window.dispatchEvent(new Event("hoshi:bgm-duck"));
+    return () => {
+      window.dispatchEvent(new Event("hoshi:bgm-restore"));
+    };
+  }, []);
+
   const onVideoEnd = useCallback(() => {
     setPhase((p) => {
       if (p !== "video") return p;
