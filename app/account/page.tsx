@@ -30,7 +30,7 @@ import {
   updateListing,
   updateProfile,
 } from "@/lib/api";
-import { MARKET_SETS, type Listing } from "@/lib/market";
+import { type Listing } from "@/lib/market";
 import { explorerAddressUrl, type GachaPull } from "@/lib/gacha";
 import type { ActivityRecord, OfferRecord } from "@/lib/offers";
 import MarketCard from "@/components/packs/MarketCard";
@@ -82,7 +82,38 @@ const SORTS: readonly { value: SortKey; label: string }[] = [
 ];
 
 const ALL_SERIES = "All Series";
-const SERIES_OPTIONS = [ALL_SERIES, ...MARKET_SETS];
+
+/**
+ * Pilihan "Series" DIBANGUN DARI DATA YANG BENAR-BENAR DIMUAT, bukan dari daftar
+ * tetap. Dulu isinya `MARKET_SETS` (Classic/Jungle/Promo/Rare/Evolving) — lima set
+ * contoh sisa fase data dummy. Set kartu sungguhan berasal dari katalog
+ * CollectorCrypt (`card.set`, fallback `card.category`) dan berupa string bebas
+ * seperti "Fossil - 1st Edition - English"; di produksi hanya ~14% baris yang
+ * kebetulan cocok dengan lima nilai itu, jadi memilih series apa pun akan
+ * mengosongkan tab. Diturunkan begini, setiap opsi dijamin punya minimal satu baris.
+ */
+const seriesOptionsFrom = (values: (string | null | undefined)[]): string[] => [
+  ALL_SERIES,
+  ...[...new Set(values.map((v) => v?.trim()).filter((v): v is string => !!v))].sort((a, b) =>
+    a.localeCompare(b),
+  ),
+];
+
+/** ISO → ms. Tanggal yang tak terbaca jadi 0: comparator yang mengembalikan NaN
+ *  membuat Array.sort meninggalkan urutan sembarang, bukan melempar error — persis
+ *  jenis kegagalan diam yang bikin "Newest/Oldest" terlihat tidak bekerja. */
+const time = (iso: string | null | undefined): number => {
+  const t = Date.parse(iso ?? "");
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/** Satu kartu di tab Assets — hasil beli (Listing) ATAU hasil buka pack (GachaPull).
+ *  Keduanya dinormalkan ke bentuk ini supaya search, filter series, sort dan paging
+ *  berlaku pada SATU daftar. Sebelumnya kartu hasil pull dirender terpisah di atas
+ *  grid, jadi ia lolos dari filter series dan tidak pernah ikut diurutkan. */
+type AssetRow =
+  | { kind: "listing"; key: string; name: string; series: string | null; at: string; listing: Listing }
+  | { kind: "pull"; key: string; name: string; series: string | null; at: string; pull: GachaPull };
 
 export default function ProfilePage() {
   const { token, hydrated, isAuthed, user } = useAuth();
@@ -204,53 +235,91 @@ export default function ProfilePage() {
     };
 
   const q = query.trim().toLowerCase();
-  const bySeries = <T,>(rows: T[], get: (r: T) => string | null | undefined) =>
-    series === ALL_SERIES ? rows : rows.filter((r) => get(r) === series);
-  const byNewest = <T,>(rows: T[], get: (r: T) => string) =>
+
+  // Kartu beli + kartu hasil pack sebagai satu daftar. `soldAt` = kapan kartu jadi
+  // milik user; `listedAt` (kapan PENJUAL memajangnya, dan untuk kartu hasil sync CC
+  // itu cuma waktu sync) hanya cadangan untuk baris lama yang belum membawa soldAt.
+  const activeListings = useMemo(
+    () => listings.filter((l) => l.status === "ACTIVE"),
+    [listings],
+  );
+  const assetRows = useMemo<AssetRow[]>(
+    () => [
+      ...assets.map((l) => ({
+        kind: "listing" as const,
+        key: `listing:${l.id}`,
+        name: l.name,
+        series: l.set?.trim() || null,
+        at: l.soldAt ?? l.listedAt,
+        listing: l,
+      })),
+      ...pulls.map((p) => ({
+        kind: "pull" as const,
+        key: `pull:${p.memo}`,
+        name: p.ccItemName ?? p.nftName ?? "Pulled card",
+        series: p.ccSet?.trim() || null,
+        at: p.openedAt ?? p.createdAt,
+        pull: p,
+      })),
+    ],
+    [assets, pulls],
+  );
+
+  // Opsi series milik TAB AKTIF, jadi tidak ada pilihan yang menghasilkan nol baris.
+  const seriesOptions = useMemo(() => {
+    if (tab === "ASSETS") return seriesOptionsFrom(assetRows.map((r) => r.series));
+    if (tab === "ACTIVITY") return seriesOptionsFrom(activity.map((a) => a.item.set));
+    if (tab === "ACTIVE LISTINGS") return seriesOptionsFrom(activeListings.map((l) => l.set));
+    if (tab === "OFFERS MADE") return seriesOptionsFrom(offersMade.map((o) => o.item.set));
+    return seriesOptionsFrom(offersReceived.map((o) => o.item.set));
+  }, [tab, assetRows, activity, activeListings, offersMade, offersReceived]);
+
+  /** Series yang benar-benar dipakai memfilter. Kalau pilihan user tidak ada di tab
+   *  ini, ia jatuh balik ke "All Series" TANPA menghapus state — pindah tab tidak
+   *  menyisakan tab kosong yang membingungkan, dan kembali ke tab asal memulihkan
+   *  pilihannya. Selama data masih dimuat opsinya kosong, jadi ini juga mencegah
+   *  filter menghabisi baris sebelum daftarnya sempat terbentuk. */
+  const activeSeries = seriesOptions.includes(series) ? series : ALL_SERIES;
+
+  const matches = (name: string, seriesOf: string | null | undefined) =>
+    (!q || name.toLowerCase().includes(q)) &&
+    (activeSeries === ALL_SERIES || seriesOf === activeSeries);
+
+  const byNewest = <T,>(rows: T[], get: (r: T) => string | null | undefined) =>
     [...rows].sort((x, y) =>
-      sort === "newest"
-        ? Date.parse(get(y)) - Date.parse(get(x))
-        : Date.parse(get(x)) - Date.parse(get(y)),
+      sort === "newest" ? time(get(y)) - time(get(x)) : time(get(x)) - time(get(y)),
     );
 
-  const shownAssets = useMemo(() => {
-    const rows = bySeries(
-      assets.filter((i) => !q || i.name.toLowerCase().includes(q)),
-      (i) => i.set,
-    );
-    return byNewest(rows, (i) => i.listedAt);
+  const shownAssets = useMemo(
+    () => byNewest(assetRows.filter((r) => matches(r.name, r.series)), (r) => r.at),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assets, q, sort, series]);
+    [assetRows, q, sort, activeSeries],
+  );
 
-  const shownListings = useMemo(() => {
-    const rows = bySeries(
-      listings.filter((l) => l.status === "ACTIVE" && (!q || l.name.toLowerCase().includes(q))),
-      (l) => l.set,
-    );
-    return byNewest(rows, (l) => l.listedAt);
+  const shownListings = useMemo(
+    () => byNewest(activeListings.filter((l) => matches(l.name, l.set)), (l) => l.listedAt),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listings, q, sort, series]);
+    [activeListings, q, sort, activeSeries],
+  );
 
-  const shownActivity = useMemo(() => {
-    const rows = bySeries(
-      activity.filter((a) => !q || a.item.name.toLowerCase().includes(q)),
-      (a) => a.item.set,
-    );
-    return byNewest(rows, (a) => a.createdAt);
+  const shownActivity = useMemo(
+    () => byNewest(activity.filter((a) => matches(a.item.name, a.item.set)), (a) => a.createdAt),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activity, q, sort, series]);
+    [activity, q, sort, activeSeries],
+  );
 
-  const filterOffers = (rows: OfferRecord[]) => {
-    const filtered = bySeries(
-      rows.filter((o) => !q || o.item.name.toLowerCase().includes(q)),
-      (o) => o.item.set,
-    );
-    return byNewest(filtered, (o) => o.createdAt);
-  };
+  const filterOffers = (rows: OfferRecord[]) =>
+    byNewest(rows.filter((o) => matches(o.item.name, o.item.set)), (o) => o.createdAt);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shownMade = useMemo(() => filterOffers(offersMade), [offersMade, q, sort, series]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shownReceived = useMemo(() => filterOffers(offersReceived), [offersReceived, q, sort, series]);
+  const shownMade = useMemo(() => filterOffers(offersMade), [offersMade, q, sort, activeSeries]);
+  const shownReceived = useMemo(
+    () => filterOffers(offersReceived),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [offersReceived, q, sort, activeSeries],
+  );
+
+  /** true ⇒ tab kosong karena filter, bukan karena user belum punya apa-apa. */
+  const filtering = !!q || activeSeries !== ALL_SERIES;
 
   /* ------------------------------ mutations ------------------------------- */
 
@@ -356,26 +425,32 @@ export default function ProfilePage() {
     if (!isAuthed) return <ConnectGate connected={!!publicKey} onConnect={open} />;
 
     if (tab === "ASSETS") {
+      // Kartu beli dan kartu hasil pack diurutkan & dihalamankan BERSAMA — kalau
+      // pull dirender di luar `slice`, "Newest/Oldest" tidak menyentuhnya sama sekali.
       const { slice, totalPages, page: p } = paginate(shownAssets, page, 8);
-      // Pulls are shown alongside purchases. Filter by the same search query so the tab
-      // behaves consistently; they're always shown in full (not paginated with purchases).
-      const shownPulls = q
-        ? pulls.filter((pk) =>
-            (pk.ccItemName ?? pk.nftName ?? "").toLowerCase().includes(q),
-          )
-        : pulls;
-      const isEmpty = shownPulls.length === 0 && slice.length === 0;
       return (
         <>
-          <FilterRow query={query} setQuery={onFilter(setQuery)} sort={sort} setSort={onFilter(setSort)} series={series} setSeries={onFilter(setSeries)} />
+          <FilterRow
+            query={query}
+            setQuery={onFilter(setQuery)}
+            sort={sort}
+            setSort={onFilter(setSort)}
+            series={activeSeries}
+            setSeries={onFilter(setSeries)}
+            seriesOptions={seriesOptions}
+          />
           {loading && !assets.length && !pulls.length ? (
             <Loading label="Loading your collection…" />
-          ) : isEmpty ? (
+          ) : slice.length === 0 ? (
             <EmptyState
-              title={q ? "No cards match your search" : "No assets yet"}
-              sub={q ? "Try a different name." : "Cards you buy or pull from packs show up here."}
+              title={filtering ? "No cards match your filters" : "No assets yet"}
+              sub={
+                filtering
+                  ? "Try a different name or series."
+                  : "Cards you buy or pull from packs show up here."
+              }
               action={
-                !q && (
+                !filtering && (
                   <Link href="/marketplace">
                     <PrimaryButton>Browse marketplace</PrimaryButton>
                   </Link>
@@ -385,12 +460,13 @@ export default function ProfilePage() {
           ) : (
             <>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {shownPulls.map((pk) => (
-                  <PullAsset key={pk.memo} pull={pk} />
-                ))}
-                {slice.map((l) => (
-                  <MarketCard key={l.id} listing={l} currency="IDR" showStatus />
-                ))}
+                {slice.map((row) =>
+                  row.kind === "pull" ? (
+                    <PullAsset key={row.key} pull={row.pull} />
+                  ) : (
+                    <MarketCard key={row.key} listing={row.listing} currency="IDR" showStatus />
+                  ),
+                )}
               </div>
               <Pager page={p} totalPages={totalPages} onPage={setPage} />
             </>
@@ -403,14 +479,26 @@ export default function ProfilePage() {
       const { slice, totalPages, page: p } = paginate(shownActivity, page);
       return (
         <>
-          <FilterRow query={query} setQuery={onFilter(setQuery)} sort={sort} setSort={onFilter(setSort)} series={series} setSeries={onFilter(setSeries)} />
+          <FilterRow
+            query={query}
+            setQuery={onFilter(setQuery)}
+            sort={sort}
+            setSort={onFilter(setSort)}
+            series={activeSeries}
+            setSeries={onFilter(setSeries)}
+            seriesOptions={seriesOptions}
+          />
           {loading && !activity.length ? (
             <Loading label="Loading your activity…" />
           ) : slice.length === 0 ? (
             <EmptyState
               icon={<InboxIcon className="h-9 w-9" />}
-              title={q ? "No activity matches your search" : "No activity yet"}
-              sub="Listings, sales and offers you take part in appear here."
+              title={filtering ? "No activity matches your filters" : "No activity yet"}
+              sub={
+                filtering
+                  ? "Try a different name or series."
+                  : "Listings, sales and offers you take part in appear here."
+              }
             />
           ) : (
             <>
@@ -426,7 +514,15 @@ export default function ProfilePage() {
       const { slice, totalPages, page: p } = paginate(shownListings, page);
       return (
         <>
-          <FilterRow query={query} setQuery={onFilter(setQuery)} sort={sort} setSort={onFilter(setSort)} series={series} setSeries={onFilter(setSeries)} />
+          <FilterRow
+            query={query}
+            setQuery={onFilter(setQuery)}
+            sort={sort}
+            setSort={onFilter(setSort)}
+            series={activeSeries}
+            setSeries={onFilter(setSeries)}
+            seriesOptions={seriesOptions}
+          />
           {pickedListings.size > 0 && (
             <BulkBar count={pickedListings.size} onClear={() => setPickedListings(new Set())}>
               <GhostButton onClick={bulkCancelListings} disabled={busyId === "bulk"}>
@@ -438,12 +534,18 @@ export default function ProfilePage() {
             <Loading label="Loading your listings…" />
           ) : slice.length === 0 ? (
             <EmptyState
-              title="No active listings"
-              sub="List a card from your collection to see it here."
+              title={filtering ? "No listings match your filters" : "No active listings"}
+              sub={
+                filtering
+                  ? "Try a different name or series."
+                  : "List a card from your collection to see it here."
+              }
               action={
-                <Link href="/vault">
-                  <GhostButton>Go to my collection</GhostButton>
-                </Link>
+                !filtering && (
+                  <Link href="/vault">
+                    <GhostButton>Go to my collection</GhostButton>
+                  </Link>
+                )
               }
             />
           ) : (
@@ -470,16 +572,28 @@ export default function ProfilePage() {
       const { slice, totalPages, page: p } = paginate(shownMade, page);
       return (
         <>
-          <FilterRow query={query} setQuery={onFilter(setQuery)} sort={sort} setSort={onFilter(setSort)} series={series} setSeries={onFilter(setSeries)} />
+          <FilterRow
+            query={query}
+            setQuery={onFilter(setQuery)}
+            sort={sort}
+            setSort={onFilter(setSort)}
+            series={activeSeries}
+            setSeries={onFilter(setSeries)}
+            seriesOptions={seriesOptions}
+          />
           {loading && !offersMade.length ? (
             <Loading label="Loading your offers…" />
           ) : slice.length === 0 ? (
             <EmptyState
               icon={<InboxIcon className="h-9 w-9" />}
-              title={q ? "No offers match your search" : "No offers made"}
-              sub="Offers you make on cards are tracked here until the seller responds."
+              title={filtering ? "No offers match your filters" : "No offers made"}
+              sub={
+                filtering
+                  ? "Try a different name or series."
+                  : "Offers you make on cards are tracked here until the seller responds."
+              }
               action={
-                !q && (
+                !filtering && (
                   <Link href="/marketplace">
                     <GhostButton>Find a card</GhostButton>
                   </Link>
@@ -499,7 +613,15 @@ export default function ProfilePage() {
     const { slice, totalPages, page: p } = paginate(shownReceived, page);
     return (
       <>
-        <FilterRow query={query} setQuery={onFilter(setQuery)} sort={sort} setSort={onFilter(setSort)} series={series} setSeries={onFilter(setSeries)} />
+        <FilterRow
+          query={query}
+          setQuery={onFilter(setQuery)}
+          sort={sort}
+          setSort={onFilter(setSort)}
+          series={activeSeries}
+          setSeries={onFilter(setSeries)}
+          seriesOptions={seriesOptions}
+        />
         {pickedOffers.size > 0 && (
           <BulkBar count={pickedOffers.size} onClear={() => setPickedOffers(new Set())}>
             <GhostButton onClick={bulkDeclineOffers} disabled={busyId === "bulk"}>
@@ -512,8 +634,12 @@ export default function ProfilePage() {
         ) : slice.length === 0 ? (
           <EmptyState
             icon={<InboxIcon className="h-9 w-9" />}
-            title={q ? "No offers match your search" : "No offers received"}
-            sub="Offers others make on your listings show up here for you to accept or decline."
+            title={filtering ? "No offers match your filters" : "No offers received"}
+            sub={
+              filtering
+                ? "Try a different name or series."
+                : "Offers others make on your listings show up here for you to accept or decline."
+            }
           />
         ) : (
           <>
@@ -662,6 +788,7 @@ function FilterRow({
   setSort,
   series,
   setSeries,
+  seriesOptions,
 }: {
   query: string;
   setQuery: (v: string) => void;
@@ -669,6 +796,8 @@ function FilterRow({
   setSort: (v: SortKey) => void;
   series: string;
   setSeries: (v: string) => void;
+  /** Diturunkan dari baris tab aktif — lihat `seriesOptionsFrom`. */
+  seriesOptions: string[];
 }) {
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -683,13 +812,21 @@ function FilterRow({
           className="pl-10"
         />
       </div>
-      <Select
-        value={series}
-        onChange={setSeries}
-        options={SERIES_OPTIONS}
-        ariaLabel="Filter by series"
-        className="sm:w-40"
-      />
+      {/* Hanya tampil kalau ada sesuatu untuk disaring: dengan satu opsi ("All
+          Series") dropdown-nya cuma kontrol mati. Nama set katalog CC panjang
+          ("Black Star Promos - Mega Evolution MEP EN - English"), jadi menunya
+          dilepas dari lebar trigger dan dibatasi supaya tidak keluar layar. */}
+      {seriesOptions.length > 1 && (
+        <Select
+          value={series}
+          onChange={setSeries}
+          options={seriesOptions}
+          ariaLabel="Filter by series"
+          className="sm:w-44"
+          align="right"
+          menuClassName="max-w-[min(92vw,28rem)]"
+        />
+      )}
       <Select
         value={sort}
         onChange={setSort}

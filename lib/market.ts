@@ -4,7 +4,16 @@
 import type { Tier } from "./packs";
 import { TIER_COLOR } from "./packs";
 
-/** Card sets available on the market (mirrors the LiveCard set values). */
+/**
+ * Lima set contoh dari fase data dummy. HANYA dipakai sebagai pilihan di form
+ * jual manual (/sell) untuk listing Hoshi buatan sendiri.
+ *
+ * JANGAN pakai ini sebagai daftar "semua series yang ada". Set kartu sungguhan
+ * datang dari katalog CollectorCrypt (`card.set`, fallback `card.category`) dan
+ * berupa string bebas seperti "Mega Dream ex - M2a - Japanese" — di produksi
+ * hanya ~14% baris yang kebetulan cocok dengan lima nilai di bawah. Filter apa
+ * pun yang memakai daftar ini akan membuang mayoritas kartu asli.
+ */
 export type MarketSet = "Classic" | "Jungle" | "Promo" | "Rare" | "Evolving";
 export const MARKET_SETS: MarketSet[] = ["Classic", "Jungle", "Promo", "Rare", "Evolving"];
 
@@ -188,7 +197,12 @@ export type Listing = {
   /** All market listings are graded cards; kept for back-compat with older code. */
   kind: "card" | "pack";
   name: string;
-  set: MarketSet;
+  /**
+   * Set/series kartu APA ADANYA dari backend. String bebas, BUKAN `MarketSet`:
+   * kartu CollectorCrypt membawa nama set katalog CC ("Fossil - 1st Edition -
+   * English"), hanya listing seed/manual yang memakai lima nilai `MARKET_SETS`.
+   */
+  set: string;
   /** Drives the rarity badge color via TIER_COLOR[rarity]. */
   rarity: Tier;
   image: string;
@@ -204,6 +218,13 @@ export type Listing = {
   seller: string;
   /** ISO date, used by the "Recently Listed" sort. */
   listedAt: string;
+  /**
+   * ISO date kartu ini berpindah tangan; null selama belum terjual. Tab Assets
+   * di /account mengurutkan dengan ini — `listedAt` milik penjual (untuk kartu
+   * hasil sync CC itu waktu sync), jadi bukan "kapan saya dapat kartunya".
+   * Absen pada data mock/legacy.
+   */
+  soldAt?: string | null;
   /* --- graded-card display fields (Figma) --- */
   /** Full slab grade string, e.g. "PSA 10". */
   grade: string;

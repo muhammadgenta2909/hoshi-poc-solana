@@ -5,7 +5,7 @@
 // had no way to know WHO made an offer. It does now (Offer.buyerId), so the
 // browser-local copy is gone: every tab below reads the database.
 
-import type { ListingStatus, MarketSet } from "./market";
+import type { ListingStatus } from "./market";
 
 /* --------------------------------- offers --------------------------------- */
 
@@ -32,7 +32,8 @@ export type OfferRecord = {
     name: string;
     image: string;
     category: string;
-    set: MarketSet;
+    /** Set katalog apa adanya — string bebas, lihat `Listing["set"]`. */
+    set: string;
     price: number;
     status: ListingStatus;
   };
@@ -67,7 +68,8 @@ export type ActivityRecord = {
     name: string;
     image: string | null;
     category: string | null;
-    set: MarketSet | null;
+    /** Snapshot set katalog saat event ditulis — string bebas, bisa null. */
+    set: string | null;
   };
   /** null ⇒ the event carries no amount (a withdrawn offer); rendered as "----". */
   amount: number | null;

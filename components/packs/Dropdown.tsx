@@ -17,6 +17,7 @@ export default function Dropdown<T extends string>({
   options,
   placeholder = "Select…",
   className = "",
+  menuClassName = "",
   align = "stretch",
   ariaLabel,
 }: {
@@ -30,6 +31,9 @@ export default function Dropdown<T extends string>({
   options: readonly (T | OptionObject<T>)[];
   placeholder?: string;
   className?: string;
+  /** Extra classes on the popup itself — for options whose labels are longer than
+   *  the trigger (mis. nama set katalog CC), pakai `align="right"` + `max-w-…`. */
+  menuClassName?: string;
   /** `stretch` matches the trigger width; `right` right-aligns a wider menu. */
   align?: "stretch" | "right";
   ariaLabel?: string;
@@ -81,7 +85,7 @@ export default function Dropdown<T extends string>({
           role="listbox"
           className={`absolute top-full z-50 mt-2 max-h-60 overflow-auto rounded-xl border border-white/10 bg-[#1b1810] p-1 shadow-[0_16px_40px_-10px_rgba(0,0,0,0.75)] ${
             align === "right" ? "right-0 min-w-[200px]" : "left-0 right-0"
-          }`}
+          } ${menuClassName}`}
         >
           {items.map((o) => {
             const active = o.value === value;
@@ -91,6 +95,7 @@ export default function Dropdown<T extends string>({
                 type="button"
                 role="option"
                 aria-selected={active}
+                title={o.label}
                 onClick={() => {
                   onChange(o.value);
                   setOpen(false);

@@ -85,6 +85,12 @@ export type GachaPull = {
   /** Label mentah CC, mis. 'GEM-MT 10'. */
   ccGradeLabel: string | null;
   ccGradeCert: string | null;
+  /**
+   * Seri/set kartu menurut katalog CC, mis. 'Mega Dream ex - M2a - Japanese'.
+   * Sumber yang SAMA dengan `Listing.set`, jadi kartu hasil pull bisa ikut filter
+   * Series di /account. null = CC belum memberi tahu (jangan tampilkan tebakan).
+   */
+  ccSet: string | null;
   /** Nama vault fisik CC, mis. 'OmniVault'. */
   ccVault: string | null;
 };
