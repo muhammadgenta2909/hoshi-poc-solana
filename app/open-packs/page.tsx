@@ -66,6 +66,14 @@ export default function OpenPacksPage() {
   const opening = rip !== null && rip.result === null && rip.error === null;
   // Action feedback (prompts / quick sync refusals) surfaced under the showcase.
   const [openMsg, setOpenMsg] = useState<string | null>(null);
+  // After a PAID order settles we DON'T auto-reveal — the return trip from the hosted
+  // payment page is a fresh document with no user gesture, so the browser blocks the
+  // reveal clip's AUDIO (autoplay-with-sound needs activation). We show a "tap to open"
+  // gate instead: the tap is the gesture, so RipReveal's video then plays WITH sound.
+  // `{ result: null }` = settled, card still loading (button disabled); set = ready.
+  const [pendingReveal, setPendingReveal] = useState<{ result: OpenResult | null } | null>(
+    null,
+  );
 
   // Rupiah pay modal + terms gate. Declared up here (not next to the render) so the
   // pull/reveal callbacks below can drive them — open the modal on "Rip Again", and
@@ -377,10 +385,10 @@ export default function OpenPacksPage() {
       setPayModalOpen(false);
       setDemoPay(false);
       setResumeOrderId(null);
-      // Auto-reveal: mount RipReveal now so the video plays while we fetch the card the
-      // paid pull produced, then reveal it — no manual "Open Pack" step.
-      setRipSeq((s) => s + 1);
-      setRip({ result: null, error: null });
+      // Show the "tap to open" gate right away (card still loading). We deliberately do
+      // NOT mount RipReveal yet: this fresh post-redirect page has no user gesture, so
+      // auto-playing the clip here would force it MUTED. The tap on the gate unlocks audio.
+      setPendingReveal({ result: null });
       getGachaWinners()
         .then((ws) => {
           if (ws.length > 0) setLiveCards(winnersToLiveCards(ws));
@@ -404,22 +412,32 @@ export default function OpenPacksPage() {
             /* fallback stays null -> card-back */
           }
         }
-        setRip({
+        setPendingReveal({
           result: pullToOpenResult(pull, order.packType, {
             image,
             recipient: user?.walletAddress ?? publicKey?.toBase58() ?? null,
           }),
-          error: null,
         });
       } catch {
         // Reveal is cosmetic — the card is already delivered — so don't scare the user;
         // fall back to a Vault note.
-        setRip(null);
+        setPendingReveal(null);
         setOpenMsg("Pembayaran berhasil — kartu sudah dikirim ke wallet-mu. Cek di Vault.");
       }
     },
     [token, user, publicKey],
   );
+
+  // The "tap to open" gate was tapped — a genuine user gesture, so mounting RipReveal
+  // now lets its video play WITH sound. The card is already fetched, so hand the result
+  // straight to the takeover.
+  const startPaidReveal = useCallback(() => {
+    const result = pendingReveal?.result;
+    if (!result) return; // still loading the card — the button is disabled anyway
+    setRipSeq((s) => s + 1);
+    setRip({ result, error: null });
+    setPendingReveal(null);
+  }, [pendingReveal]);
 
   // Open ONE sealed pack the user owns. This is where the card is actually drawn (CC
   // VRF runs on open), so the RipReveal video carries the suspense and the outcome is
@@ -642,6 +660,37 @@ export default function OpenPacksPage() {
       <footer className="flex justify-center px-4 pb-8 pt-4">
         <CollectorCryptBadge />
       </footer>
+
+      {/* Post-payment "tap to open" gate. The tap is the user gesture that unlocks the
+          reveal clip's AUDIO — autoplay-with-sound is blocked on this fresh page after the
+          payment redirect, so without a tap the video would be forced muted. */}
+      {pendingReveal && !rip && (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/85 p-4 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-5 text-center">
+            <div className="grid h-16 w-16 place-items-center rounded-full bg-emerald-500/15 text-3xl">
+              🎉
+            </div>
+            <p className="text-xl font-semibold text-white">Pembayaran berhasil!</p>
+            <p className="max-w-xs text-sm leading-relaxed text-zinc-400">
+              Kartu kamu sudah siap. Ketuk untuk membukanya — dengan animasi dan
+              suaranya. 🔊
+            </p>
+            <button
+              type="button"
+              onClick={startPaidReveal}
+              disabled={!pendingReveal.result}
+              className="rounded-2xl px-8 py-4 text-xl font-bold text-[#171717] transition hover:brightness-105 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+              style={{
+                fontFamily: "var(--font-jersey)",
+                backgroundImage: GOLD_GRADIENT,
+                border: "1px solid #F2C101",
+              }}
+            >
+              {pendingReveal.result ? "Buka Pack-mu 🎴" : "Menyiapkan kartu…"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {rip && (
         <RipReveal
