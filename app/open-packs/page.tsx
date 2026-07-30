@@ -672,8 +672,7 @@ export default function OpenPacksPage() {
             </div>
             <p className="text-xl font-semibold text-white">Pembayaran berhasil!</p>
             <p className="max-w-xs text-sm leading-relaxed text-zinc-400">
-              Kartu kamu sudah siap. Ketuk untuk membukanya — dengan animasi dan
-              suaranya. 🔊
+              Kartu kamu sudah siap — ketuk untuk membuka.
             </p>
             <button
               type="button"

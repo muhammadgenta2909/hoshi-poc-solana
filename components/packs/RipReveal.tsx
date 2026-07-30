@@ -2,8 +2,9 @@
 
 // Pack-opening takeover (NOT a popup): it mounts the moment the purchase starts
 // and plays the rip video WHILE the treasury purchase runs, so there is no 30s
-// spinner between click and motion. It sits UNDER the sticky TopNav (z-20 vs the
-// nav's z-30) with no ✕ button, so it reads as a page state, not a dialog.
+// spinner between click and motion. It's a FULL-SCREEN takeover (z-[110]) that
+// covers the nav, the BGM button and any lingering modal — nothing must obstruct
+// the reveal — with no ✕ button, so it reads as a page state, not a dialog.
 //
 // After the video, a STAGED reveal builds suspense CollectorCrypt-style: a glowing
 // card silhouette teases the year → grade → rarity, one per beat, then the FINAL
@@ -99,13 +100,13 @@ export default function RipReveal({
     };
   }, []);
 
-  // Duck the page background music for the whole takeover so the rip clip's OWN
-  // audio is heard cleanly — the BGM toggle button never competes with or mutes
-  // the reveal sound. BgmPlayer restores its prior state when we dispatch restore.
+  // Tell BgmPlayer the reveal is on so it swaps to the reveal soundtrack (bgm-reveal)
+  // for the whole takeover, then swaps back when we leave. The rip clip's own mp4
+  // audio still plays ON TOP of it (video at full volume, bgm-reveal soft underneath).
   useEffect(() => {
-    window.dispatchEvent(new Event("hoshi:bgm-duck"));
+    window.dispatchEvent(new Event("hoshi:reveal-start"));
     return () => {
-      window.dispatchEvent(new Event("hoshi:bgm-restore"));
+      window.dispatchEvent(new Event("hoshi:reveal-end"));
     };
   }, []);
 
@@ -211,7 +212,7 @@ export default function RipReveal({
   return (
     <div
       aria-label="Pack opening"
-      className={`fixed inset-0 z-20 ${reduced ? "" : "hoshi-fade-in"}`}
+      className={`fixed inset-0 z-[110] ${reduced ? "" : "hoshi-fade-in"}`}
       style={{ background: "#000" }}
     >
       {/* Video layer — plays only once the pull result is known, so the rarity
