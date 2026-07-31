@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { flushSync } from "react-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { type LiveCard, type Pack } from "@/lib/packs";
 import { openPackLocal, type OpenResult } from "@/lib/openPack";
@@ -456,13 +455,18 @@ export default function OpenPacksPage() {
   const startPaidReveal = useCallback(() => {
     const result = pendingReveal?.result;
     if (!result) return; // still loading the card — the button is disabled anyway
-    // Drop the gate in its OWN synchronous commit FIRST (flushSync paints it away now),
-    // THEN mount RipReveal. Batched together, a heavy RipReveal mount (video + effects +
-    // page re-render) would hold the whole commit — leaving the gate on screen while the
-    // clip is already playing behind it. Removing the gate first decouples the two.
-    flushSync(() => setPendingReveal(null));
-    setRipSeq((s) => s + 1);
-    setRip({ result, error: null });
+    // Close the gate in its OWN render/paint FIRST, then mount the heavy RipReveal
+    // (video element) on a LATER frame. If both run in one JS task, the browser can't
+    // paint until the video-mount commit finishes — so the gate lingers on screen over
+    // the reveal (the "telat hide" bug). Two rAFs guarantee the gate-removal has actually
+    // PAINTED before we start the expensive mount.
+    setPendingReveal(null);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setRipSeq((s) => s + 1);
+        setRip({ result, error: null });
+      });
+    });
   }, [pendingReveal]);
 
   // Open ONE sealed pack the user owns. This is where the card is actually drawn (CC
