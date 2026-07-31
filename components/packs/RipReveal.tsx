@@ -89,6 +89,10 @@ export default function RipReveal({
   // final card. Reduced motion jumps straight to the final slide (99 ≥ any count).
   const [stage, setStage] = useState(() => (reduced ? 99 : 0));
   const videoRef = useRef<HTMLVideoElement>(null);
+  // The clip is loading until its first frame actually plays. Until then we show a
+  // loading state (not a black void), and we hide that loader the INSTANT playback
+  // begins (onPlaying) — so the loader never lingers over a video that's running.
+  const [videoReady, setVideoReady] = useState(false);
 
   // Lock the page scroll while the full-screen takeover is mounted, so the page's
   // own scrollbar doesn't sit next to the reveal's overflow scrollbar (double bar).
@@ -220,15 +224,27 @@ export default function RipReveal({
       {/* Video layer — plays only once the pull result is known, so the rarity
           can pick the clip (epic vs rare). Hands off to the staged reveal. */}
       {phase === "video" && (
-        <video
-          ref={videoRef}
-          playsInline
-          preload="auto"
-          onEnded={onVideoEnd}
-          onError={onVideoEnd}
-          className="block h-full w-full object-cover"
-          src={packVideoSrc(result)}
-        />
+        <>
+          <video
+            ref={videoRef}
+            playsInline
+            preload="auto"
+            onPlaying={() => setVideoReady(true)}
+            onEnded={onVideoEnd}
+            onError={onVideoEnd}
+            className="block h-full w-full object-cover"
+            src={packVideoSrc(result)}
+          />
+          {/* Loader shown ONLY until the first frame plays — bridges the gap after the
+              tap gate closes so there's never a black void, and vanishes the moment the
+              video actually starts (onPlaying), never overlapping the running clip. */}
+          {!videoReady && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black text-center">
+              <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-yellow-400" />
+              <p className="text-sm font-medium text-white/80">Membuka pack…</p>
+            </div>
+          )}
+        </>
       )}
 
       {phase === "waiting" && (
