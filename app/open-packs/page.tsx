@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { type LiveCard, type Pack } from "@/lib/packs";
 import { openPackLocal, type OpenResult } from "@/lib/openPack";
-import { ALL_PACK_VIDEOS } from "@/lib/packVideo";
+import { ALL_PACK_VIDEOS, packVideoSrc } from "@/lib/packVideo";
 import { PAGE_BG } from "@/lib/theme";
 import {
   ApiError,
@@ -688,6 +688,20 @@ export default function OpenPacksPage() {
               {pendingReveal.result ? "Buka Pack-mu 🎴" : "Menyiapkan kartu…"}
             </button>
           </div>
+          {/* Buffer the EXACT reveal clip while the gate is up (rarity is known here),
+              so the video plays from frame 0 the instant the user taps — no cold-stream
+              lag that makes it look like the video started before the gate closed. */}
+          {pendingReveal.result && (
+            <video
+              src={packVideoSrc(pendingReveal.result)}
+              preload="auto"
+              muted
+              playsInline
+              aria-hidden
+              tabIndex={-1}
+              className="pointer-events-none absolute h-px w-px opacity-0"
+            />
+          )}
         </div>
       )}
 

@@ -212,7 +212,9 @@ export default function RipReveal({
   return (
     <div
       aria-label="Pack opening"
-      className={`fixed inset-0 z-[110] ${reduced ? "" : "hoshi-fade-in"}`}
+      // Appear INSTANTLY (no root fade) so the takeover hard-cuts over the tap gate —
+      // snappy, and never a half-faded frame where the video looks "already running".
+      className="fixed inset-0 z-[110]"
       style={{ background: "#000" }}
     >
       {/* Video layer — plays only once the pull result is known, so the rarity
