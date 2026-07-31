@@ -514,14 +514,17 @@ export default function OpenPacksPage() {
     setPayModalOpen(false);
     setDemoPay(false);
     setResumeOrderId(null);
-    // Route demo through the SAME "tap to open" gate the real paid flow uses, so the
-    // gate→reveal transition can be exercised without a wallet/payment (?demo=1).
+    setRipSeq((s) => s + 1);
+    setRip({ result: null, error: null });
     const pack = selected ?? packs[0];
-    if (!pack) {
-      setOpenMsg("Demo: pilih pack dulu.");
-      return;
-    }
-    setPendingReveal({ result: openPackLocal(pack) });
+    window.setTimeout(
+      () =>
+        setRip({
+          result: pack ? openPackLocal(pack) : null,
+          error: pack ? null : "Demo: pilih pack dulu.",
+        }),
+      2600,
+    );
   }, [selected, packs]);
 
   // The actual open. With rupiah payments live, "Rip Pack" goes STRAIGHT to real
