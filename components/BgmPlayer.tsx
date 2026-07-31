@@ -19,9 +19,12 @@ const VOLUME = 0.25;
 
 export default function BgmPlayer() {
   const ref = useRef<HTMLAudioElement>(null);
-  // On by default (the app wants ambience everywhere). Browsers block sound until the
-  // first user gesture, so a one-time interaction listener actually starts it.
-  const [on, setOn] = useState(true);
+  // The button reflects the REAL playback state, not an intent flag — otherwise it
+  // shows "playing" before any sound is possible and the first click reads as "mute",
+  // forcing the confusing mute→unmute dance. `mutedByUser` is the only intent we keep:
+  // it stays false (we WANT ambience) until the user explicitly pauses.
+  const [playing, setPlaying] = useState(false);
+  const mutedByUser = useRef(false);
   // The pack-reveal takeover swaps the soundtrack for its duration (see RipReveal,
   // which dispatches hoshi:reveal-start / hoshi:reveal-end).
   const [revealing, setRevealing] = useState(false);
@@ -35,6 +38,20 @@ export default function BgmPlayer() {
       ? TRACKS.openpack
       : TRACKS.main;
 
+  // Mirror the element's real state onto the button icon.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onPlaying = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("pause", onPause);
+    return () => {
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("pause", onPause);
+    };
+  }, []);
+
   useEffect(() => {
     const start = () => setRevealing(true);
     const end = () => setRevealing(false);
@@ -46,36 +63,58 @@ export default function BgmPlayer() {
     };
   }, []);
 
-  // Keep the element on the context's track + play/pause per `on`. Swap the source
-  // ONLY when the track actually changes, so unrelated re-renders don't restart it.
+  // Keep the element on the context's track; try to play unless hidden or the user
+  // explicitly muted. Swap the source ONLY when the track actually changes.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.volume = VOLUME;
     if (!el.currentSrc.endsWith(track)) {
       el.src = track;
+      el.load();
     }
-    if (hide || !on) {
+    if (hide || mutedByUser.current) {
       el.pause();
       return;
     }
     el.play().catch(() => {
-      /* blocked until a gesture — the interaction listener below starts it */
+      /* blocked until a gesture — the listener below starts it on the FIRST one */
     });
-  }, [on, hide, track]);
+  }, [hide, track]);
 
-  // Autoplay policy: the first play() before any gesture is rejected. Start on the
-  // first interaction anywhere on the page, once.
+  // Autoplay policy: the first play() before any user gesture is rejected. Start on
+  // the VERY FIRST interaction of any kind (pointer / touch / key), then stop
+  // listening once playback actually begins. Re-armed if the track changes.
   useEffect(() => {
     if (hide) return;
+    const el = ref.current;
+    if (!el) return;
     const kick = () => {
-      if (on && ref.current) ref.current.play().catch(() => {});
+      if (!mutedByUser.current) el.play().catch(() => {});
     };
-    window.addEventListener("pointerdown", kick, { once: true });
-    return () => window.removeEventListener("pointerdown", kick);
-  }, [on, hide]);
+    const events = ["pointerdown", "touchstart", "keydown"] as const;
+    events.forEach((e) => window.addEventListener(e, kick));
+    const stop = () => events.forEach((e) => window.removeEventListener(e, kick));
+    el.addEventListener("playing", stop, { once: true });
+    return () => {
+      stop();
+      el.removeEventListener("playing", stop);
+    };
+  }, [hide, track]);
 
-  const toggle = useCallback(() => setOn((p) => !p), []);
+  // The button is honest: ♩ while silent (tap to start), ♫ while playing (tap to
+  // pause). One tap does the obvious thing — no mute→unmute dance.
+  const toggle = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) {
+      mutedByUser.current = false;
+      el.play().catch(() => {});
+    } else {
+      mutedByUser.current = true;
+      el.pause();
+    }
+  }, []);
 
   if (hide) return null;
 
@@ -84,11 +123,11 @@ export default function BgmPlayer() {
       <audio ref={ref} loop preload="auto" />
       <button
         onClick={toggle}
-        aria-label={on ? "Pause music" : "Play music"}
+        aria-label={playing ? "Pause music" : "Play music"}
         className="fixed bottom-6 right-6 z-40 grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-lg text-white/70 shadow-lg backdrop-blur-sm transition hover:bg-white/10 hover:text-white"
-        title={on ? "Pause BGM" : "Play BGM"}
+        title={playing ? "Pause BGM" : "Play BGM"}
       >
-        {on ? "♫" : "♩"}
+        {playing ? "♫" : "♩"}
       </button>
     </>
   );
