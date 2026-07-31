@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { type LiveCard, type Pack } from "@/lib/packs";
 import { openPackLocal, type OpenResult } from "@/lib/openPack";
@@ -434,9 +435,13 @@ export default function OpenPacksPage() {
   const startPaidReveal = useCallback(() => {
     const result = pendingReveal?.result;
     if (!result) return; // still loading the card — the button is disabled anyway
+    // Drop the gate in its OWN synchronous commit FIRST (flushSync paints it away now),
+    // THEN mount RipReveal. Batched together, a heavy RipReveal mount (video + effects +
+    // page re-render) would hold the whole commit — leaving the gate on screen while the
+    // clip is already playing behind it. Removing the gate first decouples the two.
+    flushSync(() => setPendingReveal(null));
     setRipSeq((s) => s + 1);
     setRip({ result, error: null });
-    setPendingReveal(null);
   }, [pendingReveal]);
 
   // Open ONE sealed pack the user owns. This is where the card is actually drawn (CC
@@ -509,17 +514,14 @@ export default function OpenPacksPage() {
     setPayModalOpen(false);
     setDemoPay(false);
     setResumeOrderId(null);
-    setRipSeq((s) => s + 1);
-    setRip({ result: null, error: null });
+    // Route demo through the SAME "tap to open" gate the real paid flow uses, so the
+    // gate→reveal transition can be exercised without a wallet/payment (?demo=1).
     const pack = selected ?? packs[0];
-    window.setTimeout(
-      () =>
-        setRip({
-          result: pack ? openPackLocal(pack) : null,
-          error: pack ? null : "Demo: pilih pack dulu.",
-        }),
-      2600,
-    );
+    if (!pack) {
+      setOpenMsg("Demo: pilih pack dulu.");
+      return;
+    }
+    setPendingReveal({ result: openPackLocal(pack) });
   }, [selected, packs]);
 
   // The actual open. With rupiah payments live, "Rip Pack" goes STRAIGHT to real
