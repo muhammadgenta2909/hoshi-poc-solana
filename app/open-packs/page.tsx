@@ -104,27 +104,6 @@ export default function OpenPacksPage() {
     setDemoMode(new URLSearchParams(window.location.search).get("demo") === "1");
   }, []);
 
-  // DIAGNOSTIC (query-gated, harmless): ?revealgate=1 pops the paid-reveal GATE with a
-  // hardcoded local card so the gate→reveal transition can be exercised in isolation —
-  // no wallet, no payment, no pack lookup. Lets us observe the exact "modal ilang" timing.
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("revealgate") !== "1") return;
-    /* eslint-disable-next-line react-hooks/set-state-in-effect */
-    setPendingReveal({
-      result: {
-        packId: "revealgate",
-        rarity: "Epic",
-        card: {
-          name: "Diagnostic Card",
-          rarity: "Epic",
-          imageUrl: "/card-back.svg",
-          valueIdr: 100_000,
-        },
-        buybackQuoteIdr: 85_000,
-      } as OpenResult,
-    });
-  }, []);
-
   useEffect(() => {
     // Duitku/IDRX redirects back to /open-packs with ?resultCode&merchantOrderId&reference
     // appended. Resume runs off localStorage (readPendingPayment), NOT these params — so
