@@ -34,6 +34,8 @@ export type AdminStats = {
   totalListings: number;
   activeListings: number;
   soldListings: number;
+  cancelledListings: number;
+  pendingEscrowListings: number;
   totalUsers: number;
   totalCards: number;
   totalRevenue: number;
@@ -130,11 +132,160 @@ export type AdminTreasury = {
   sol: number | null;
   idrx: number | null;
   status: "healthy" | "low" | "critical" | "unknown";
+  /** true = USDC/SOL adalah MOCK (staging) — UI menandainya, tak menampilkan angka $ sbg saldo asli. */
+  simulated: boolean;
 };
 
 export const getAdminTreasury = (token: string) =>
   api<AdminTreasury>("/admin/treasury", {
     headers: { authorization: `Bearer ${token}` },
+  });
+
+/* ---------- transactions ledger + finance summary ---------- */
+
+export type AdminTransaction = {
+  id: string;
+  merchantOrderId: string;
+  type: "PACK" | "RESELLER" | "P2P";
+  /** Model PM: CC vault (harga default, Hoshi 0%) vs Hoshi vault (5% / stok Hoshi). null = pack/topup. */
+  vault: "CC" | "HOSHI" | null;
+  status: string;
+  priceIdr: number;
+  item: string | null;
+  buyer: string;
+  seller: string | null;
+  createdAt: string;
+  paidAt: string | null;
+  fulfilledAt: string | null;
+};
+
+export type AdminSellerBalance = {
+  id: string;
+  wallet: string;
+  label: string;
+  balanceIdr: number;
+};
+
+export type AdminFinance = {
+  reseller: { count: number; grossIdr: number };
+  /** Hoshi jual kartu inventarisnya SENDIRI (source HOSHI). Seluruh omzet = pendapatan Hoshi. */
+  hoshiInventory: { count: number; grossIdr: number };
+  p2p: { count: number; grossIdr: number };
+  liabilitiesIdr: number;
+  pendingWithdrawalsIdr: number;
+  pendingWithdrawalsCount: number;
+  sellerCount: number;
+  sellerBalances: AdminSellerBalance[];
+  treasuryIdr: number | null;
+  distributableProfitIdr: number | null;
+  /** Fee marketplace Hoshi dalam basis points (500 = 5%). */
+  marketplaceFeeBps: number;
+  /** Komisi Hoshi dari total P2P bruto (= gross × fee). */
+  p2pCommissionIdr: number;
+  /** Sisa P2P bruto yang jadi saldo penjual (= gross − komisi). */
+  p2pNetToSellersIdr: number;
+};
+
+export const getAdminTransactions = (
+  token: string,
+  params?: { page?: number; limit?: number; status?: string },
+) => {
+  const q = new URLSearchParams();
+  if (params?.page) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.status) q.set("status", params.status);
+  const qs = q.toString();
+  return api<{
+    data: AdminTransaction[];
+    total: number;
+    page: number;
+    limit: number;
+  }>(`/admin/transactions${qs ? "?" + qs : ""}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+};
+
+export const getAdminFinance = (token: string) =>
+  api<AdminFinance>("/admin/finance", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/* ---------------- withdrawals (payout manual) ---------------- */
+
+export type AdminWithdrawal = {
+  id: string;
+  amountIdr: number;
+  method: string;
+  destBank: string;
+  destAccount: string;
+  destName: string;
+  status: "REQUESTED" | "PAID" | "REJECTED";
+  note: string | null;
+  createdAt: string;
+  processedAt: string | null;
+  userWallet: string;
+  userLabel: string;
+};
+
+export const getAdminWithdrawals = (token: string, status?: string) => {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return api<AdminWithdrawal[]>(`/admin/withdrawals${q}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+};
+
+export const approveWithdrawal = (id: string, note: string, token: string) =>
+  api<AdminWithdrawal>(`/admin/withdrawals/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });
+
+export const rejectWithdrawal = (id: string, note: string, token: string) =>
+  api<AdminWithdrawal>(`/admin/withdrawals/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });
+
+/* ---------------- kirim kartu fisik (redemption) — admin ---------------- */
+
+export type RedemptionStatus = "REQUESTED" | "PACKING" | "SHIPPED" | "CANCELED";
+
+export type RedemptionSource = "PACK" | "CC_CATALOG" | "P2P" | "HOSHI";
+
+export type AdminRedemption = {
+  id: string;
+  nftAddress: string;
+  cardName: string;
+  cardImage: string | null;
+  cardSet: string | null;
+  /** Asal kartu → siapa yang kirim fisik. null = data lama. */
+  source: RedemptionSource | null;
+  recipientName: string;
+  street: string;
+  city: string;
+  state: string | null;
+  zip: string;
+  country: string;
+  status: RedemptionStatus;
+  createdAt: string;
+};
+
+export const getAdminRedemptions = (token: string) =>
+  api<AdminRedemption[]>("/admin/redemptions", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+export const updateRedemptionStatus = (
+  id: string,
+  status: RedemptionStatus,
+  token: string,
+) =>
+  api<AdminRedemption>(`/admin/redemptions/${encodeURIComponent(id)}/status`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status }),
   });
 
 export const getAdminListings = (token: string, params?: {

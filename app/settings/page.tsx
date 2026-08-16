@@ -10,12 +10,15 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import {
   addAddress,
   deleteAddress,
+  getBalance,
   getMyAddresses,
   getProfile,
   updateProfile,
+  type Balance,
   type Profile,
   type ShippingAddress,
   type UpdateProfileInput,
@@ -62,14 +65,42 @@ const COUNTRIES = [
   "Australia",
 ];
 
-const STATES = [
-  "California",
-  "New York",
-  "Texas",
-  "DKI Jakarta",
-  "West Java",
-  "Bali",
-];
+// State/Province BERGANTUNG negara: pilihan menyesuaikan Country yang dipilih (dependent dropdown).
+const STATES_BY_COUNTRY: Record<string, string[]> = {
+  Indonesia: [
+    "DKI Jakarta",
+    "Jawa Barat",
+    "Jawa Tengah",
+    "Jawa Timur",
+    "DI Yogyakarta",
+    "Banten",
+    "Bali",
+    "Sumatera Utara",
+    "Sulawesi Selatan",
+    "Kalimantan Timur",
+  ],
+  "United States of America": [
+    "California",
+    "New York",
+    "Texas",
+    "Florida",
+    "Illinois",
+    "Washington",
+    "Nevada",
+    "Massachusetts",
+  ],
+  Singapore: ["Central", "East", "North", "North-East", "West"],
+  Japan: ["Tokyo", "Osaka", "Kyoto", "Hokkaido", "Fukuoka", "Aichi"],
+  "United Kingdom": ["England", "Scotland", "Wales", "Northern Ireland"],
+  Australia: [
+    "New South Wales",
+    "Victoria",
+    "Queensland",
+    "Western Australia",
+    "South Australia",
+    "Tasmania",
+  ],
+};
 
 const emptyForm = {
   fullName: "",
@@ -101,7 +132,7 @@ export default function SettingsPage() {
   const { publicKey } = useWallet();
   const address = publicKey?.toBase58() ?? null;
 
-  const [tab, setTab] = useState<Tab>("MAIN INFO");
+  const [tab, setTab] = useTabParam<Tab>("MAIN INFO", TABS);
 
   // The last server snapshot of /users/me — the banner reads it and Cancel
   // resets the form to it.
@@ -138,6 +169,19 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Riwayat saldo in-app (ledger IDRX) — modal "View history".
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [ledger, setLedger] = useState<Balance | null>(null);
+  const openHistory = useCallback(async () => {
+    setHistoryOpen(true);
+    if (!token) return;
+    try {
+      setLedger(await getBalance(token));
+    } catch {
+      /* biarkan kosong — modal tampilkan "belum ada" */
+    }
+  }, [token]);
 
   // ACCOUNT BALANCE — live wallet balances, stored WITH the wallet they belong
   // to so switching wallets derives back to "…" instead of flashing the
@@ -574,7 +618,13 @@ export default function SettingsPage() {
           <Panel className="p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3">
               <SectionTitle>Balance</SectionTitle>
-              <GhostButton className="px-3.5 py-1.5 text-[13px]">View history</GhostButton>
+              <GhostButton
+                type="button"
+                onClick={openHistory}
+                className="px-3.5 py-1.5 text-[13px]"
+              >
+                View history
+              </GhostButton>
             </div>
 
             <div className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -597,6 +647,16 @@ export default function SettingsPage() {
         )}
       </div>
 
+      {/* Riwayat saldo (ledger IDRX in-app): top-up, hasil jual, penarikan. */}
+      <ModalShell
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        title="Riwayat saldo"
+        maxWidth={480}
+      >
+        <BalanceHistory ledger={ledger} />
+      </ModalShell>
+
       {/* Add New Address */}
       <ModalShell
         open={addrOpen}
@@ -617,7 +677,12 @@ export default function SettingsPage() {
           <ModalField label="Country/Region">
             <Select
               value={form.country}
-              onChange={(v) => setField("country", v)}
+              onChange={(v) => {
+                setField("country", v);
+                // Pilihan State/Province bergantung negara → reset supaya tak menyisakan nilai
+                // yang bukan milik negara baru.
+                setField("state", "");
+              }}
               options={COUNTRIES}
               ariaLabel="Country or region"
             />
@@ -646,8 +711,12 @@ export default function SettingsPage() {
               <Select
                 value={form.state}
                 onChange={(v) => setField("state", v)}
-                options={STATES}
-                placeholder="Select…"
+                options={STATES_BY_COUNTRY[form.country] ?? []}
+                placeholder={
+                  (STATES_BY_COUNTRY[form.country] ?? []).length
+                    ? "Select…"
+                    : "Pilih negara dulu"
+                }
                 ariaLabel="State or province"
               />
             </ModalField>
@@ -763,6 +832,8 @@ function PhoneField({
         placeholder="Code"
         ariaLabel="Phone country code"
         className="w-[148px] shrink-0"
+        align="right"
+        menuClassName="min-w-[240px]"
       />
       <div className="min-w-0 flex-1">
         <TextInput
@@ -784,6 +855,65 @@ function ModalField({ label, children }: { label: string; children: ReactNode })
     <div>
       <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/** Riwayat mutasi saldo in-app (IDRX): top-up (+), hasil jual (+), penarikan (−), refund (+). */
+function BalanceHistory({ ledger }: { ledger: Balance | null }) {
+  const idr = new Intl.NumberFormat("id-ID");
+  const reasonLabel = (r: string): string => {
+    if (r === "TOPUP") return "Isi saldo";
+    if (r === "WITHDRAWAL") return "Penarikan";
+    if (r === "WITHDRAW_REFUND") return "Refund penarikan";
+    if (r.includes("SALE")) return "Hasil penjualan";
+    return r;
+  };
+
+  if (!ledger) {
+    return <p className="py-6 text-center text-[13px] text-zinc-500">Memuat…</p>;
+  }
+  return (
+    <div>
+      <div className="mb-3 rounded-xl border border-yellow-400/25 bg-yellow-400/[0.06] px-4 py-2.5 text-center">
+        <span className="text-[11px] uppercase tracking-wide text-yellow-200/70">
+          Saldo saat ini
+        </span>
+        <p className="text-[16px] font-bold text-yellow-200">
+          Rp {idr.format(ledger.balanceIdrx)}
+        </p>
+      </div>
+      {ledger.entries.length === 0 ? (
+        <p className="py-4 text-center text-[13px] text-zinc-500">Belum ada mutasi saldo.</p>
+      ) : (
+        <ul className="flex max-h-[50vh] flex-col gap-1.5 overflow-auto">
+          {ledger.entries.map((e) => {
+            const positive = e.deltaIdrx >= 0;
+            return (
+              <li
+                key={e.id}
+                className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium text-zinc-200">
+                    {reasonLabel(e.reason)}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">
+                    {new Date(e.createdAt).toLocaleString("id-ID")}
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 text-[13px] font-semibold ${
+                    positive ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
+                  {positive ? "+" : "−"}Rp {idr.format(Math.abs(e.deltaIdrx))}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

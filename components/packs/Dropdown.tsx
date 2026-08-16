@@ -83,7 +83,7 @@ export default function Dropdown<T extends string>({
       {open && (
         <div
           role="listbox"
-          className={`absolute top-full z-50 mt-2 max-h-60 overflow-auto rounded-xl border border-white/10 bg-[#1b1810] p-1 shadow-[0_16px_40px_-10px_rgba(0,0,0,0.75)] ${
+          className={`no-scrollbar absolute top-full z-50 mt-2 max-h-52 overflow-auto rounded-xl border border-white/10 bg-[#1b1810] p-1 shadow-[0_16px_40px_-10px_rgba(0,0,0,0.75)] ${
             align === "right" ? "right-0 min-w-[200px]" : "left-0 right-0"
           } ${menuClassName}`}
         >
@@ -100,7 +100,7 @@ export default function Dropdown<T extends string>({
                   onChange(o.value);
                   setOpen(false);
                 }}
-                className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[14px] transition ${
+                className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] transition ${
                   active
                     ? "bg-yellow-400/10 text-yellow-400"
                     : "text-zinc-300 hover:bg-white/[0.06] hover:text-white"

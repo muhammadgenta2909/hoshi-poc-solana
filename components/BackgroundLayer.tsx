@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 /**
  * Site-wide bg-main.png pinned to the viewport, covering it fully on both axes,
  * fixed so it stays put while pages scroll. Sits at the lowest z-index (-z-10)
- * behind ALL content; page wrappers use a transparent base (see PAGE_BG /
- * ACCOUNT_BG) so it shows through on every page.
+ * behind ALL content; page wrappers use a transparent base (see the `.page-bg`
+ * class in globals.css / ACCOUNT_BG) so it shows through on every page. Di bawah
+ * `sm`, .page-bg menambah scrim gelap di atas layer ini — foto ini terlalu terang
+ * kalau tampil apa adanya di layar sempit.
  *
  * Exception: the /admin back-office runs its own solid dark surface (ADMIN_BG),
  * so the photo background is suppressed there — otherwise it flashes through for

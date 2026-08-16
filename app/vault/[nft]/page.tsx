@@ -12,7 +12,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Listing } from "@/lib/market";
-import { PAGE_BG } from "@/lib/theme";
 import { getBuybackValue, getMyListings, getMyPacks } from "@/lib/api";
 import { explorerAddressUrl, pullGradeLabel, type GachaPull } from "@/lib/gacha";
 import { useAuth } from "@/lib/useAuth";
@@ -20,6 +19,7 @@ import { useWalletConnect } from "@/lib/useWalletConnect";
 import TopNav from "@/components/packs/TopNav";
 import ListForSaleModal from "@/components/packs/ListForSaleModal";
 import BuybackModal from "@/components/packs/BuybackModal";
+import RedeemModal from "@/components/packs/RedeemModal";
 import { GOLD_GRADIENT, Img } from "@/components/packs/ui";
 import {
   Badge,
@@ -52,6 +52,8 @@ export default function PulledCardPage() {
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [buybackOpen, setBuybackOpen] = useState(false);
+  const [redeemOpen, setRedeemOpen] = useState(false);
+  const [redeemRequested, setRedeemRequested] = useState(false);
   const [soldBack, setSoldBack] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
 
@@ -158,8 +160,8 @@ export default function PulledCardPage() {
 
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
-      style={{ background: PAGE_BG, fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
+      className="page-bg relative min-h-screen text-zinc-100"
+      style={{ fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
     >
       <TopNav active="Vault" />
 
@@ -317,6 +319,27 @@ export default function PulledCardPage() {
                       </span>
                     </button>
                   )}
+
+                  {/* Kirim kartu fisik ke rumah (redeem). Record-only: NFT tetap di wallet
+                      sampai admin proses. Disembunyikan kalau kartu sudah dijual balik / dilisting. */}
+                  {!soldBack && !listing && listable && (
+                    redeemRequested ? (
+                      <p className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.06] px-6 py-3.5 text-[13px] font-medium text-emerald-300">
+                        📦 Permintaan kirim fisik sudah dibuat — cek riwayat di Vault.
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setRedeemOpen(true)}
+                        className="mt-3 w-full rounded-2xl border border-white/12 bg-white/[0.04] px-6 py-3.5 text-[14px] font-semibold text-zinc-200 transition hover:bg-white/[0.08]"
+                      >
+                        Kirim kartu fisik ke rumah
+                        <span className="ml-1.5 text-[12px] font-normal text-zinc-500">
+                          · gratis diminta
+                        </span>
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
             </div>
@@ -341,6 +364,18 @@ export default function PulledCardPage() {
           nftName={pull.nftName}
           onClose={() => setBuybackOpen(false)}
           onSold={() => setSoldBack(true)}
+        />
+      )}
+
+      {redeemOpen && pull?.nftAddress && (
+        <RedeemModal
+          nftAddress={pull.nftAddress}
+          cardName={pull.nftName}
+          onClose={() => setRedeemOpen(false)}
+          onRequested={() => {
+            setRedeemRequested(true);
+            setRedeemOpen(false);
+          }}
         />
       )}
     </div>

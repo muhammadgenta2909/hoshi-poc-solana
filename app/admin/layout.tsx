@@ -16,13 +16,18 @@ type AdminLink = {
 
 const ADMIN_NAV: AdminLink[] = [
   { label: "Dashboard", href: "/admin", icon: "📊" },
+  { label: "Transaksi", href: "/admin/transactions", icon: "💸" },
+  { label: "Penarikan", href: "/admin/withdrawals", icon: "🏧" },
+  { label: "Kirim Kartu", href: "/admin/redemptions", icon: "📦" },
   { label: "Listings", href: "/admin/listings", icon: "📋" },
   { label: "Users", href: "/admin/users", icon: "👥" },
   // Cards page (katalog master-data) disembunyikan dari nav — marketplace = Listings,
   // katalog CC = sync. Route /admin/cards masih ada (reversible).
   { label: "Messages", href: "/admin/messages", icon: "✉️" },
   { label: "Offers", href: "/admin/offers", icon: "💰" },
-  { label: "Vault", href: "/admin/vault", icon: "🏦" },
+  // /admin/vault (inventory read-only) DISEMBUNYIKAN dari nav — custody kartu fisik ada di CC
+  // (Hoshi cuma front-end), jadi view ini informasi read-only yang bikin bingung & tumpang-tindih
+  // dgn "Kirim Kartu". Route masih ada (reversible) kalau nanti perlu.
   { label: "History", href: "/admin/riwayat", icon: "📜" },
 ];
 
@@ -34,10 +39,14 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
   const isLoginRoute = pathname === "/admin/login";
 
-  // Auto-redirect ke halaman login — tidak perlu klik tombol "Go to Login" lagi.
+  // Auto-redirect ke halaman login — bawa path SEKARANG sbg ?next= supaya sesudah login (atau
+  // sesudah verify sesaat saat refresh) user balik ke halaman ini, bukan selalu ke dashboard.
   useEffect(() => {
-    if (hydrated && !isAdmin && !isLoginRoute) router.replace("/admin/login");
-  }, [hydrated, isAdmin, isLoginRoute, router]);
+    if (hydrated && !isAdmin && !isLoginRoute) {
+      const next = pathname && pathname !== "/admin" ? `?next=${encodeURIComponent(pathname)}` : "";
+      router.replace(`/admin/login${next}`);
+    }
+  }, [hydrated, isAdmin, isLoginRoute, pathname, router]);
 
   // Badge unread pada nav Messages.
   useEffect(() => {

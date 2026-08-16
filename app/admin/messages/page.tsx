@@ -187,6 +187,35 @@ function SupportTab({ token }: { token: string }) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // REALTIME: poll daftar thread tiap 12 dtk TANPA flicker loading (silent) → pesan/thread baru
+  // muncul otomatis tanpa refresh manual.
+  useEffect(() => {
+    if (!token) return;
+    const tick = async () => {
+      try {
+        const res = await getAdminSupportThreads(token, {
+          page, limit: 20,
+          search: search || undefined,
+          status: status || undefined,
+          unread: unreadOnly || undefined,
+        });
+        setResult(res);
+      } catch { /* jaringan gagal — pertahankan data terakhir */ }
+    };
+    const id = window.setInterval(() => void tick(), 12_000);
+    return () => window.clearInterval(id);
+  }, [token, page, search, status, unreadOnly]);
+
+  // REALTIME: poll thread yang SEDANG dibuka tiap 8 dtk → balasan user baru muncul otomatis.
+  const openId = detail?.id;
+  useEffect(() => {
+    if (!token || !openId) return;
+    const id = window.setInterval(async () => {
+      try { setDetail(await getAdminSupportThread(openId, token)); } catch { /* keep */ }
+    }, 8_000);
+    return () => window.clearInterval(id);
+  }, [token, openId]);
+
   const openThread = async (id: string) => {
     setDetailLoading(true); setError(null); setReply("");
     try {
@@ -304,13 +333,13 @@ function SupportTab({ token }: { token: string }) {
                 </div>
 
                 <div className="border-t border-white/10 p-4">
-                  <div className="flex gap-2">
+                  <div className="flex items-end gap-2">
                     <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2} placeholder="Tulis balasan…"
                       className="flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40"
                     />
                     <button onClick={sendReply} disabled={sending || !reply.trim()}
-                      className="shrink-0 rounded-xl bg-yellow-400 px-5 text-sm font-bold text-[#171717] transition hover:bg-yellow-300 disabled:opacity-50"
-                    >{sending ? "…" : "Reply"}</button>
+                      className="shrink-0 rounded-xl bg-yellow-400 px-4 py-2.5 text-sm font-bold text-[#171717] transition hover:bg-yellow-300 disabled:opacity-50"
+                    >{sending ? "…" : "Balas"}</button>
                   </div>
                 </div>
               </>

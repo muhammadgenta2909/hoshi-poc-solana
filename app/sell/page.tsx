@@ -17,7 +17,6 @@ import {
 import { TIER_ORDER } from "@/lib/packs";
 import { ApiError, cancelListing, createListing, getMyListings } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
-import { PAGE_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import Select from "@/components/packs/Dropdown";
 import { GOLD_GRADIENT, Idrx, Img } from "@/components/packs/ui";
@@ -67,8 +66,8 @@ export default function SellPage() {
 
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
-      style={{ background: PAGE_BG, fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
+      className="page-bg relative min-h-screen text-zinc-100"
+      style={{ fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
     >
       <TopNav active="Vault" />
 
@@ -223,13 +222,6 @@ function SellForm({ token, login }: { token: string; login: () => Promise<string
             />
           </Field>
         </div>
-
-        <Field
-          label="Buyback (IDRX)"
-          hint="Optional. > 0 shows the HOSHI-backed badge."
-        >
-          <NumberInput value={form.buyback ?? 0} onChange={(v) => set("buyback", v)} step={100_000} />
-        </Field>
 
         {/* live value-edge preview — same math the marketplace "Best Value" sort uses */}
         <p className="-mt-1 text-[12px] text-zinc-500">
@@ -477,6 +469,7 @@ function NumberInput({
 function StatusBadge({ status }: { status?: ListingStatus }) {
   const s = status ?? "ACTIVE";
   const cls: Record<ListingStatus, string> = {
+    PENDING_ESCROW: "border-amber-400/30 bg-amber-400/10 text-amber-300",
     ACTIVE: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
     SOLD: "border-white/15 bg-white/5 text-zinc-300",
     CANCELLED: "border-red-400/30 bg-red-400/10 text-red-300",

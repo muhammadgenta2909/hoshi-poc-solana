@@ -15,7 +15,6 @@ import type {
 } from "@/lib/market";
 import { ELEMENTS, ERAS, GRADE_FLOOR, GRADERS, VAULT_SOURCES, valueDeltaPct } from "@/lib/market";
 import { getListings } from "@/lib/api";
-import { PAGE_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import MarketFilterPanel from "@/components/packs/MarketFilterPanel";
 import MarketGrid from "@/components/packs/MarketGrid";
@@ -36,7 +35,15 @@ function toggle<T>(set: Set<T>, value: T): Set<T> {
 }
 
 export default function MarketplacePage() {
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  // Default TERTUTUP → di mobile panel filter tersembunyi (offcanvas, sesuai Figma). Di desktop
+  // (lg+) dibuka otomatis sekali mount supaya sidebar filter tetap kelihatan.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect */
+      setFiltersOpen(true);
+    }
+  }, []);
 
   // Catalog from the backend (GET /api/marketplace). Data source: mock → API.
   const [listings, setListings] = useState<Listing[]>([]);
@@ -165,24 +172,51 @@ export default function MarketplacePage() {
     setCategory("All");
   };
 
+  // Chip filter aktif (sesuai Figma): tampil di bawah tombol Filters, tiap chip bisa dihapus (✕).
+  const activeChips: { key: string; label: string; onRemove: () => void }[] = [
+    ...(gradeTier !== "All"
+      ? [{ key: "grade", label: String(gradeTier), onRemove: () => setGradeTier("All") }]
+      : []),
+    ...[...eras].map((e) => ({
+      key: `era:${String(e)}`,
+      label: String(e),
+      onRemove: () => setEras((s) => toggle(s, e)),
+    })),
+    ...[...graders].map((g) => ({
+      key: `grader:${String(g)}`,
+      label: String(g),
+      onRemove: () => setGraders((s) => toggle(s, g)),
+    })),
+    ...[...elements].map((el) => ({
+      key: `el:${String(el)}`,
+      label: String(el),
+      onRemove: () => setElements((s) => toggle(s, el)),
+    })),
+    ...[...vaultSources].map((v) => ({
+      key: `vault:${String(v)}`,
+      label: String(v),
+      onRemove: () => setVaultSources((s) => toggle(s, v)),
+    })),
+  ];
+
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
-      style={{ background: PAGE_BG, fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
+      className="page-bg relative min-h-screen text-zinc-100"
+      style={{ fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
     >
       <TopNav active="Marketplace" />
 
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
-        {/* Page header */}
-        <header className="mb-9">
-          <p className="max-w-2xl text-[13px] text-zinc-500">
-            {loading
-              ? "Syncing live marketplace catalog..."
-              : `${listings.length.toLocaleString("en-US")} vault-backed cards loaded from the Hoshi backend.`}
-          </p>
-          <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+        {/* Page header — JUDUL dulu, baru deskripsi (sesuai Figma mobile). */}
+        <header className="mb-7 sm:mb-9">
+          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             The Hoshi Market
           </h1>
+          <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
+            {loading
+              ? "Syncing live marketplace catalog..."
+              : `${listings.length.toLocaleString("en-US")} kartu vault siap dibeli — ditarik langsung dari backend Hoshi.`}
+          </p>
           {loading && <p className="mt-2 text-[13px] text-zinc-500">Loading listings…</p>}
           {error && (
             <p className="mt-2 text-[13px] text-red-400">
@@ -223,6 +257,7 @@ export default function MarketplacePage() {
 
           <MarketGrid
             results={results}
+            chips={activeChips}
             filtersOpen={filtersOpen}
             onOpenFilters={() => setFiltersOpen(true)}
             category={category}

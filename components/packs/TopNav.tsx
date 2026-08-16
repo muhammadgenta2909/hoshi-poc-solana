@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
 import { useCart } from "@/lib/useCart";
@@ -33,6 +34,27 @@ const NAV: { label: NavLabel; href: string; icon?: string }[] = [
   { label: "Vault", href: "/vault" },
 ];
 
+/** Tab mana yang aktif ditentukan dari URL, BUKAN dari prop pemanggil: hanya rute SECTION asli
+ *  (games / marketplace / vault + sub-rutenya) yang menyalakan tab. Halaman yang cuma "di bawah"
+ *  sebuah section (settings, account, sell, tarik-saldo, deposit, …) TIDAK menyalakan apa pun. */
+function activeSection(pathname: string | null): NavLabel | undefined {
+  if (!pathname) return undefined;
+  if (
+    pathname === "/games" ||
+    pathname.startsWith("/open-packs") ||
+    pathname.startsWith("/open-bid-crack")
+  )
+    return "Games";
+  if (
+    pathname === "/marketplace" ||
+    pathname.startsWith("/marketplace/") ||
+    pathname === "/cart"
+  )
+    return "Marketplace";
+  if (pathname === "/vault" || pathname.startsWith("/vault/")) return "Vault";
+  return undefined;
+}
+
 // Breakpoint that splits the two navbars: Tailwind's `lg`, i.e. laptop and up.
 // Below it the links and the account menu collapse into the hamburger; at or
 // above it the bar is exactly what it always was — links inline on the left,
@@ -46,7 +68,13 @@ const NAV: { label: NavLabel; href: string; icon?: string }[] = [
 // the same query, so a drift would strand it open on the desktop bar.
 const DESKTOP = "(min-width: 1024px)";
 
-export default function TopNav({ active }: { active?: NavLabel }) {
+export default function TopNav({ active: activeProp }: { active?: NavLabel }) {
+  const pathname = usePathname();
+  // URL = sumber kebenaran. Prop `active` dari pemanggil hanya berlaku KALAU rute-nya memang sebuah
+  // section (byPath ada) — jadi /settings yang (warisan) masih mengoper active="Vault" TIDAK
+  // menyalakan tab, sementara /vault dst. tetap menyala.
+  const byPath = activeSection(pathname);
+  const active = byPath ? (activeProp ?? byPath) : undefined;
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -69,7 +97,13 @@ export default function TopNav({ active }: { active?: NavLabel }) {
           : "border-b border-transparent bg-transparent"
       }`}
     >
-      <div className="relative mx-auto flex max-w-[1400px] items-center gap-3 px-4 py-3.5 sm:px-6">
+      <div className="relative mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-3.5 sm:gap-3 sm:px-6">
+        {/* left (MOBILE) — saldo IDRX in-app, mirip Figma. Di desktop pill saldo ada di cluster
+            kanan; box ini disembunyikan (lg:hidden) supaya nav links kembali ke kiri. */}
+        <div className="flex min-w-0 flex-1 items-center lg:hidden">
+          <BalancePill compact className="inline-flex max-w-full" />
+        </div>
+
         {/* left — primary nav (laptop and up) */}
         <nav className="hidden flex-1 items-center gap-7 lg:flex">
           {NAV.map((n) => (
@@ -89,7 +123,7 @@ export default function TopNav({ active }: { active?: NavLabel }) {
           <Img
             src="/logo.png"
             alt="HOSHI"
-            className="h-[34px] w-auto translate-y-[7px] sm:h-[38px]"
+            className="h-[26px] w-auto translate-y-[6px] sm:h-[38px] sm:translate-y-[7px]"
           />
         </div>
 
@@ -114,7 +148,7 @@ export default function TopNav({ active }: { active?: NavLabel }) {
             onClick={() => setMenuOpen(true)}
             aria-label="Open menu"
             aria-expanded={menuOpen}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/[0.06] text-zinc-100 transition hover:bg-white/10 lg:hidden"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.06] text-zinc-100 transition hover:bg-white/10 lg:hidden"
           >
             <MenuIcon />
           </button>
@@ -164,9 +198,9 @@ function CartButton() {
     <Link
       href="/cart"
       aria-label={`Your cart (${count} ${count === 1 ? "item" : "items"})`}
-      className="relative inline-flex shrink-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-2.5 text-[15px] font-semibold text-zinc-100 transition hover:bg-white/10 sm:px-4"
+      className="relative inline-flex shrink-0 items-center gap-2 rounded-xl bg-white/[0.06] px-2.5 py-2 text-[15px] font-semibold text-zinc-100 transition hover:bg-white/10 sm:rounded-2xl sm:px-4 sm:py-2.5"
     >
-      <BagIcon />
+      <Img src="/icon-cart.png" alt="" className="h-[18px] w-[18px] shrink-0" />
       <span className="hidden whitespace-nowrap sm:inline">
         Your Cart <span className="tabular-nums text-zinc-400">( {count} )</span>
       </span>
@@ -430,24 +464,6 @@ function NavLink({
 }
 
 /* ---------------------------------- icons ---------------------------------- */
-
-function BagIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px] shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M4 8h16l-1.1 11a2 2 0 0 1-2 1.8H7.1a2 2 0 0 1-2-1.8L4 8z" />
-      <path d="M9 8V6.4a3 3 0 0 1 6 0V8" />
-    </svg>
-  );
-}
 
 function MenuIcon() {
   return (

@@ -200,3 +200,47 @@ button:not(:disabled),
 .hoshi-range::-moz-range-track {
   background: transparent;
 }
+
+/* ─────────────────────────── Page background ───────────────────────────
+   Latar gold berlapis milik marketplace / open-packs. DULU ini string inline
+   `PAGE_BG` di lib/theme.ts. Dipindah ke CSS karena lapisannya HARUS berbeda per
+   lebar layar dan media query tidak bisa hidup di dalam atribut style.
+
+   Kenapa perlu: setiap glow desktop berukuran 600–1850px. Di viewport ~375px
+   SEMUANYA menyelimuti layar penuh sekaligus, jadi halaman terbaca emas solid,
+   bukan permukaan gelap dengan sudut hangat seperti yang dimaksud desain — dan
+   teks putih di atasnya kehilangan kontras. Edit di sini sekali; semua halaman
+   ber-class .page-bg ikut. */
+.page-bg {
+  background:
+    /* hotspot terang menempel persis di sudut kanan atas */
+    radial-gradient(340px 300px at 100% 0px, rgba(255, 230, 150, 0.45) 0%, rgba(255, 230, 150, 0) 60%),
+    /* hero glow kanan atas — emas tegas yang menjalar ke panel kanan */
+    radial-gradient(1300px 900px at 100% -40px, rgba(245, 182, 52, 0.46) 0%, rgba(245, 182, 52, 0.17) 28%, rgba(245, 182, 52, 0) 58%),
+    radial-gradient(660px 580px at 100% 0px, rgba(255, 210, 104, 0.42) 0%, rgba(255, 210, 104, 0) 55%),
+    /* glow kiri atas — lebih lembut, turun sedikit dari puncak */
+    radial-gradient(960px 720px at -90px 150px, rgba(226, 168, 66, 0.28) 0%, rgba(226, 168, 66, 0) 60%),
+    /* glow emas setinggi kolom kiri: lobus atas + hotspot bawah yang lebih kuat
+       supaya terbaca sebagai satu sapuan hangat dari atas ke bawah */
+    radial-gradient(600px 560px at 23% 30%, rgba(245, 182, 52, 0.28) 0%, rgba(245, 182, 52, 0.1) 36%, rgba(245, 182, 52, 0) 62%),
+    radial-gradient(620px 460px at 23% 90%, rgba(245, 182, 52, 0.36) 0%, rgba(245, 182, 52, 0.12) 34%, rgba(245, 182, 52, 0) 62%),
+    /* sapuan hangat melintang di atas supaya lapisan menyatu tanpa banding */
+    radial-gradient(1850px 740px at 60% -260px, rgba(82, 62, 28, 0.62) 0%, rgba(82, 62, 28, 0) 62%),
+    /* Base transparan (dulu #0a0907) supaya bg-main.png — dilukis sebagai lapisan
+       fixed paling bawah di root layout — tembus di bawah gradien ini. */
+    transparent;
+}
+
+/* Mobile: glow diperkecil ke satuan viewport, alpha diturunkan, dan ditambah
+   scrim gelap. Scrim ini juga meredam bg-main.png yang tembus dari bawah — itu
+   bagian "geser ke yang gelapnya": yang tampil jadi permukaan gelap dengan
+   hangat hanya di sudut kanan atas & kiri bawah, bukan emas rata satu layar. */
+@media (max-width: 639.98px) {
+  .page-bg {
+    background:
+      radial-gradient(110vw 34vh at 100% 0px, rgba(255, 220, 140, 0.2) 0%, rgba(255, 220, 140, 0) 62%),
+      radial-gradient(85vw 26vh at 0% 92%, rgba(245, 182, 52, 0.16) 0%, rgba(245, 182, 52, 0) 66%),
+      linear-gradient(180deg, rgba(9, 8, 6, 0.62) 0%, rgba(9, 8, 6, 0.76) 42%, rgba(9, 8, 6, 0.86) 100%),
+      transparent;
+  }
+}

@@ -33,7 +33,7 @@ const statusColor = (s?: string) => {
 type SortField = "newest" | "price-asc" | "price-desc";
 
 const emptyForm = {
-  name: "", set: "", rarity: "", image: "/card1.png",
+  name: "", set: "", rarity: "", image: "", imageBack: "",
   price: 0, expectedValue: 0,
   grade: "", grader: "PSA", gradeScore: 0, language: "English",
   era: "Classic", element: "Fire", category: "Special Illustration",
@@ -92,6 +92,7 @@ export default function AdminListingsPage() {
     }
   }, [token, page, search, statusFilter, vaultFilter, sort]);
 
+  /* eslint-disable-next-line react-hooks/set-state-in-effect */
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Daftar vault (distinct) untuk dropdown filter — dimuat sekali per sesi admin.
@@ -110,7 +111,7 @@ export default function AdminListingsPage() {
     setEditHasBuyback(l.ccHasBuyback);
     setEditForm({
       name: l.name, set: l.set, rarity: l.rarity,
-      image: l.image, price: l.priceIdrx, expectedValue: l.expectedValueIdrx,
+      image: l.image, imageBack: l.imageBack ?? "", price: l.priceIdrx, expectedValue: l.expectedValueIdrx,
       grade: l.grade, grader: l.grader, gradeScore: l.gradeScore,
       language: l.language, era: l.era, element: l.element,
       category: l.category, buyback: l.buybackIdrx,
@@ -170,6 +171,18 @@ export default function AdminListingsPage() {
 
   const handleAdd = async () => {
     if (!token) return;
+    // Validasi wajib di klien dulu (pesan jelas) — backend tetap validasi ulang.
+    const miss: string[] = [];
+    if (!addForm.name.trim()) miss.push("Nama");
+    if (!addForm.set.trim()) miss.push("Set");
+    if (!addForm.rarity.trim()) miss.push("Rarity");
+    if (!addForm.grade.trim()) miss.push("Grade");
+    if (!addForm.image.trim()) miss.push("Gambar depan");
+    if (!(addForm.price > 0)) miss.push("Harga");
+    if (miss.length) {
+      setError(`Lengkapi dulu: ${miss.join(", ")}.`);
+      return;
+    }
     setAddSaving(true);
     setError(null);
     try {
@@ -265,10 +278,10 @@ export default function AdminListingsPage() {
           >
             Import
           </button>
-          <button onClick={() => setAddOpen(true)}
+          <button onClick={() => { setError(null); setAddForm({ ...emptyForm, sellerAddress: "" }); setAddOpen(true); }}
             className="rounded-xl bg-yellow-400 px-4 py-2.5 text-sm font-bold text-[#171717] transition hover:bg-yellow-300"
           >
-            + Add Listing
+            + Tambah Listing
           </button>
         </div>
       </header>
@@ -373,11 +386,15 @@ export default function AdminListingsPage() {
 
       {addOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white/10 bg-[#171717] p-6">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Add New Listing</h2>
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-white/10 bg-[#171717] p-6 sm:p-7">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Tambah Listing Baru</h2>
               <button onClick={() => setAddOpen(false)} className="text-zinc-500 hover:text-zinc-300">&times;</button>
             </div>
+            <p className="mb-6 text-[12px] leading-relaxed text-zinc-500">
+              Isi metadata kartu (meniru struktur CollectorCrypt). Bertanda <span className="text-red-400">*</span> wajib.
+              Upload gambar <b>depan</b> & <b>belakang</b> (drag-and-drop / klik / tempel URL).
+            </p>
 
             <div className="space-y-5">
               <fieldset>
@@ -424,9 +441,15 @@ export default function AdminListingsPage() {
                         className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40" placeholder="Special Illustration" />
                     </div>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Image</label>
-                    <ImageUploader value={addForm.image} onChange={(v) => setAddForm((p) => ({ ...p, image: v }))} token={token ?? ""} />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Gambar Depan <span className="text-red-400">*</span></label>
+                      <ImageUploader label="Gambar depan" value={addForm.image} onChange={(v) => setAddForm((p) => ({ ...p, image: v }))} token={token ?? ""} />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Gambar Belakang</label>
+                      <ImageUploader label="Gambar belakang" value={addForm.imageBack} onChange={(v) => setAddForm((p) => ({ ...p, imageBack: v }))} token={token ?? ""} />
+                    </div>
                   </div>
                   <div className="flex gap-3">
                     <div className="flex-1">
@@ -486,11 +509,8 @@ export default function AdminListingsPage() {
                         className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40" placeholder="27000000" />
                     </div>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Buyback (0 = none)</label>
-                    <input type="number" value={addForm.buyback} onChange={(e) => setAddForm((p) => ({ ...p, buyback: Number(e.target.value) }))}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40" placeholder="18000000" />
-                  </div>
+                  {/* Buyback SENGAJA dihilangkan dari form: buyback ditentukan CollectorCrypt, bukan
+                      angka manual admin. Listing baru selalu buyback 0 (= none). */}
                 </div>
               </fieldset>
 
@@ -522,13 +542,18 @@ export default function AdminListingsPage() {
               </fieldset>
             </div>
 
-            <div className="mt-8 flex justify-end gap-3">
+            {error && (
+              <p className="mt-5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-[13px] text-red-400">
+                {error}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
               <button onClick={() => setAddOpen(false)}
                 className="rounded-xl border border-white/10 px-5 py-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.04]"
-              >Cancel</button>
+              >Batal</button>
               <button onClick={handleAdd} disabled={addSaving}
                 className="rounded-xl bg-yellow-400 px-6 py-2.5 text-sm font-bold text-[#171717] transition hover:bg-yellow-300 disabled:opacity-50"
-              >{addSaving ? "Creating…" : "Create Listing"}</button>
+              >{addSaving ? "Menyimpan…" : "Buat Listing"}</button>
             </div>
           </div>
         </div>
@@ -536,7 +561,7 @@ export default function AdminListingsPage() {
 
       {editId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white/10 bg-[#171717] p-6">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-white/10 bg-[#171717] p-6 sm:p-7">
             <div className="mb-6 flex items-center justify-between">
               <h2 className="text-lg font-bold text-white">Edit Listing</h2>
               <button onClick={() => setEditId(null)} className="text-zinc-500 hover:text-zinc-300">&times;</button>
@@ -600,9 +625,15 @@ export default function AdminListingsPage() {
                         className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-yellow-400/40" />
                     </div>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Image</label>
-                    <ImageUploader value={editForm.image} onChange={(v) => setEditForm((p) => ({ ...p, image: v }))} token={token ?? ""} />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Gambar Depan</label>
+                      <ImageUploader label="Gambar depan" value={editForm.image} onChange={(v) => setEditForm((p) => ({ ...p, image: v }))} token={token ?? ""} />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Gambar Belakang</label>
+                      <ImageUploader label="Gambar belakang" value={editForm.imageBack} onChange={(v) => setEditForm((p) => ({ ...p, imageBack: v }))} token={token ?? ""} />
+                    </div>
                   </div>
                   <div className="flex gap-3">
                     <div className="flex-1">

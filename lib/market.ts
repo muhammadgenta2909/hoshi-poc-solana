@@ -101,6 +101,20 @@ export const CARD_CATEGORIES: CardCategory[] = [
 ];
 
 /**
+ * Deteksi kartu Pokémon — DUA LAPIS:
+ *  1) UTAMA (100% akurat): field `tcg` dari backend (asal data CollectorCrypt `card.category`,
+ *     mis. "Pokemon" / "One Piece"). Kalau ADA, ia yang berkuasa — nilai eksplisit CC
+ *     mengalahkan tebakan teks.
+ *  2) CADANGAN: baris lokal/legacy tanpa `tcg` → heuristik kata kunci `pok[eé]mon` pada teks
+ *     kartu (judul/nama/set/koleksi). Menangani "Pokémon" beraksen.
+ */
+export function isPokemonCard(tcg: string | null | undefined, text: string): boolean {
+  const t = (tcg ?? "").trim();
+  if (t) return /pok[eé]mon/i.test(t); // field CC eksplisit = otoritatif
+  return /pok[eé]mon/i.test(text); // cadangan: heuristik nama
+}
+
+/**
  * Payload for listing a card (POST /marketplace). Mirrors the backend
  * CreateListingDto 1:1; the seller identity is set server-side from the JWT.
  */
@@ -235,6 +249,10 @@ export type Listing = {
   era: Era;
   element: Element;
   category: CardCategory;
+  /** Game / TCG franchise APA ADANYA dari CollectorCrypt ("Pokemon", "One Piece", "Magic", …).
+   *  Sinyal ANDAL untuk deteksi jenis kartu (mis. ikon Pokéball). Absen/`null` pada baris
+   *  lokal/legacy ⇒ pakai heuristik nama via `isPokemonCard`. */
+  tcg?: string | null;
   /** View count shown next to the visibility icon. */
   views: number;
   /** Listing status from the backend (ACTIVE while live). Absent on mock data. */
@@ -255,7 +273,11 @@ export type Listing = {
 };
 
 /** Listing status (mirrors the backend ListingStatus enum). */
-export type ListingStatus = "ACTIVE" | "SOLD" | "CANCELLED";
+export type ListingStatus =
+  | "PENDING_ESCROW"
+  | "ACTIVE"
+  | "SOLD"
+  | "CANCELLED";
 
 export type SortKey = "newest" | "price-asc" | "price-desc" | "rarity" | "value";
 
@@ -275,9 +297,10 @@ export const rarityColor = (t: Tier) => TIER_COLOR[t];
 
 /* ---------- fiat conversion for the secondary price line ---------- */
 
-// 1 IDRX ≈ 1 IDR (a stablecoin), with a small spread so the "= IDR" line reads
-// realistically slightly under the IDRX ask. USD via a flat POC devnet rate.
-const IDRX_TO_IDR = 0.99773;
+// 1 IDRX = 1 IDR (stablecoin, dipatok 1:1). Baris "= IDR" tampil SAMA dengan harga IDRX supaya
+// tak membingungkan audiens yang bayar Rupiah (dulu ada spread 0,99773 kosmetik — dibuang). USD
+// via kurs flat POC devnet.
+const IDRX_TO_IDR = 1;
 const IDR_TO_USD = 1 / 16_000;
 
 export const toIdr = (idrx: number) => Math.round(idrx * IDRX_TO_IDR);

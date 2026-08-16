@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useCallback, useContext, useSyncExternalStore, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { API_BASE } from "./api";
 
 const ADMIN_TOKEN_KEY = "hoshi_admin_token";
@@ -51,6 +59,15 @@ const AdminAuthContext = createContext<AdminAuthValue | null>(null);
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const token = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  // `hydrated` HARUS false sampai token benar-benar terbaca di client. useSyncExternalStore
+  // mengembalikan getServerSnapshot()=null di render pertama (SSR + hydration), jadi kalau hydrated
+  // langsung true, konsumen (admin layout) mengira "tak ada token → bukan admin" lalu bounce ke
+  // /admin/login SEBELUM localStorage kebaca — refresh di subhalaman malah lempar ke dashboard.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    setMounted(true);
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     try {
@@ -79,7 +96,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => setStoredToken(null), []);
 
   return (
-    <AdminAuthContext.Provider value={{ token, isAdmin: !!token, hydrated: true, login, logout }}>
+    <AdminAuthContext.Provider value={{ token, isAdmin: !!token, hydrated: mounted, login, logout }}>
       {children}
     </AdminAuthContext.Provider>
   );

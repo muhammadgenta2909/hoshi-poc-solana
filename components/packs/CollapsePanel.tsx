@@ -16,6 +16,7 @@ export default function CollapsePanel({
   defaultOpen = true,
   sideLines = false,
   sticky = false,
+  className = "",
   bodyClassName = "",
   children,
 }: {
@@ -24,6 +25,12 @@ export default function CollapsePanel({
   toggleIcon: string;
   side: "left" | "right";
   defaultOpen?: boolean;
+  /** Kelas pada <aside> itu sendiri. Dipakai /open-packs untuk menyembunyikan
+   *  panel di bawah `lg`. HARUS di sini, bukan di div pembungkus: panel ini
+   *  adalah GRID ITEM, dan `position: sticky`-nya memakai grid area sebagai
+   *  containing block. Dibungkus div, containing block-nya menyusut jadi setinggi
+   *  konten dan sticky-nya diam-diam mati. */
+  className?: string;
   /** Faded white hairlines down the panel's own left & right edges (Figma). */
   sideLines?: boolean;
   /** Pin the panel below the nav on desktop so a long list can't push the
@@ -40,7 +47,7 @@ export default function CollapsePanel({
     <aside
       className={`${side === "left" ? "rounded-r-2xl" : "rounded-l-2xl"} bg-[#181507] p-4 ${
         sticky ? "lg:sticky lg:top-[72px] lg:self-start" : ""
-      }`}
+      } ${className}`}
       style={sideLines ? SIDE_LINES : undefined}
     >
       <div className="flex items-center justify-between">

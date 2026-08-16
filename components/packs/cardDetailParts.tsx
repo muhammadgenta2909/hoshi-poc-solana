@@ -70,7 +70,7 @@ export function Stat({
   href?: string;
 }) {
   const content = href ? (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">
+    <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:brightness-110">
       {value}
     </a>
   ) : (

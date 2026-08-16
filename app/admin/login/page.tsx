@@ -6,6 +6,15 @@ import { useAdminAuth } from "@/lib/adminAuth";
 import { ADMIN_BG } from "@/lib/theme";
 import { Img } from "@/components/packs/ui";
 
+/** Tujuan sesudah login = ?next= (kalau ada & internal /admin), else dashboard. Cegah open-redirect
+ *  (harus mulai "/admin" dan bukan halaman login itu sendiri). Dibaca dari window (client-only) supaya
+ *  tak perlu Suspense useSearchParams. */
+function nextDest(): string {
+  if (typeof window === "undefined") return "/admin";
+  const n = new URLSearchParams(window.location.search).get("next");
+  return n && n.startsWith("/admin") && n !== "/admin/login" ? n : "/admin";
+}
+
 export default function AdminLoginPage() {
   const { login, isAdmin } = useAdminAuth();
   const router = useRouter();
@@ -15,7 +24,9 @@ export default function AdminLoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (isAdmin) router.replace("/admin");
+    // Sudah admin (mis. bounce dari layout saat verify sesaat) → balik ke halaman ASAL, bukan
+    // selalu dashboard — refresh di /admin/withdrawals tetap mendarat di /admin/withdrawals.
+    if (isAdmin) router.replace(nextDest());
   }, [isAdmin, router]);
 
   if (isAdmin) return null;
@@ -26,7 +37,7 @@ export default function AdminLoginPage() {
     setBusy(true);
     try {
       await login(email, password);
-      router.replace("/admin");
+      router.replace(nextDest());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

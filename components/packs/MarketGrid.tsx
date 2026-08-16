@@ -147,6 +147,7 @@ function SortSelect({ sort, onSort }: { sort: SortKey; onSort: (s: SortKey) => v
 
 export default function MarketGrid({
   results,
+  chips = [],
   filtersOpen,
   onOpenFilters,
   category,
@@ -157,6 +158,7 @@ export default function MarketGrid({
   onSort,
 }: {
   results: Listing[];
+  chips?: { key: string; label: string; onRemove: () => void }[];
   filtersOpen: boolean;
   onOpenFilters: () => void;
   category: Category;
@@ -180,9 +182,9 @@ export default function MarketGrid({
           </div>
         </div>
       ) : (
-        <div className="mb-4 flex flex-col gap-4">
-          {/* category tabs, revealed when the filter panel is hidden */}
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mb-4 flex flex-col gap-3">
+          {/* Tab kategori — di mobile SCROLL ke samping (bukan wrap), scrollbar disembunyikan. */}
+          <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {CATEGORY_TABS.map((t) => {
               const active = category === t;
               return (
@@ -192,7 +194,7 @@ export default function MarketGrid({
                   onClick={() => onCategory(t)}
                   aria-pressed={active}
                   style={{ fontFamily: "var(--font-jersey)" }}
-                  className={`rounded-full border px-3.5 py-1 text-[16px] leading-none tracking-wide transition ${
+                  className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1 text-[16px] leading-none tracking-wide transition ${
                     active
                       ? "border-yellow-400 text-yellow-400"
                       : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
@@ -203,26 +205,41 @@ export default function MarketGrid({
               );
             })}
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {/* left group — Filters button first (aligned with the grid's left
-                edge), then the count, matching the Figma design. */}
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onOpenFilters}
-                style={{ fontFamily: "var(--font-jersey)" }}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-[16px] leading-none text-zinc-200 transition hover:border-white/25"
-              >
-                Filters
-                <Img src="/filter.png" alt="" className="h-4 w-4" />
-              </button>
-              <CountLabel count={results.length} />
-            </div>
-            <div className="flex items-center gap-3">
-              <CurrencyToggle currency={currency} onCurrency={onCurrency} />
-              <SortSelect sort={sort} onSort={onSort} />
-            </div>
+          {/* Baris: Filters (kiri) ↔ Recently Listed / sort (kanan). */}
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={onOpenFilters}
+              style={{ fontFamily: "var(--font-jersey)" }}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2 text-[16px] leading-none text-zinc-200 transition hover:border-white/25"
+            >
+              Filters
+              <Img src="/filter.png" alt="" className="h-4 w-4" />
+            </button>
+            <SortSelect sort={sort} onSort={onSort} />
           </div>
+          {/* Baris: jumlah kartu (kiri) ↔ toggle IDR/USD (kanan). */}
+          <div className="flex items-center justify-between gap-3">
+            <CountLabel count={results.length} />
+            <CurrencyToggle currency={currency} onCurrency={onCurrency} />
+          </div>
+        </div>
+      )}
+
+      {/* Chip filter aktif — tiap chip bisa dihapus lewat ✕ (sesuai Figma). */}
+      {chips.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {chips.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={c.onRemove}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#F2C101] px-3 py-1 text-[13px] font-semibold text-[#171717] transition hover:brightness-105"
+            >
+              {c.label}
+              <span aria-hidden className="text-[15px] leading-none">×</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -239,7 +256,7 @@ export default function MarketGrid({
         </div>
       ) : (
         <div
-          className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 ${
+          className={`grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 ${
             filtersOpen ? "2xl:grid-cols-4" : "xl:grid-cols-4"
           }`}
         >

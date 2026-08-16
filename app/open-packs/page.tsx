@@ -5,7 +5,6 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { type LiveCard, type Pack } from "@/lib/packs";
 import { openPackLocal, type OpenResult } from "@/lib/openPack";
 import { ALL_PACK_VIDEOS, packVideoSrc } from "@/lib/packVideo";
-import { PAGE_BG } from "@/lib/theme";
 import {
   ApiError,
   getGachaMachines,
@@ -29,9 +28,18 @@ import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import TopNav from "@/components/packs/TopNav";
 import LiveTicker from "@/components/packs/LiveTicker";
-import SelectPackPanel from "@/components/packs/SelectPackPanel";
+import SelectPackPanel, {
+  ALL_GROUPS,
+  SelectPackList,
+  type GroupFilter,
+} from "@/components/packs/SelectPackPanel";
 import PackShowcase from "@/components/packs/PackShowcase";
-import PackDetailsPanel from "@/components/packs/PackDetailsPanel";
+import PackDetailsPanel, { PackDetailsBody } from "@/components/packs/PackDetailsPanel";
+import {
+  MobilePanelButtons,
+  MobileSheet,
+  PackGroupTabs,
+} from "@/components/packs/MobilePackControls";
 import RipReveal from "@/components/packs/RipReveal";
 import {
   PayModal,
@@ -52,6 +60,14 @@ export default function OpenPacksPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState("");
+
+  // Kontrol khusus mobile (di ≥lg kedua panel samping selalu terlihat, jadi
+  // state ini tidak dipakai di sana). `sheet` = panel mana yang sedang terbuka;
+  // null = keduanya tertutup, yang MEMANG keadaan awal di mobile supaya preview
+  // pack + tombol Rip langsung terlihat tanpa scroll.
+  const [sheet, setSheet] = useState<"select" | "details" | null>(null);
+  const [group, setGroup] = useState<GroupFilter>(ALL_GROUPS);
+
   // One pull = one session. The takeover (video) mounts the moment the session
   // starts, so the ~15-30s treasury purchase runs BEHIND the rip video instead
   // of behind a spinner; RipReveal holds on the white card if the purchase
@@ -97,6 +113,9 @@ export default function OpenPacksPage() {
   // order id and re-open the pay modal in resume mode → poll → auto-reveal.
   const [resumeOrderId, setResumeOrderId] = useState<string | null>(null);
   const [resumePackType, setResumePackType] = useState<string>("");
+  // Kalau order yang diresume adalah pembelian KARTU reseller (bukan pack), listingId-nya
+  // dibawa supaya PayModal menampilkan copy "Kartu…" bukan "Pack…".
+  const [resumeListingId, setResumeListingId] = useState<string | null>(null);
   useEffect(() => {
     // One-time client-only read of ?demo=1. Deliberately synchronous (no SSR window),
     // and it flips a hidden button once — no cascading render worth worrying about.
@@ -122,9 +141,13 @@ export default function OpenPacksPage() {
 
     const pending = readPendingPayment();
     if (!pending) return;
+    // Order BELI KARTU (reseller, listingId ada) diresume di /vault (nav Vault + kartu langsung
+    // tampak), BUKAN di halaman pack ini. Biarkan pending-nya untuk /vault yang menuntaskan.
+    if (pending.listingId) return;
     /* eslint-disable react-hooks/set-state-in-effect */
     setResumeOrderId(pending.merchantOrderId);
     setResumePackType(pending.packType);
+    setResumeListingId(pending.listingId);
     setPayModalOpen(true);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
@@ -554,19 +577,37 @@ export default function OpenPacksPage() {
 
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
+      className="page-bg relative min-h-screen text-zinc-100"
       style={{
-        background: PAGE_BG,
         fontFamily: "var(--font-outfit), system-ui, sans-serif",
       }}
     >
       <TopNav active="Games" />
       <LiveTicker cards={liveCards} />
 
+      {/* Mobile: tab grup pack tepat di bawah ticker, lalu sepasang tombol
+          pembuka panel. Keduanya `lg:hidden` — di desktop panel sampingnya sudah
+          selalu terlihat, jadi kontrol ini cuma duplikat di sana. */}
+      <div className="flex flex-col gap-3 pt-1 lg:hidden">
+        <PackGroupTabs value={group} onChange={setGroup} />
+        <MobilePanelButtons
+          onOpenSelect={() => setSheet("select")}
+          onOpenDetails={() => setSheet("details")}
+        />
+      </div>
+
       {/* Full-bleed grid: the side panels (bg #181507) run flush to the left and
           right viewport edges, per the Figma; only the center column is padded. */}
       <main className="grid w-full items-start gap-4 py-5 lg:grid-cols-[280px_minmax(0,1fr)_320px]">
-        <SelectPackPanel packs={packs} selectedId={selectedId} onSelect={onSelect} />
+        {/* `hidden lg:block` menempel di panelnya sendiri, bukan di div pembungkus:
+            panel ini grid item dan sticky-nya bergantung pada grid area. */}
+        <SelectPackPanel
+          packs={packs}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          group={group}
+          className="hidden lg:block"
+        />
 
         {/* Center column pinned below the nav: picking a pack far down the Select
             Pack list no longer scrolls the preview + Rip button out of view. */}
@@ -625,11 +666,46 @@ export default function OpenPacksPage() {
         </div>
 
         {selected ? (
-          <PackDetailsPanel pack={selected} />
+          <PackDetailsPanel pack={selected} className="hidden lg:block" />
         ) : (
-          <div className="min-h-[200px]" aria-hidden />
+          <div className="hidden min-h-[200px] lg:block" aria-hidden />
         )}
       </main>
+
+      {/* Sheet mobile. Memilih pack langsung menutup sheet: preview + tombol Rip
+          ada di belakangnya, jadi membiarkannya terbuka menyembunyikan justru
+          hasil dari ketukan tadi. */}
+      <MobileSheet
+        open={sheet === "select"}
+        title="Select Pack"
+        icon="/icon-select.png"
+        onClose={() => setSheet(null)}
+      >
+        <SelectPackList
+          packs={packs}
+          selectedId={selectedId}
+          onSelect={(id) => {
+            onSelect(id);
+            setSheet(null);
+          }}
+          group={group}
+        />
+      </MobileSheet>
+
+      <MobileSheet
+        open={sheet === "details"}
+        title="Pack Details"
+        icon="/icon-info.png"
+        onClose={() => setSheet(null)}
+      >
+        {selected ? (
+          <PackDetailsBody pack={selected} />
+        ) : (
+          <p className="py-8 text-center text-sm text-zinc-400">
+            Pilih pack dulu untuk melihat detailnya.
+          </p>
+        )}
+      </MobileSheet>
 
       {/* Pack inventory: sealed (paid-but-unopened) packs. Bought via rupiah, opened
           here manually — the card is drawn only when the user clicks Buka Pack. */}
@@ -728,6 +804,7 @@ export default function OpenPacksPage() {
       {payModalOpen && (selectedMachine || resumeOrderId) && (
         <PayModal
           packType={resumeOrderId ? resumePackType : (selectedMachine?.code ?? "")}
+          listingId={resumeOrderId ? (resumeListingId ?? undefined) : undefined}
           demo={demoPay}
           resumeOrderId={resumeOrderId ?? undefined}
           onFulfilled={(order) => (demoPay ? handleDemoPack() : handlePaidOrder(order))}
@@ -737,6 +814,7 @@ export default function OpenPacksPage() {
             if (resumeOrderId) {
               clearPendingPayment();
               setResumeOrderId(null);
+              setResumeListingId(null);
             }
           }}
         />

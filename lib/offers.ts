@@ -9,7 +9,7 @@ import type { ListingStatus } from "./market";
 
 /* --------------------------------- offers --------------------------------- */
 
-export type OfferStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "CANCELED";
+export type OfferStatus = "PENDING" | "ACCEPTED" | "PAID" | "REJECTED" | "CANCELED";
 
 export type OfferParty = {
   id: string | null;
@@ -44,6 +44,7 @@ export type OfferRecord = {
 export const OFFER_STATUS_STYLE: Record<OfferStatus, string> = {
   PENDING: "text-yellow-300 bg-yellow-400/10",
   ACCEPTED: "text-emerald-400 bg-emerald-400/10",
+  PAID: "text-emerald-400 bg-emerald-400/10",
   REJECTED: "text-red-400 bg-red-400/10",
   CANCELED: "text-zinc-400 bg-white/[0.06]",
 };

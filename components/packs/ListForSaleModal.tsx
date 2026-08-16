@@ -18,6 +18,7 @@ import { pullToListingInput } from "@/lib/pullListing";
 import { pullGradeLabel, type GachaPull } from "@/lib/gacha";
 import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
+import { useFinishListingEscrow } from "@/lib/useListingEscrow";
 import { GOLD_GRADIENT, Img } from "./ui";
 
 const idr = new Intl.NumberFormat("id-ID");
@@ -40,6 +41,7 @@ export default function ListForSaleModal({
 }) {
   const { token, login } = useAuth();
   const { setVisible } = useWalletConnect();
+  const finishEscrow = useFinishListingEscrow();
 
   // Grade kartu adalah FAKTA milik CollectorCrypt, bukan isian penjual — jadi ia
   // ditampilkan, bukan diminta. null = CC belum menjawab ⇒ kartunya belum boleh
@@ -114,7 +116,10 @@ export default function ListForSaleModal({
       let t = token;
       if (!t) t = await login(); // pops connect/sign if needed
       const input = pullToListingInput(pull, { price: Math.round(priceNum) });
-      const listing = await createListing(input, t);
+      const created = await createListing(input, t);
+      // Real P2P (prod armed): kartu balik PENDING_ESCROW → penjual TTD transfer→escrow di sini.
+      // Staging/mock: created sudah ACTIVE → finishEscrow no-op (tanpa popup tanda tangan).
+      const listing = await finishEscrow(created, t);
       onListed(listing);
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -270,7 +275,7 @@ export default function ListForSaleModal({
 
         {/* Kejelasan yang sering hilang di form jual: berapa yang benar-benar diterima. */}
         <p className="mb-4 text-[11px] leading-relaxed text-zinc-500">
-          Pembeli membayar tepat harga ini, dan kamu menerimanya <span className="text-zinc-300">penuh</span> — Hoshi tidak memotong komisi.
+          Pembeli membayar harga ini via Rupiah; hasilnya masuk <span className="text-zinc-300">saldomu</span> setelah dipotong komisi kecil Hoshi.
         </p>
 
         {/* Grade — DIBACA, bukan diisi. Dulu ini dua field yang bisa diedit dan

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { PAGE_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import { Img, GradientText } from "@/components/packs/ui";
 
@@ -10,9 +9,8 @@ import { Img, GradientText } from "@/components/packs/ui";
 export default function OpenBidCrackPage() {
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
+      className="page-bg relative min-h-screen text-zinc-100"
       style={{
-        background: PAGE_BG,
         fontFamily: "var(--font-outfit), system-ui, sans-serif",
       }}
     >

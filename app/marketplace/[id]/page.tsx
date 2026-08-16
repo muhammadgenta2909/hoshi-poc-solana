@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import Link from "next/link";
-import { secondaryPrice, type Listing, type RelistInput } from "@/lib/market";
+import { isPokemonCard, secondaryPrice, type Listing, type RelistInput } from "@/lib/market";
 import type { CardDetail, Offer } from "@/lib/cardDetail";
 import {
   ApiError,
@@ -13,8 +13,11 @@ import {
   ccBuyPrepare,
   ccBuySubmit,
   CC_BUY_ENABLED,
+  CC_RESELL_ENABLED,
+  P2P_ENABLED,
   getListingDetail,
   getMyPurchases,
+  PAYMENTS_ENABLED,
   registerListingView,
   relistListing,
   type CcBuyQuote,
@@ -22,10 +25,10 @@ import {
 
 import { useAuth } from "@/lib/useAuth";
 import { useSignSerializedTransaction } from "@/lib/useSignSerializedTransaction";
-import { PAGE_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import MarketCard from "@/components/packs/MarketCard";
-import CardActions from "@/components/packs/CardActions";
+import { useCardActions, DarkPill } from "@/lib/useCardActions";
+import { PayModal } from "@/components/packs/PayWithRupiah";
 import { GOLD_GRADIENT, Img, formatIdr } from "@/components/packs/ui";
 import {
   Badge,
@@ -101,10 +104,68 @@ function PriceSparkline({ data, className = "h-24" }: { data: number[]; classNam
   );
 }
 
+/* ------------------------------ primitives 2 ------------------------------ */
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`h-5 w-5 shrink-0 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+/** Panel bisa buka-tutup (accordion). Di Figma mobile: See Chart / Card Details / Offers Received.
+ *  `defaultOpen` = kondisi awal; toggle tetap jalan di semua ukuran. */
+function Accordion({
+  title,
+  right,
+  defaultOpen = false,
+  className = "bg-[#181507]",
+  children,
+}: {
+  title: string;
+  right?: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`overflow-hidden rounded-2xl ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+      >
+        <span className="text-[15px] uppercase tracking-wide text-white" style={JERSEY}>
+          {title}
+        </span>
+        <span className="flex items-center gap-2">
+          {right}
+          <Chevron open={open} />
+        </span>
+      </button>
+      {open && <div className="px-5 pb-5">{children}</div>}
+    </div>
+  );
+}
+
 /* ------------------------------ left column ------------------------------- */
 
 type Side = "FRONT" | "BACK";
 
+/** Toggle DEPAN/BELAKANG — KOLOM (vertikal), ditempel di pojok kanan-bawah kartu (sesuai Figma).
+ *  Sisi aktif = pill emas; sisi non-aktif = teks polos. */
 function FrontBackToggle({
   side,
   onSide,
@@ -113,7 +174,7 @@ function FrontBackToggle({
   onSide: (s: Side) => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-1 rounded-full bg-black/40 p-1">
+    <div className="flex flex-col items-stretch gap-1.5">
       {(["FRONT", "BACK"] as const).map((s) => {
         const active = side === s;
         return (
@@ -122,8 +183,8 @@ function FrontBackToggle({
             type="button"
             onClick={() => onSide(s)}
             aria-pressed={active}
-            className={`rounded-full px-5 py-1.5 text-sm font-bold transition ${
-              active ? "text-[#171717]" : "text-zinc-300 hover:text-white"
+            className={`rounded-full px-4 py-1.5 text-[13px] font-bold transition ${
+              active ? "text-[#171717] shadow-[0_6px_16px_rgba(0,0,0,0.35)]" : "text-zinc-200 hover:text-white"
             }`}
             style={active ? { backgroundImage: GOLD_GRADIENT } : undefined}
           >
@@ -135,7 +196,7 @@ function FrontBackToggle({
   );
 }
 
-function LeftColumn({ detail }: { detail: CardDetail }) {
+function LeftColumn({ detail, isPokemon }: { detail: CardDetail; isPokemon: boolean }) {
   const [side, setSide] = useState<Side>("FRONT");
   const { image, imageBack, name } = detail.listing;
   // Kartu CC/pack biasanya TIDAK punya gambar belakang. Kalau begitu: tampilkan hanya
@@ -143,28 +204,36 @@ function LeftColumn({ detail }: { detail: CardDetail }) {
   // Hoshi. Card-back berbrand Hoshi terbaca sebagai "punggung kartu ini", padahal bukan;
   // untuk kartu graded asli itu menyesatkan.
   const src = imageBack && side === "BACK" ? imageBack : image;
+  // Pokéball (kanan-atas) & toggle FRONT/BACK (kanan-bawah) butuh RUANG di kanan supaya tak menutupi
+  // kartu (sesuai Figma). Sisakan jalur kanan HANYA kalau ada yang perlu ditaruh di sana.
+  const hasRightRail = isPokemon || !!imageBack;
   return (
-    <div className="flex flex-col gap-4">
-      {/* framed card art (parent: white 9% + blur, per Figma) + front/back toggle */}
-      <div className="flex flex-col items-center gap-5 rounded-2xl bg-white/[0.09] p-5 backdrop-blur-sm">
+    <div className="lg:sticky lg:top-6">
+      {/* framed card art (parent: white 9% + blur). Ikon Pokéball kanan-ATAS (kalau Pokémon) &
+          toggle FRONT/BACK vertikal kanan-BAWAH — keduanya duduk di jalur kanan yang direservasi,
+          jadi kartu tak tertutup tombol. */}
+      <div
+        className={`relative flex items-center justify-center rounded-2xl bg-white/[0.09] backdrop-blur-sm ${
+          hasRightRail ? "py-5 pl-5 pr-24" : "p-5"
+        }`}
+      >
+        {isPokemon && (
+          <Img
+            src="/pokemon.png"
+            alt="Kartu Pokémon"
+            className="absolute right-3 top-3 z-10 h-9 w-9 drop-shadow-[0_4px_10px_rgba(0,0,0,0.5)]"
+          />
+        )}
         <Img
           src={src}
           alt={`${name} — ${imageBack && side === "BACK" ? "back" : "front"}`}
-          className="max-h-[520px] w-auto max-w-full object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.5)]"
+          className="max-h-[500px] w-auto max-w-full object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.5)]"
         />
-        {imageBack && <FrontBackToggle side={side} onSide={setSide} />}
-      </div>
-
-      {/* CARD DETAILS */}
-      <div className="rounded-2xl bg-[#181507] p-4">
-        <Label className="mb-3">Card Details</Label>
-        <div className="flex flex-col gap-2">
-          {detail.details
-            .filter((d) => d.value != null && String(d.value).trim() !== "")
-            .map((d) => (
-              <DetailRow key={d.label} label={d.label} value={d.value} />
-            ))}
-        </div>
+        {imageBack && (
+          <div className="absolute bottom-4 right-3 z-10">
+            <FrontBackToggle side={side} onSide={setSide} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -222,8 +291,6 @@ function OwnerPanel({
   onCancel: () => void;
 }) {
   const [price, setPrice] = useState(listing.price);
-  const [buyback, setBuyback] = useState(listing.buyback);
-
   // Value edge vs. the card's Hoshi expected value — same math as the sell form.
   const edge = price > 0 ? (listing.expectedValue - price) / price : 0;
 
@@ -267,19 +334,6 @@ function OwnerPanel({
                 className={OWNER_INPUT}
               />
             </label>
-            <label className="block">
-              <span style={JERSEY} className="mb-1.5 block text-[13px] uppercase tracking-wide text-zinc-500">
-                Buyback (IDRX)
-              </span>
-              <input
-                type="number"
-                value={Number.isNaN(buyback) ? "" : buyback}
-                min={0}
-                step={100_000}
-                onChange={(e) => setBuyback(Number(e.target.value))}
-                className={OWNER_INPUT}
-              />
-            </label>
             <p className="-mt-1 text-[12px] text-zinc-500">
               Value edge:{" "}
               <span className={edge >= 0 ? "text-emerald-400" : "text-red-400"}>
@@ -291,7 +345,7 @@ function OwnerPanel({
           </div>
           <button
             type="button"
-            onClick={() => onRelist({ price: Math.round(price), buyback: Math.round(buyback) })}
+            onClick={() => onRelist({ price: Math.round(price) })}
             disabled={busy || price <= 0}
             className="mt-4 w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105 disabled:opacity-50"
             style={{ backgroundImage: GOLD_GRADIENT }}
@@ -321,7 +375,9 @@ function RightColumn({
   buying,
   unavailable,
   owned,
+  ownedNow,
   isCatalogCc,
+  isHoshiInventory,
   buyMsg,
   onRelist,
   onCancel,
@@ -334,6 +390,7 @@ function RightColumn({
   onCcQuote,
   onCcConfirm,
   onCcCancel,
+  onBuyRupiah,
 }: {
   detail: CardDetail;
   offers: Offer[];
@@ -342,9 +399,16 @@ function RightColumn({
   buying: boolean;
   unavailable: boolean;
   owned: boolean;
+  /** Pemilik kartu SEKARANG = penonton? (status-aware: SOLD → pembeli; selain itu → penjual/holder).
+   *  Beda dari `owned` (yang juga true untuk penjual historis): kartu yang KAMU JUAL ke orang lain
+   *  → ownedNow=false, jadi chip tidak salah bilang "kamu memiliki". */
+  ownedNow: boolean;
   /** true HANYA untuk kartu KATALOG-SYNC CC (tanpa penjual asli) — yang harus
    *  diselesaikan lewat CollectorCrypt. Kartu CC hasil pack yang di-list user = false. */
   isCatalogCc: boolean;
+  /** true = kartu INVENTARIS HOSHI (milik Hoshi sendiri, upload admin) — buyable via Rupiah
+   *  tanpa flag P2P; Hoshi = penjual, seluruh harga masuk kas Hoshi. */
+  isHoshiInventory: boolean;
   buyMsg: string | null;
   onRelist: (input: RelistInput) => void;
   onCancel: () => void;
@@ -358,6 +422,9 @@ function RightColumn({
   onCcQuote: () => void;
   onCcConfirm: () => void;
   onCcCancel: () => void;
+  /** Beli kartu katalog CC lewat jalur RESELLER IDRX (bayar rupiah harga kita → treasury
+   *  yang beli di CC + kirim ke pembeli). Alur lokal, tanpa user pegang USDC/SOL. */
+  onBuyRupiah: () => void;
 }) {
   const { listing } = detail;
   const listedByMe = owned && listing.status === "ACTIVE";
@@ -375,88 +442,143 @@ function RightColumn({
       ...(detail.contractAddress ? { href: `https://explorer.solana.com/address/${detail.contractAddress}?cluster=devnet` } : {}),
     },
   ].filter(Boolean) as { label: string; value: string; valueColor?: string; href?: string }[];
+  // Aksi kartu (offer / message / cart) — SATU sumber modal, dipakai tombol "Message Seller"
+  // (atas), bilah beli fixed (mobile), dan tombol inline (desktop).
+  const actions = useCardActions(listing, onOffer);
+  // Jalur beli STANDAR (bukan pemilik, bukan katalog CC) = Hoshi-inventory / P2P. Hanya jalur ini
+  // yang memakai bilah beli fixed (mobile) + tombol inline (desktop).
+  const standardBuyable = !owned && !isCatalogCc;
+  const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory);
+  // Inventaris Hoshi tak punya penjual eksternal → tak bisa ditawar / dichat.
+  const showMakeOffer = standardBuyable && !isHoshiInventory;
   return (
     <div className="flex flex-col">
-      {/* badges + views — lewati tag kosong. `tags` = [grade, language, era];
-          CollectorCrypt kadang tidak mengisi language/era untuk kartu tertentu
-          (mis. Fuecoco Japanese: field language CC kosong walau set-nya menyebut
-          "Japanese"). Merender string kosong menghasilkan pill kosong yang aneh. */}
+      {/* badges — lewati tag kosong. `tags` = [grade, language, era]; CollectorCrypt kadang tak
+          mengisi language/era (pill kosong aneh). Views + share pindah ke bilah atas halaman. */}
       <div className="flex flex-wrap items-center gap-2">
         {detail.tags
           .filter((t) => t.trim() !== "")
           .map((t) => (
             <Badge key={t}>{t}</Badge>
           ))}
-        <span className="ml-1 inline-flex items-center gap-1.5 text-zinc-300">
-          <Img src="/visibility.png" alt="" className="h-[18px] w-[18px] opacity-80" />
-          <span className="text-[17px] leading-none" style={JERSEY}>
-            {formatIdr(listing.views)}
-          </span>
-        </span>
       </div>
 
       {/* title */}
-      <h1 className="mt-4 text-3xl font-bold leading-tight text-white sm:text-4xl">{detail.title}</h1>
+      <h1 className="mt-4 text-2xl font-bold leading-tight text-white sm:text-4xl">{detail.title}</h1>
 
-      {/* consigned + vault verified */}
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <span className="flex items-center gap-2">
-          <span
-            className="h-6 w-6 shrink-0 rounded-full"
-            style={{ backgroundImage: GOLD_GRADIENT }}
-            aria-hidden
-          />
-          <span className="text-sm text-zinc-300">
-            Consigned by <span className="font-semibold text-zinc-100">{detail.consignedBy}</span>
+      {/* BUY NOW — harga + %change + = IDR (di atas grafik, sesuai Figma) */}
+      <div className="mt-5">
+        <Label>Buy Now</Label>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <IdrxCoin size={34} />
+          <span className="text-4xl leading-none text-white" style={JERSEY}>
+            {formatIdr(listing.price)}
           </span>
-        </span>
+          <span className="inline-flex items-center gap-1 text-sm" style={{ ...JERSEY, color: trendColor }}>
+            <span className={trendUp ? "" : "rotate-180"}>
+              <UpArrow color={trendColor} />
+            </span>
+            {trendUp ? "+" : ""}
+            {detail.change30dPct}% 30D
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-zinc-500" style={JERSEY}>
+          = {secondaryPrice(listing.price, "IDR")}
+        </p>
+      </div>
+
+      {/* See Chart — accordion (Figma): kartu hitam berisi grafik hijau */}
+      <div className="mt-4">
+        <Accordion title="See Chart" defaultOpen className="bg-[#0e0e0e]">
+          <PriceSparkline data={detail.priceHistory} className="h-28" />
+        </Accordion>
+      </div>
+
+      {/* SIAPA YANG MENJUAL — pindah ke BAWAH grafik (Figma). Badge "Vault Verified by …" menyatakan
+          ASAL/vault kartu (provenance). KALAU PENONTON PEMILIKNYA SEKARANG: tampilkan status
+          kepemilikan, bukan "Dijual oleh …" (rancu). */}
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        {ownedNow ? (
+          <span
+            className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/[0.1] px-3 py-1.5"
+            title={
+              listing.status === "ACTIVE"
+                ? "Kamu sedang menjual kartu ini di marketplace"
+                : "Kartu ini milikmu"
+            }
+          >
+            <span className="h-5 w-5 shrink-0 rounded-full bg-emerald-400/70" aria-hidden />
+            <span className="text-sm font-semibold text-emerald-200">
+              {listing.status === "ACTIVE"
+                ? "Kamu menjual kartu ini"
+                : "Kamu memiliki kartu ini"}
+            </span>
+          </span>
+        ) : detail.consignedBy === "collectorcrypt" ? (
+          <span
+            className="inline-flex items-center gap-2 rounded-full border border-[#F2C101]/45 bg-[#F2C101]/[0.1] px-3 py-1.5"
+            title="Dijual oleh Hoshi — kartu graded asli, tersimpan aman di vault CollectorCrypt. Bayar Rupiah."
+          >
+            <span
+              className="h-5 w-5 shrink-0 rounded-full"
+              style={{ backgroundImage: GOLD_GRADIENT }}
+              aria-hidden
+            />
+            <span className="text-sm font-semibold text-[#F2C101]">Dijual oleh Hoshi</span>
+            <span className="hidden text-[11px] text-zinc-400 sm:inline">
+              bayar Rupiah · dijamin asli
+            </span>
+          </span>
+        ) : (
+          <span
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5"
+            title="Dijual oleh sesama pengguna (lapak)"
+          >
+            <span
+              className="h-5 w-5 shrink-0 rounded-full"
+              style={{ backgroundImage: GOLD_GRADIENT }}
+              aria-hidden
+            />
+            <span className="text-sm text-zinc-300">
+              Dijual oleh{" "}
+              <span className="font-semibold text-[#F2C101] underline decoration-[#F2C101]/50 underline-offset-2">
+                {detail.consignedBy}
+              </span>
+            </span>
+          </span>
+        )}
+      </div>
+
+      {/* Message Seller — tombol berdiri sendiri, SETELAH "Dijual oleh" & SEBELUM Vault Verified
+          (Figma). Hanya untuk listing P2P (ada penjual user). */}
+      {showMakeOffer && (
+        <button
+          type="button"
+          onClick={actions.openMessage}
+          style={JERSEY}
+          className="mt-4 w-full rounded-2xl bg-white/[0.04] px-6 py-3 text-center text-[18px] leading-none text-zinc-100 transition hover:bg-white/[0.08]"
+        >
+          Message Seller
+        </button>
+      )}
+
+      {/* Vault Verified */}
+      <div className="mt-4">
         <VaultVerified source={listing.source} />
       </div>
 
-      {/* content panel (#181507): CARD GRADE → offers, consistent left/right padding */}
-      <div className="mt-6 rounded-2xl bg-[#181507] p-5 sm:p-6">
-      {/* stats */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-5 border-b border-white/10 pb-5 sm:grid-cols-3 lg:grid-cols-5">
+      {/* stats grid (Card Grade dst) — DI BAWAH harga (Figma mobile): 3 kolom */}
+      <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-5 border-t border-white/10 pt-5">
         {stats.map((s) => (
           <Stat key={s.label} label={s.label} value={s.value} valueColor={s.valueColor} href={s.href} />
         ))}
       </div>
 
-      {/* buy now + chart */}
-      <div className="mt-6">
-        <Label>Buy Now</Label>
-        <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-5 lg:items-center">
-          <div className="lg:col-span-3">
-            <div className="flex items-center gap-3">
-              <IdrxCoin size={34} />
-              <span className="text-4xl leading-none text-white" style={JERSEY}>
-                {formatIdr(listing.price)}
-              </span>
-              <span className="inline-flex items-center gap-1 text-sm" style={{ ...JERSEY, color: trendColor }}>
-                <span className={trendUp ? "" : "rotate-180"}>
-                  <UpArrow color={trendColor} />
-                </span>
-                {trendUp ? "+" : ""}
-                {detail.change30dPct}% 30D
-              </span>
-            </div>
-            <p className="mt-2 text-sm text-zinc-500" style={JERSEY}>
-              = {secondaryPrice(listing.price, "IDR")}
-            </p>
-          </div>
-          <div className="lg:col-span-2">
-            <PriceSparkline data={detail.priceHistory} className="h-16" />
-          </div>
-        </div>
-      </div>
-
-      {/* actions — the owner gets list/withdraw controls, everyone else the Buy button.
-          A buy flips `owned` to true, so the purchase confirmation has to render in the
-          owner branch too; only the Buy button can leave `buyMsg` set while !owned, and
-          that only ever happens on failure. Hence green above, red below. */}
+      {/* BUY CTA — owner (list/withdraw) & katalog CC tetap inline di SEMUA ukuran. Jalur standar:
+          inline HANYA di desktop (mobile pakai bilah beli fixed di bawah). */}
       {owned ? (
-        <>
-          {buyMsg && <p className="mt-5 text-center text-sm text-[#3DDC84]">{buyMsg}</p>}
+        <div className="mt-6">
+          {buyMsg && <p className="text-center text-sm text-[#3DDC84]">{buyMsg}</p>}
           <OwnerPanel
             listing={listing}
             listedByMe={listedByMe}
@@ -465,12 +587,39 @@ function RightColumn({
             onRelist={onRelist}
             onCancel={onCancel}
           />
-        </>
+        </div>
       ) : isCatalogCc ? (
         // Kartu KATALOG CollectorCrypt (belum pernah dimiliki user Hoshi). Pembelian
         // DISELESAIKAN DI CC: wallet user membayar USDC langsung ke penjual CC dan
         // aset CC asli yang berpindah — Hoshi tidak pernah mint NFT untuk kartu ini.
         <div className="mt-5 rounded-2xl border border-[#38E5D0]/25 bg-[#38E5D0]/[0.06] px-5 py-4">
+          {/* UTAMA: beli via Rupiah (IDRX reseller) — pembeli bayar HARGA KITA, treasury yang
+              beli di CC + kirim. User Indonesia tak perlu pegang USDC/SOL. Tampil hanya kalau
+              rail pembayaran menyala DAN jalur reseller di-enable (prod menyembunyikannya sampai
+              settlement real di-arm); kalau mati, jatuh ke jalur CC langsung (USDC) di bawah. */}
+          {PAYMENTS_ENABLED && CC_RESELL_ENABLED && (
+            <>
+              <button
+                type="button"
+                onClick={onBuyRupiah}
+                disabled={unavailable}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-3.5 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101" }}
+              >
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-[#2f6bff] text-[11px] font-bold text-white">
+                  Rp
+                </span>
+                <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
+                  {unavailable ? "Sold" : "Beli via Rupiah"}
+                </span>
+              </button>
+              <p className="mb-4 mt-2 text-center text-[12px] text-zinc-500">
+                Bayar rupiah (QRIS / e-wallet / VA) di harga tertera. Kartu dikirim ke wallet-mu —
+                tak perlu punya USDC atau SOL.
+              </p>
+            </>
+          )}
+
           <p className="text-center text-sm text-[#38E5D0]" style={JERSEY}>
             Kartu ini disimpan di vault CollectorCrypt.
           </p>
@@ -486,10 +635,15 @@ function RightColumn({
               </p>
             </div>
           ) : !CC_BUY_ENABLED ? (
-            <p className="mt-1 text-center text-[13px] text-zinc-400">
-              Pembelian langsung lewat Hoshi belum diaktifkan untuk kartu vault
-              CollectorCrypt.
-            </p>
+            // Jangan kontradiktif: kalau CTA "Beli via Rupiah" di atas aktif (PAYMENTS_ENABLED),
+            // JANGAN bilang pembelian belum diaktifkan — jalur belinya justru ada. Catatan ini
+            // hanya relevan saat rail Rupiah pun mati.
+            PAYMENTS_ENABLED ? null : (
+              <p className="mt-1 text-center text-[13px] text-zinc-400">
+                Pembelian langsung lewat Hoshi belum diaktifkan untuk kartu vault
+                CollectorCrypt.
+              </p>
+            )
           ) : ccQuote ? (
             <div className="mt-3">
               <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
@@ -547,35 +701,156 @@ function RightColumn({
           )}
         </div>
       ) : (
-        <>
-          <button
-            type="button"
-            onClick={onBuy}
-            disabled={buying || unavailable}
-            className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
-            style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
-          >
-            <Img src="/icon-buy.png" alt="" className="h-5 w-5" />
-            <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
-              {unavailable ? "Sold" : buying ? "Processing…" : "Buy Card"}
-            </span>
-          </button>
+        // Jalur STANDAR (Hoshi-inventory / P2P): tombol beli inline HANYA di desktop. Di mobile
+        // dipindah ke bilah beli fixed di bawah layar (lihat akhir kolom).
+        <div className="mt-6 hidden lg:block">
+          {canRupiah ? (
+            <>
+              <button
+                type="button"
+                onClick={onBuyRupiah}
+                disabled={unavailable}
+                className="flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
+              >
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-[#2f6bff] text-[11px] font-bold text-white">
+                  Rp
+                </span>
+                <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
+                  {unavailable ? "Sold" : "Beli via Rupiah"}
+                </span>
+              </button>
+              <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
+                {isHoshiInventory
+                  ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
+                  : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
+              </p>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onBuy}
+              disabled={buying || unavailable}
+              className="flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
+            >
+              <Img src="/icon-buy.png" alt="" className="h-5 w-5" />
+              <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
+                {unavailable ? "Sold" : buying ? "Processing…" : "Buy Card"}
+              </span>
+            </button>
+          )}
           {buyMsg && <p className="mt-2 text-center text-sm text-red-400">{buyMsg}</p>}
 
-          <CardActions listing={listing} onOffer={onOffer} />
-        </>
+          {/* Make Offer + Add to Cart hanya untuk listing P2P (ada penjual). Message Seller sudah
+              dipindah ke atas (dekat "Dijual oleh"). */}
+          {showMakeOffer && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <DarkPill onClick={actions.openOffer}>Make Offer</DarkPill>
+              <DarkPill onClick={actions.toggleCart} active={actions.inCart}>
+                {actions.inCart ? "✓ In Cart" : "Add to Cart"}
+              </DarkPill>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* offers */}
-      <div className="mt-7">
-        <Label>Offers Received ({offers.length})</Label>
-        <ul className="mt-2 divide-y divide-white/[0.06]">
-          {offers.map((o, i) => (
-            <OfferRow key={i} offer={o} />
-          ))}
-        </ul>
+      {/* Card Details — accordion (Figma) */}
+      <div className="mt-4">
+        <Accordion title="Card Details" defaultOpen>
+          <div className="flex flex-col gap-2">
+            {detail.details
+              .filter((d) => d.value != null && String(d.value).trim() !== "")
+              .map((d) => (
+                <DetailRow key={d.label} label={d.label} value={d.value} />
+              ))}
+          </div>
+        </Accordion>
       </div>
+
+      {/* Offers Received — accordion (Figma) */}
+      <div className="mt-4">
+        <Accordion title={`Offers Received (${offers.length})`} defaultOpen>
+          {offers.length === 0 ? (
+            <p className="text-sm text-zinc-500">Belum ada tawaran.</p>
+          ) : (
+            <ul className="divide-y divide-white/[0.06]">
+              {offers.map((o, i) => (
+                <OfferRow key={i} offer={o} />
+              ))}
+            </ul>
+          )}
+        </Accordion>
       </div>
+
+      {/* Bilah beli FIXED (mobile) — HANYA jalur standar. Baris atas: harga + keranjang; baris
+          bawah: Make Offer + (Beli via Rupiah / Buy Card). Desktop: disembunyikan (pakai inline). */}
+      {standardBuyable && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#141414]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-3 backdrop-blur lg:hidden">
+          <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <IdrxCoin size={22} />
+              <span className="shrink-0 text-xl leading-none text-white" style={JERSEY}>
+                {formatIdr(listing.price)}
+              </span>
+              <span className="truncate text-[12px] text-zinc-500" style={JERSEY}>
+                = {secondaryPrice(listing.price, "IDR")}
+              </span>
+            </div>
+            {/* Add-to-cart hanya untuk listing P2P (punya penjual) — sejalan dengan perilaku desktop. */}
+            {showMakeOffer && (
+              <button
+                type="button"
+                onClick={actions.toggleCart}
+                aria-label="Keranjang"
+                aria-pressed={actions.inCart}
+                className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition ${
+                  actions.inCart
+                    ? "bg-yellow-400/15 text-yellow-300 ring-1 ring-yellow-400/40"
+                    : "bg-white/[0.06] text-zinc-200 hover:bg-white/[0.12]"
+                }`}
+              >
+                <Img src="/icon-cart.png" alt="" className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+          <div className={`mx-auto mt-2.5 grid max-w-[1400px] gap-2.5 ${showMakeOffer ? "grid-cols-2" : "grid-cols-1"}`}>
+            {showMakeOffer && (
+              <button
+                type="button"
+                onClick={actions.openOffer}
+                style={JERSEY}
+                className="rounded-2xl bg-white/[0.06] px-4 py-3.5 text-lg leading-none text-zinc-100 transition hover:bg-white/[0.1]"
+              >
+                Make Offer
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={canRupiah ? onBuyRupiah : onBuy}
+              disabled={unavailable || (!canRupiah && buying)}
+              className="flex items-center justify-center gap-2 rounded-2xl px-4 py-3.5 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101" }}
+            >
+              {canRupiah ? (
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-[#2f6bff] text-[11px] font-bold text-white">
+                  Rp
+                </span>
+              ) : (
+                <Img src="/icon-buy.png" alt="" className="h-5 w-5" />
+              )}
+              <span className="text-lg leading-none text-[#171717]" style={JERSEY}>
+                {unavailable ? "Sold" : canRupiah ? "Beli via Rupiah" : buying ? "Processing…" : "Buy Card"}
+              </span>
+            </button>
+          </div>
+          {buyMsg && (
+            <p className="mx-auto mt-1.5 max-w-[1400px] text-center text-[12px] text-red-400">{buyMsg}</p>
+          )}
+        </div>
+      )}
+
+      {actions.modals}
     </div>
   );
 }
@@ -593,6 +868,8 @@ export default function CardDetailPage() {
   // synchronous setState inside the effect and re-loads automatically when id changes.
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [buying, setBuying] = useState(false);
+  // Modal bayar Rupiah (IDRX) untuk beli kartu katalog CC lewat jalur reseller.
+  const [payOpen, setPayOpen] = useState(false);
   const [sold, setSold] = useState(false);
   const [owned, setOwned] = useState(false);
   const [buyMsg, setBuyMsg] = useState<string | null>(null);
@@ -610,35 +887,50 @@ export default function CardDetailPage() {
   useEffect(() => {
     if (!id) return;
     let alive = true;
-    // Fetch detail + (if logged in) purchases, to tell whether we already own this card.
-    Promise.all([
-      getListingDetail(id)
-        .then((d) => {
-          if (!alive) return;
-          setDetail(d);
-          setSold(false); // reset session purchase state for the new card
-          setBuyMsg(null);
-          setPendingOffers([]);
-        })
-        .catch(() => alive && setDetail(null)),
-      token
-        ? getMyPurchases(token)
-            .then((ps) => alive && setOwned(ps.some((p) => p.id === id)))
-            .catch(() => alive && setOwned(false))
-        : Promise.resolve().then(() => {
-            if (alive) setOwned(false);
-          }),
-    ]).finally(() => alive && setLoadedId(id));
+    // Kartu tampil BEGITU detailnya siap — TIDAK menunggu getMyPurchases. Dulu keduanya di-Promise.all
+    // lalu loadedId di-set di .finally, jadi "Loading card…" bertahan sampai KEDUA request kelar →
+    // klik "Lihat Kartu" terasa lambat. Sekarang loadedId di-set segera setelah detail → render satset;
+    // `owned` (apakah sudah punya) menyusul paralel & cuma memutakhirkan badge, tak memblok render.
+    getListingDetail(id)
+      .then((d) => {
+        if (!alive) return;
+        setDetail(d);
+        setSold(false); // reset session purchase state for the new card
+        setBuyMsg(null);
+        setPendingOffers([]);
+      })
+      .catch(() => alive && setDetail(null))
+      .finally(() => alive && setLoadedId(id));
+    if (token) {
+      getMyPurchases(token)
+        .then((ps) => alive && setOwned(ps.some((p) => p.id === id)))
+        .catch(() => alive && setOwned(false));
+    } else {
+      setOwned(false);
+    }
     return () => {
       alive = false;
     };
   }, [id, token]);
 
-  // Register view on every detail page mount. Backend handles dedup inside the
-  // session window if needed; we remove client-side sessionStorage block so clicks
-  // from marketplace always count.
+  // Hitung view SEKALI per kartu per sesi browser: refresh / buka-lagi kartu yang sama TIDAK menambah
+  // count. sessionStorage (bukan localStorage) → view unik per sesi, reset saat tab ditutup. Ditandai
+  // SEBELUM request supaya double-invoke effect (StrictMode dev) & refresh cepat tak dobel-hitung.
   useEffect(() => {
     if (!id) return;
+    let alreadyViewed = false;
+    try {
+      const key = "hoshi_viewed_listings";
+      const seen = new Set(JSON.parse(sessionStorage.getItem(key) ?? "[]") as string[]);
+      alreadyViewed = seen.has(id);
+      if (!alreadyViewed) {
+        seen.add(id);
+        sessionStorage.setItem(key, JSON.stringify([...seen]));
+      }
+    } catch {
+      /* storage diblokir (mode privasi) → biarkan menghitung (fail-open; count cuma kosmetik) */
+    }
+    if (alreadyViewed) return;
     registerListingView(id)
       .then((r) =>
         setDetail((d) =>
@@ -677,6 +969,12 @@ export default function CardDetailPage() {
     !!detail &&
     detail.listing.source === "COLLECTORCRYPT" &&
     detail.consignedBy === "collectorcrypt";
+
+  // INVENTARIS HOSHI: kartu milik Hoshi sendiri (di-upload admin) — TANPA penjual user, BUKAN
+  // katalog CC, DAN ditandai `sellable` (baris seed/placeholder = false → tak ditawarkan beli).
+  // Buyable via Rupiah tanpa perlu flag P2P (bukan jual-beli antar user).
+  const isHoshiInventory =
+    !!detail && detail.sellable && !detail.sellerConsigned && !isCatalogCc;
 
   const handleBuy = useCallback(async () => {
     if (!detail || unavailable) return;
@@ -834,14 +1132,15 @@ export default function CardDetailPage() {
 
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
-      style={{ background: PAGE_BG, fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
+      className="page-bg relative min-h-screen text-zinc-100"
+      style={{ fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
     >
       <TopNav active="Marketplace" />
 
       {loading ? (
-        <main className="mx-auto max-w-[1400px] px-4 py-20 text-center sm:px-6">
-          <p className="text-lg text-zinc-400">Loading card…</p>
+        <main className="mx-auto flex max-w-[1400px] flex-col items-center gap-3 px-4 py-24 text-center sm:px-6">
+          <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-yellow-400" />
+          <p className="text-sm text-zinc-400">Membuka kartu…</p>
         </main>
       ) : !detail ? (
         <main className="mx-auto max-w-[1400px] px-4 py-20 text-center sm:px-6">
@@ -851,9 +1150,67 @@ export default function CardDetailPage() {
           </Link>
         </main>
       ) : (
-        <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">
+        <main className="mx-auto max-w-[1400px] px-4 pb-28 pt-6 sm:px-6 lg:pb-8">
+          {/* Bilah atas: Back + breadcrumb (kiri) · views + share (kanan) — sesuai Figma. */}
+          <div className="mb-5">
+            <Link
+              href="/marketplace"
+              className="inline-flex items-center gap-2 text-sm font-semibold text-zinc-100 transition hover:text-white"
+            >
+              {/* Teks "Back" tetap putih; HANYA ikon panah yang pakai gradient emas (Figma). */}
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <defs>
+                  <linearGradient id="backArrowGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#FBB222" />
+                    <stop offset="100%" stopColor="#FFF600" />
+                  </linearGradient>
+                </defs>
+                <path d="M15 19l-7-7 7-7" stroke="url(#backArrowGrad)" />
+              </svg>
+              Back
+            </Link>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <nav className="min-w-0 truncate text-[16px] leading-none text-zinc-500" style={JERSEY}>
+                <Link href="/marketplace" className="transition hover:text-zinc-300">
+                  Marketplace
+                </Link>
+                <span className="mx-1.5 text-zinc-600">/</span>
+                <span className="text-zinc-300">Details Card</span>
+              </nav>
+              <div className="flex shrink-0 items-center gap-2.5">
+                <span className="inline-flex items-center gap-1.5 text-zinc-300">
+                  <Img src="/visibility.png" alt="" className="h-[18px] w-[18px] opacity-80" />
+                  <span className="text-[15px] leading-none" style={JERSEY}>
+                    {formatIdr(detail.listing.views)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  aria-label="Bagikan kartu"
+                  onClick={() => {
+                    const url = window.location.href;
+                    if (typeof navigator !== "undefined" && navigator.share) {
+                      navigator.share({ title: detail.title, url }).catch(() => {});
+                    } else {
+                      navigator.clipboard?.writeText(url).catch(() => {});
+                    }
+                  }}
+                  className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-zinc-200 transition hover:bg-white/[0.12]"
+                >
+                  <Img src="/icon-share.png" alt="" className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-            <LeftColumn detail={detail} />
+            <LeftColumn
+              detail={detail}
+              isPokemon={isPokemonCard(
+                detail.listing.tcg,
+                `${detail.title} ${detail.listing.name} ${detail.listing.set} ${detail.collectionLabel}`,
+              )}
+            />
             <RightColumn
               detail={detail}
               offers={[...pendingOffers, ...detail.offers]}
@@ -862,7 +1219,12 @@ export default function CardDetailPage() {
               buying={buying}
               unavailable={unavailable}
               owned={owned || consignedByMe}
+              // Pemilik SEKARANG (status-aware): SOLD → pembeli (`owned`=buyerId===me); selain itu →
+              // penjual/holder (`consignedByMe`). Kartu yang KAMU JUAL ke orang lain (SOLD, bukan
+              // pembelinya) → false, jadi chip tak salah bilang "kamu memiliki".
+              ownedNow={detail.listing.status === "SOLD" ? owned : consignedByMe}
               isCatalogCc={isCatalogCc}
+              isHoshiInventory={isHoshiInventory}
               buyMsg={buyMsg}
               onRelist={handleRelist}
               onCancel={handleCancel}
@@ -875,18 +1237,19 @@ export default function CardDetailPage() {
               onCcQuote={handleCcQuote}
               onCcConfirm={handleCcConfirm}
               onCcCancel={() => { setCcQuote(null); setCcMsg(null); }}
+              onBuyRupiah={() => setPayOpen(true)}
             />
           </div>
 
           {/* More cards — full marketplace cards */}
           <section className="mt-16">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold text-white sm:text-3xl">
+            <div className="mb-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <h2 className="text-lg font-bold leading-tight text-white sm:text-2xl lg:text-3xl">
                 More Cards from {detail.collectionLabel}
               </h2>
               <Link
                 href="/marketplace"
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-white/[0.04] px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:bg-white/[0.08]"
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-zinc-100 transition hover:bg-white/[0.08] sm:text-sm"
               >
                 View All
                 <Img src="/icon-right-marketplace.png" alt="" className="h-3.5 w-3.5" />
@@ -899,6 +1262,17 @@ export default function CardDetailPage() {
             </div>
           </section>
         </main>
+      )}
+
+      {/* Bayar Rupiah (IDRX) untuk beli kartu katalog CC — reuse modal alur gacha, tapi mode
+          listing (createListingOrder). Setelah bayar+redirect, resume + status muncul di
+          /open-packs (returnUrl IDRX); untuk order listing tampil "kartu dikirim, cek Vault". */}
+      {payOpen && PAYMENTS_ENABLED && (CC_RESELL_ENABLED || P2P_ENABLED || isHoshiInventory) && (
+        <PayModal
+          listingId={id}
+          packType="MARKETPLACE"
+          onClose={() => setPayOpen(false)}
+        />
       )}
     </div>
   );

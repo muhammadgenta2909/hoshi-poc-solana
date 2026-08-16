@@ -14,7 +14,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
+import { useTabParam } from "@/lib/useTabParam";
+import { useFavorites } from "@/lib/favorites";
 import { useWalletConnect } from "@/lib/useWalletConnect";
+import { countUnseenRejected, markOffersRejectedSeen } from "@/lib/useAccountBadges";
 import {
   acceptOffer,
   cancelListing,
@@ -34,6 +37,7 @@ import { type Listing } from "@/lib/market";
 import { explorerAddressUrl, type GachaPull } from "@/lib/gacha";
 import type { ActivityRecord, OfferRecord } from "@/lib/offers";
 import MarketCard from "@/components/packs/MarketCard";
+import { PayModal } from "@/components/packs/PayWithRupiah";
 import { Img } from "@/components/packs/ui";
 import {
   AccountShell,
@@ -45,9 +49,10 @@ import {
   Select,
   PrimaryButton,
   GhostButton,
-  ModalShell,
+  ConfirmDialog,
   SearchIcon,
   InboxIcon,
+  HeartIcon,
 } from "@/components/account/ui";
 import RenameModal from "@/components/account/RenameModal";
 import {
@@ -120,7 +125,10 @@ export default function ProfilePage() {
   const { publicKey } = useWallet();
   const { open } = useWalletConnect();
 
-  const [tab, setTab] = useState<Tab>("ASSETS");
+  const [tab, setTab] = useTabParam<Tab>("ASSETS", TABS);
+  // Badge angka pada tab. "OFFERS RECEIVED" = jumlah offer PENDING (live, hilang saat ditindak);
+  // "OFFERS MADE" = offer ditolak yang belum dilihat (hilang saat tab-nya dibuka).
+  const [madeRejectedBadge, setMadeRejectedBadge] = useState(0);
 
   const [assets, setAssets] = useState<Listing[]>([]);
   // Open-pack pulls the user owns. Assets used to show ONLY marketplace purchases, so a
@@ -132,6 +140,8 @@ export default function ProfilePage() {
   const [activity, setActivity] = useState<ActivityRecord[]>([]);
   const [offersMade, setOffersMade] = useState<OfferRecord[]>([]);
   const [offersReceived, setOffersReceived] = useState<OfferRecord[]>([]);
+  // Offer yang sedang dibayar (Lanjutkan Pembayaran) → buka PayModal di harga offer.
+  const [payOffer, setPayOffer] = useState<OfferRecord | null>(null);
 
   // Both flags are DERIVED, never set inside the fetch effect — writing state
   // synchronously from an effect body triggers a cascading re-render. `loaded`
@@ -166,10 +176,56 @@ export default function ProfilePage() {
 
   const address = publicKey?.toBase58() ?? null;
 
+  // Favorit (maks 3) untuk box "Your Favorite Card" di banner. Id = nftAddress kartu; di-resolve
+  // ke kartu hasil pack milik user (nama + art). Di-toggle lewat ♥ di Vault, sinkron via event.
+  const { favorites: favoriteIds, clear: clearFavorites } = useFavorites(address);
+  const favoriteCards = useMemo(() => {
+    // Peta key→kartu dari SEMUA kartu milik: pull (key = nftAddress) DAN listing/bought (key =
+    // listing.id). Jadi ♥ di kartu mana pun tampil di banner (tak dibeda-bedakan).
+    const byKey = new Map<
+      string,
+      { nftAddress: string; name: string; image: string | null }
+    >();
+    for (const p of pulls) {
+      if (p.nftAddress) {
+        byKey.set(p.nftAddress, {
+          nftAddress: p.nftAddress,
+          name: p.ccItemName ?? p.nftName ?? "Kartu",
+          image: p.nftImage ?? null,
+        });
+      }
+    }
+    for (const l of assets) {
+      byKey.set(l.id, { nftAddress: l.id, name: l.name, image: l.image ?? null });
+    }
+    return favoriteIds
+      .map((id) => byKey.get(id))
+      .filter(
+        (c): c is { nftAddress: string; name: string; image: string | null } => !!c,
+      );
+  }, [favoriteIds, pulls, assets]);
+
   /** Bumped by the banner's refresh badge AND after every mutation. The fetch
    *  effect owns loading, so an action on one tab refreshes the others it affects
    *  — accepting an offer closes a listing AND writes an activity row. */
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  // REALTIME badge tab: refresh daftar tiap 12 dtk (saat halaman terlihat) + saat tab difokus +
+  // saat event badge global (hoshi-badges-refresh dari useAccountBadges). Tanpa ini badge tab
+  // (mis. offer masuk / offer diterima) baru muncul setelah keluar-masuk /account.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const id = window.setInterval(tick, 12_000);
+    window.addEventListener("focus", tick);
+    window.addEventListener("hoshi-badges-refresh", tick);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", tick);
+      window.removeEventListener("hoshi-badges-refresh", tick);
+    };
+  }, [refresh]);
 
   // Everything the profile needs, in one pass, so tab switches are instant.
   useEffect(() => {
@@ -192,6 +248,13 @@ export default function ProfilePage() {
         setActivity(act);
         setOffersMade(made);
         setOffersReceived(received);
+        // Badge tab "Offers Made" = offer DITOLAK yang belum dilihat. Dibiarkan tampil sampai user
+        // benar-benar membuka tab-nya (di situ baru ditandai seen) — bukan hilang saat load.
+        setMadeRejectedBadge(
+          countUnseenRejected(
+            made.filter((o) => o.status === "REJECTED").map((o) => o.id),
+          ),
+        );
         setError(null);
       })
       .catch((err: unknown) => {
@@ -280,6 +343,27 @@ export default function ProfilePage() {
    *  pilihannya. Selama data masih dimuat opsinya kosong, jadi ini juga mencegah
    *  filter menghabisi baris sebelum daftarnya sempat terbentuk. */
   const activeSeries = seriesOptions.includes(series) ? series : ALL_SERIES;
+
+  // Badge tab. Offers Received = jumlah PENDING (live to-do). Offers Made = penolakan belum dilihat
+  // + offer DITERIMA yang belum dibayar (butuh aksi "Lanjutkan Pembayaran").
+  const receivedPending = offersReceived.filter((o) => o.status === "PENDING").length;
+  const acceptedUnpaid = offersMade.filter(
+    (o) => o.status === "ACCEPTED" && o.item.status === "ACTIVE",
+  ).length;
+  const tabBadges: Partial<Record<Tab, number>> = {
+    "OFFERS RECEIVED": receivedPending,
+    "OFFERS MADE": madeRejectedBadge + acceptedUnpaid,
+  };
+  // Buka tab "Offers Made" = user melihat penolakan → tandai seen (clear badge tab + dot avatar).
+  const selectTab = (t: Tab) => {
+    if (t === "OFFERS MADE") {
+      markOffersRejectedSeen(
+        offersMade.filter((o) => o.status === "REJECTED").map((o) => o.id),
+      );
+      setMadeRejectedBadge(0);
+    }
+    setTab(t);
+  };
 
   const matches = (name: string, seriesOf: string | null | undefined) =>
     (!q || name.toLowerCase().includes(q)) &&
@@ -464,7 +548,7 @@ export default function ProfilePage() {
                   row.kind === "pull" ? (
                     <PullAsset key={row.key} pull={row.pull} />
                   ) : (
-                    <MarketCard key={row.key} listing={row.listing} currency="IDR" showStatus />
+                    <FavoritableListing key={row.key} listing={row.listing} />
                   ),
                 )}
               </div>
@@ -602,7 +686,7 @@ export default function ProfilePage() {
             />
           ) : (
             <>
-              <OffersMadeTable rows={slice} onCancel={onCancelOwnOffer} busyId={busyId} />
+              <OffersMadeTable rows={slice} onCancel={onCancelOwnOffer} onPay={setPayOffer} busyId={busyId} selfId={user?.id} />
               <Pager page={p} totalPages={totalPages} onPage={setPage} />
             </>
           )}
@@ -676,8 +760,9 @@ export default function ProfilePage() {
           className="hidden md:flex"
           tabs={TABS}
           labels={TAB_LABELS}
+          badges={tabBadges}
           active={tab}
-          onChange={onFilter(setTab)}
+          onChange={onFilter(selectTab)}
         />
 
         <div className="min-w-0 flex-1">
@@ -688,12 +773,14 @@ export default function ProfilePage() {
             onRename={isAuthed ? () => setRenaming(true) : undefined}
             onRefresh={isAuthed ? refresh : undefined}
             refreshing={refreshing}
+            favorites={favoriteCards}
+            onClearFavorites={clearFavorites}
           />
         </div>
       </div>
 
       <div className="mt-6 md:hidden">
-        <Tabs jersey tabs={TABS} labels={TAB_LABELS} active={tab} onChange={onFilter(setTab)} />
+        <Tabs jersey tabs={TABS} labels={TAB_LABELS} badges={tabBadges} active={tab} onChange={onFilter(selectTab)} />
       </div>
 
       {error && (
@@ -712,6 +799,26 @@ export default function ProfilePage() {
         />
       )}
 
+      {/* Bayar offer yang sudah diterima penjual — di HARGA OFFER. Sesudah lunas, kartu jadi milik
+          pembeli & penjual dikredit; refresh daftar offer. Alur bayar SAMA dgn beli kartu biasa. */}
+      {payOffer && (
+        <PayModal
+          offerId={payOffer.id}
+          // listingId JUGA di-set (walau offerId yang menentukan pembuatan order di harga offer):
+          // dipakai untuk menyimpan pending-payment + resume di /vault sepulang bayar hosted, supaya
+          // POPUP SUKSES "Kartu berhasil dibeli!" muncul SAMA seperti beli langsung (bukan cuma
+          // mendarat datar di /vault). Prioritas createOfferOrder tetap dari offerId.
+          listingId={payOffer.listingId}
+          packType="MARKETPLACE"
+          successHref={`/marketplace/${payOffer.listingId}`}
+          onFulfilled={() => refresh()}
+          onClose={() => {
+            setPayOffer(null);
+            refresh();
+          }}
+        />
+      )}
+
       {renaming && token && (
         // key on the loaded name so the modal reseeds if it opened before the
         // profile fetch resolved.
@@ -725,30 +832,19 @@ export default function ProfilePage() {
           }}
         />
       )}
-      <ModalShell
+      <ConfirmDialog
         open={!!confirmModal}
-        onClose={() => setConfirmModal(null)}
         title={confirmModal?.title ?? ""}
-        maxWidth={420}
-      >
-        {confirmModal && (
-          <div className="flex flex-col gap-4">
-            <p className="text-[14px] leading-relaxed text-zinc-300">{confirmModal.message}</p>
-            <div className="flex justify-end gap-3">
-              <GhostButton onClick={() => setConfirmModal(null)}>Batal</GhostButton>
-              <PrimaryButton
-                onClick={() => {
-                  const fn = confirmModal.onConfirm;
-                  setConfirmModal(null);
-                  fn();
-                }}
-              >
-                {confirmModal.confirmLabel}
-              </PrimaryButton>
-            </div>
-          </div>
-        )}
-      </ModalShell>
+        message={confirmModal?.message}
+        confirmLabel={confirmModal?.confirmLabel ?? "OK"}
+        danger={confirmModal?.danger}
+        onConfirm={() => {
+          const fn = confirmModal?.onConfirm;
+          setConfirmModal(null);
+          fn?.();
+        }}
+        onCancel={() => setConfirmModal(null)}
+      />
     </AccountShell>
   );
 }
@@ -856,11 +952,53 @@ function ConnectGate({ connected, onConnect }: { connected: boolean; onConnect: 
   );
 }
 
+/** Kartu listing/bought di grid Assets, dibungkus + heart favorit di pojok kanan-atas. Heart
+ *  di LUAR <Link> MarketCard (sibling), jadi klik heart tak ikut membuka detail. Key favorit =
+ *  listing.id (di-resolve juga di banner) — heart ada di SEMUA kartu, tak dibeda-bedakan. */
+function FavoritableListing({ listing }: { listing: Listing }) {
+  const { publicKey } = useWallet();
+  const wallet = publicKey?.toBase58() ?? null;
+  const { favorites, toggle } = useFavorites(wallet);
+  const faved = favorites.includes(listing.id);
+  const [maxNote, setMaxNote] = useState(false);
+  return (
+    <div className="relative">
+      <MarketCard listing={listing} currency="IDR" showStatus />
+      <button
+        type="button"
+        onClick={() => {
+          const res = toggle(listing.id);
+          if (!res.ok && res.atMax) {
+            setMaxNote(true);
+            window.setTimeout(() => setMaxNote(false), 2200);
+          }
+        }}
+        aria-label={faved ? "Hapus dari favorit" : "Jadikan favorit"}
+        title={faved ? "Favorit" : "Jadikan favorit (maks 3)"}
+        className="absolute right-2 top-2 z-20 grid h-8 w-8 place-items-center rounded-full bg-black/50 backdrop-blur-sm transition hover:bg-black/70"
+      >
+        <HeartIcon className={`h-4 w-4 ${faved ? "text-red-400" : "text-white/60"}`} />
+      </button>
+      {maxNote && (
+        <span className="absolute right-2 top-11 z-20 rounded-lg bg-black/80 px-2 py-1 text-[10px] text-amber-200">
+          Maks 3 favorit
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** A gacha-pulled card shown in the profile's Assets grid. Display-only: the real
  *  list-for-sale / buyback actions live on the Vault card, so this just proves the
  *  card is owned (art + name + PULLED badge + on-chain link) and points there. */
 function PullAsset({ pull }: { pull: GachaPull }) {
   const name = pull.ccItemName ?? pull.nftName ?? "Pulled card";
+  // Heart favorit — muncul di banner "Your Favorite Card" di atas. Maks 3.
+  const { publicKey } = useWallet();
+  const wallet = publicKey?.toBase58() ?? null;
+  const { favorites, toggle } = useFavorites(wallet);
+  const faved = !!pull.nftAddress && favorites.includes(pull.nftAddress);
+  const [maxNote, setMaxNote] = useState(false);
   return (
     <div className="flex flex-col gap-2">
       <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-2">
@@ -872,6 +1010,30 @@ function PullAsset({ pull }: { pull: GachaPull }) {
         <span className="absolute left-2 top-2 rounded-md bg-yellow-400/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#171717]">
           Pulled
         </span>
+        {pull.nftAddress && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                const res = toggle(pull.nftAddress as string);
+                if (!res.ok && res.atMax) {
+                  setMaxNote(true);
+                  window.setTimeout(() => setMaxNote(false), 2200);
+                }
+              }}
+              aria-label={faved ? "Hapus dari favorit" : "Jadikan favorit"}
+              title={faved ? "Favorit" : "Jadikan favorit (maks 3)"}
+              className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/50 backdrop-blur-sm transition hover:bg-black/70"
+            >
+              <HeartIcon className={`h-4 w-4 ${faved ? "text-red-400" : "text-white/60"}`} />
+            </button>
+            {maxNote && (
+              <span className="absolute right-2 top-11 rounded-lg bg-black/80 px-2 py-1 text-[10px] text-amber-200">
+                Maks 3 favorit
+              </span>
+            )}
+          </>
+        )}
       </div>
       <p className="truncate text-sm font-medium text-zinc-200">{name}</p>
       <div className="flex gap-2">

@@ -17,7 +17,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
-import { PAGE_BG, ACCOUNT_BG } from "@/lib/theme";
+import { ACCOUNT_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import { Img } from "@/components/packs/ui";
 
@@ -47,9 +47,11 @@ export function AccountShell({
 }) {
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
+      className={`relative min-h-screen text-zinc-100 ${calm ? "" : "page-bg"}`}
       style={{
-        background: calm ? ACCOUNT_BG : PAGE_BG,
+        // Hanya varian calm yang masih inline; sapuan gold marketplace pindah ke
+        // class .page-bg supaya punya versi mobile (lihat app/globals.css).
+        background: calm ? ACCOUNT_BG : undefined,
         fontFamily: "var(--font-outfit), system-ui, sans-serif",
       }}
     >
@@ -74,7 +76,8 @@ export function ProfileBanner({
   onRename,
   onRefresh,
   refreshing = false,
-  onEditFavorites,
+  onClearFavorites,
+  favorites,
   avatar = "/profile.png",
   right,
 }: {
@@ -88,14 +91,15 @@ export function ProfileBanner({
   onRefresh?: () => void;
   /** Spins the badge and blocks re-entry while a reload is in flight. */
   refreshing?: boolean;
-  /** Handler for the banner's corner pencil ("Your Favorite Card"). The button is
-   *  part of the artwork, so it renders either way — but with nothing wired to it
-   *  it stays disabled rather than pretending to work. */
-  onEditFavorites?: () => void;
+  /** Kosongkan semua favorit (tombol trash di pojok banner — hanya muncul saat ada favorit). */
+  onClearFavorites?: () => void;
+  /** Up to 3 favorite cards to show in the banner's "Your Favorite Card" box. */
+  favorites?: { nftAddress: string; name: string; image: string | null }[];
   avatar?: string;
   right?: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const copy = async () => {
     if (!address) return;
@@ -108,13 +112,17 @@ export function ProfileBanner({
 
   return (
     <div className="relative">
+      {/* Wrapper KHUSUS BANNER: box favorit di-overlay & di-center pada TINGGI BANNER saja. Baris
+          avatar/nama di bawah (yang ditarik naik) TIDAK boleh ikut area ini — kalau tidak,
+          inset-y-0 membentang sampai ke sana dan box turun dari tengah banner. */}
+      <div className="relative">
       {/* Hero. The art is a composed panel (speech bubble + favourite-card shelf)
           that already carries its OWN rounded gold frame, so it gets no border and
           no rounded clip of ours — a second, differently-radiused edge around it
           reads as a stray outline. It renders at its own 1027:217 ratio rather than
           being cropped; width/height keep the box reserved before it decodes. */}
       <Img
-        src="/banner-profile-main.png"
+        src="/banner.png"
         alt=""
         aria-hidden
         width={1027}
@@ -122,26 +130,74 @@ export function ProfileBanner({
         className="block h-auto w-full"
       />
 
-      {/* Corner button, tucked flush into the banner's top-right with no inset. The
-          asset is already the gold disc, so it needs no wrapper fill.
-          right-[1.17%], not right-0: the artwork stops at x=1014 of the 1027px PNG,
-          so the file carries ~12px of transparent slop down its right edge. Pinning
-          to the BOX corner would hang the disc off the gold frame; 12/1027 lands it
-          on the ART corner. Top needs no such nudge — the art starts at y=0. */}
-      <button
-        type="button"
-        onClick={onEditFavorites}
-        disabled={!onEditFavorites}
-        aria-label={
-          onEditFavorites ? "Edit your favourite cards" : "Editing favourite cards is coming soon"
-        }
-        title={
-          onEditFavorites ? "Edit your favourite cards" : "Editing favourite cards is coming soon"
-        }
-        className="absolute right-[1.17%] top-0 h-7 w-7 rounded-full transition enabled:hover:brightness-110 disabled:cursor-not-allowed sm:h-8 sm:w-8"
-      >
-        <Img src="/icon-list.png" alt="" className="h-full w-full object-contain" />
-      </button>
+      {/* "Your Favorite Card" box — banner.png sisi kanannya polos (emas), jadi kotak #100E08 ini
+          di-overlay di kanan & di-tengah vertikal (inset-y-0 → auto ikut tinggi banner, tak perlu
+          tebak piksel). Desktop-only (md+): di layar kecil banner cuma ~72px, kotak+thumbnail tak
+          terbaca — di HP dilewati saja. Kartu diisi dari favorites (maks 3); slot kosong = dashed. */}
+      <div className="pointer-events-none absolute inset-y-0 right-0 hidden items-center pr-[2.5%] md:flex">
+        <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-white/10 bg-[#100E08]/95 px-4 py-3 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.6)]">
+          <div className="flex flex-col justify-center pr-0.5">
+            <HeartIcon className="mb-1 h-5 w-5 text-white" />
+            <span className="text-[15px] font-semibold leading-tight text-white">Your</span>
+            <span className="text-[15px] font-semibold leading-tight text-white">
+              Favorite Card
+            </span>
+          </div>
+          {/* Thumbnail tinggi FIXED (h-28) → box tinggi konstan (~136px), di-center vertikal pada
+              tinggi banner (lihat wrapper khusus banner di atas) — tetap muat, tak bablas. */}
+          <div className="flex items-center gap-2">
+            {[0, 1, 2].map((i) => {
+              const fav = favorites?.[i];
+              return fav ? (
+                <Img
+                  key={fav.nftAddress}
+                  src={fav.image ?? "/profile.png"}
+                  alt={fav.name}
+                  title={fav.name}
+                  className="aspect-[5/7] h-28 w-auto object-cover ring-1 ring-white/15"
+                />
+              ) : (
+                <div
+                  key={i}
+                  className="grid aspect-[5/7] h-28 place-items-center border border-dashed border-white/15 text-white/25"
+                  title="Pilih favorit lewat ♥ di kartu"
+                >
+                  <HeartIcon className="h-5 w-5" />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Trash di pojok kanan-atas: kosongkan Favorite Card. HANYA muncul saat ADA favorit
+          (sembunyi pas kosong — sesuai permintaan). */}
+      {favorites && favorites.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setConfirmClear(true)}
+          aria-label="Kosongkan favorit"
+          title="Kosongkan Favorite Card"
+          // z-20 (bukan z-30): header sticky = z-30 → dropdown profil (z-50 di dalam slab header)
+          // HARUS menutupi ikon ini. Kalau z-30, ikon ini (lebih akhir di DOM) malah nembus dropdown.
+          className="absolute right-3 top-3 z-20 grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-black/50 text-white/70 backdrop-blur-sm transition hover:bg-red-500/25 hover:text-red-300 sm:h-8 sm:w-8"
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
+      )}
+      <ConfirmDialog
+        open={confirmClear}
+        title="Kosongkan Favorite Card?"
+        message="Semua kartu favoritmu akan dihapus dari sini."
+        confirmLabel="Kosongkan"
+        danger
+        onConfirm={() => {
+          onClearFavorites?.();
+          setConfirmClear(false);
+        }}
+        onCancel={() => setConfirmClear(false)}
+      />
+      </div>
 
       {/* Avatar overlaps the banner, so pull the identity row up under it. The
           banner is now fluid (it tracks the 1027:217 ratio), so on a phone it is
@@ -248,6 +304,7 @@ export function Tabs<T extends string>({
   vertical = false,
   jersey = false,
   labels,
+  badges,
 }: {
   tabs: readonly T[];
   active: T;
@@ -258,6 +315,8 @@ export function Tabs<T extends string>({
    *  on BOTH its rail and its phone strip, while Settings' tabs stay sans. */
   jersey?: boolean;
   labels?: Partial<Record<T, string>>;
+  /** Badge angka per-tab (mis. jumlah offer baru). 0/undefined = tak ditampilkan. */
+  badges?: Partial<Record<T, number>>;
 }) {
   return (
     <div
@@ -276,7 +335,7 @@ export function Tabs<T extends string>({
             onClick={() => onChange(t)}
             aria-pressed={on}
             style={jersey ? { fontFamily: "var(--font-jersey)" } : undefined}
-            className={`whitespace-nowrap rounded-xl px-4 transition ${
+            className={`relative whitespace-nowrap rounded-xl px-4 transition ${
               vertical ? "w-full py-2.5" : "min-w-[132px] flex-1 py-3"
             } ${
               // Jersey 10 is a tall, narrow pixel face — at the 12/13px the sans
@@ -292,6 +351,11 @@ export function Tabs<T extends string>({
             }`}
           >
             {labels?.[t] ?? t}
+            {badges?.[t] ? (
+              <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-none text-white ring-2 ring-[#0f0d05]">
+                {(badges[t] ?? 0) > 9 ? "9+" : badges[t]}
+              </span>
+            ) : null}
           </button>
         );
       })}
@@ -511,6 +575,53 @@ export function ModalShell({
   );
 }
 
+/** Konfirmasi/alert bertema Hoshi — pengganti window.confirm()/alert() bawaan browser (yang tampil
+ *  "situs bilang…", di luar tema). Popup gelap khas Hoshi di tengah, TANPA linear-gradient (tombol
+ *  warna SOLID). `danger` → tombol merah untuk aksi merusak. Hilangkan `onCancel` → mode alert
+ *  (satu tombol OK). */
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = "OK",
+  cancelLabel = "Batal",
+  danger = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message?: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  onConfirm: () => void;
+  /** Ada → mode konfirmasi (tombol Batal). Tak ada → mode alert (hanya OK). */
+  onCancel?: () => void;
+}) {
+  const close = onCancel ?? onConfirm;
+  return (
+    <ModalShell open={open} onClose={close} title={title} maxWidth={380}>
+      <div className="flex flex-col gap-5">
+        {message && <p className="text-[14px] leading-relaxed text-zinc-300">{message}</p>}
+        <div className="flex justify-end gap-3">
+          {onCancel && <GhostButton onClick={onCancel}>{cancelLabel}</GhostButton>}
+          <button
+            type="button"
+            onClick={onConfirm}
+            // Warna SOLID (bukan gradient): gold khas Hoshi untuk aksi normal, merah untuk merusak.
+            className={`rounded-xl px-5 py-2.5 text-[14px] font-semibold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
+              danger ? "bg-[#E5484D] text-white" : "bg-[#FBB222] text-[#171717]"
+            }`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 /* ------------------------------- step bar --------------------------------- */
 
 /** Segmented progress for wizards (Withdraw). `step` is 1-based. */
@@ -580,6 +691,26 @@ const S = (p: IP & { children: ReactNode }) => (
   </svg>
 );
 
+/** Filled heart (favorit). Pakai fill, bukan stroke — jadi tidak lewat helper `S`. */
+export const HeartIcon = (p: IP) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    className={p.className ?? "h-5 w-5"}
+    style={p.style}
+    aria-hidden
+  >
+    <path d="M12 21s-6.716-4.297-9.303-8.192C1.03 10.06 1.6 6.9 4.2 5.6c2-1 4.3-.393 5.8 1.3.5.55.8 1.05 1 1.45.2-.4.5-.9 1-1.45 1.5-1.693 3.8-2.3 5.8-1.3 2.6 1.3 3.17 4.46 1.503 7.208C18.716 16.703 12 21 12 21z" />
+  </svg>
+);
+export const TrashIcon = (p: IP) => (
+  <S {...p}>
+    <path d="M3 6h18" />
+    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+  </S>
+);
 export const UserIcon = (p: IP) => (
   <S {...p}>
     <circle cx="12" cy="8" r="4" />

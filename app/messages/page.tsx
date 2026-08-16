@@ -6,7 +6,7 @@
 // Di sinilah PENJUAL menerima & membalas chat dari pembeli (dulu "Message Seller"
 // nyasar ke inbox admin — sekarang mendarat di sini).
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AccountShell,
@@ -37,6 +37,38 @@ import {
 } from "@/lib/marketMessaging";
 
 type Channel = "support" | "marketplace";
+
+// Module-level (bukan didefinisikan saat render) — jaga identitas komponen stabil.
+function Tab({
+  label,
+  badge,
+  active,
+  onSelect,
+}: {
+  label: string;
+  badge: number;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex items-center gap-2 rounded-xl px-4 py-2 text-[14px] font-medium transition ${
+        active
+          ? "bg-yellow-400/15 text-yellow-200 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.35)]"
+          : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+      }`}
+    >
+      {label}
+      {badge > 0 && (
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold text-[#171717]">
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
 
 export default function MessagesPage() {
   const { token, hydrated, login } = useAuth();
@@ -80,8 +112,47 @@ export default function MessagesPage() {
 
   useEffect(() => {
     if (!token) return;
+    // setState terjadi di dalam async fetch* (bukan sinkron di effect) — false-positive rule.
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
     fetchThreads();
     fetchMThreads();
+  }, [token, fetchThreads, fetchMThreads]);
+
+  // Realtime ringan (polling, tanpa backend baru): id thread yang SEDANG dibuka disimpan di ref
+  // supaya interval tak bongkar-pasang tiap render.
+  const openIdsRef = useRef<{ support: string | null; market: string | null }>({
+    support: null,
+    market: null,
+  });
+  useEffect(() => {
+    openIdsRef.current = { support: detail?.id ?? null, market: mDetail?.id ?? null };
+  }, [detail?.id, mDetail?.id]);
+
+  useEffect(() => {
+    if (!token) return;
+    let n = 0;
+    const tick = () => {
+      if (document.visibilityState !== "visible") return; // hemat: jangan poll di background
+      n += 1;
+      const { support, market } = openIdsRef.current;
+      // Thread yang terbuka: refresh tiap tick (~7s) → bubble baru muncul sendiri.
+      if (support) getSupportThread(support, token).then(setDetail).catch(() => {});
+      if (market) getMarketThread(market, token).then(setMDetail).catch(() => {});
+      // Daftar thread: tiap 3 tick (~21s) → badge unread & preview ikut segar.
+      if (n % 3 === 0) {
+        fetchThreads();
+        fetchMThreads();
+      }
+    };
+    const id = window.setInterval(tick, 7_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [token, fetchThreads, fetchMThreads]);
 
   const openThread = async (id: string) => {
@@ -134,21 +205,6 @@ export default function MessagesPage() {
   const mUnread = mThreads.reduce((n, t) => n + t.unread, 0);
   const sUnread = threads.reduce((n, t) => n + t.unread, 0);
 
-  const Tab = ({ id, label, badge }: { id: Channel; label: string; badge: number }) => (
-    <button
-      type="button"
-      onClick={() => setChannel(id)}
-      className={`flex items-center gap-2 rounded-xl px-4 py-2 text-[14px] font-medium transition ${
-        channel === id ? "bg-yellow-400/15 text-yellow-200 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.35)]" : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-      }`}
-    >
-      {label}
-      {badge > 0 && (
-        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold text-[#171717]">{badge}</span>
-      )}
-    </button>
-  );
-
   return (
     <AccountShell active="Vault">
       <div className="mb-4">
@@ -157,8 +213,8 @@ export default function MessagesPage() {
       </div>
 
       <div className="mb-5 flex gap-2">
-        <Tab id="support" label="Support" badge={sUnread} />
-        <Tab id="marketplace" label="Marketplace" badge={mUnread} />
+        <Tab label="Support" badge={sUnread} active={channel === "support"} onSelect={() => setChannel("support")} />
+        <Tab label="Marketplace" badge={mUnread} active={channel === "marketplace"} onSelect={() => setChannel("marketplace")} />
       </div>
 
       {channel === "support" && (
@@ -240,9 +296,9 @@ export default function MessagesPage() {
                   ))}
                 </div>
                 <div className="border-t border-white/[0.06] p-4">
-                  <div className="flex gap-2">
+                  <div className="flex items-end gap-2">
                     <TextArea value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Tulis pesan…" className="min-h-[52px] flex-1" />
-                    <PrimaryButton onClick={sendReply} disabled={sending || !reply.trim()}>{sending ? "…" : "Send"}</PrimaryButton>
+                    <PrimaryButton onClick={sendReply} disabled={sending || !reply.trim()} className="shrink-0 !px-4">{sending ? "…" : "Kirim"}</PrimaryButton>
                   </div>
                 </div>
               </>
@@ -316,9 +372,9 @@ export default function MessagesPage() {
                   })}
                 </div>
                 <div className="border-t border-white/[0.06] p-4">
-                  <div className="flex gap-2">
+                  <div className="flex items-end gap-2">
                     <TextArea value={mReply} onChange={(e) => setMReply(e.target.value)} placeholder="Tulis balasan…" className="min-h-[52px] flex-1" />
-                    <PrimaryButton onClick={sendMReply} disabled={mSending || !mReply.trim()}>{mSending ? "…" : "Send"}</PrimaryButton>
+                    <PrimaryButton onClick={sendMReply} disabled={mSending || !mReply.trim()} className="shrink-0 !px-4">{mSending ? "…" : "Kirim"}</PrimaryButton>
                   </div>
                 </div>
               </>

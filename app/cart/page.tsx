@@ -1,21 +1,28 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useCart } from "@/lib/useCart";
-import { PAGE_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
+import { PayModal } from "@/components/packs/PayWithRupiah";
 import { GradientText, Idrx, Img } from "@/components/packs/ui";
 
 const JERSEY = { fontFamily: "var(--font-jersey)" } as const;
+const GOLD = "linear-gradient(180deg,#FBB222,#FFF600)";
 
 export default function CartPage() {
   const { items, remove, clear, count } = useCart();
   const total = items.reduce((sum, l) => sum + l.price, 0);
+  // Kartu yang sedang dibayar via PayModal (REAL — createListingOrder → IDRX/Duitku, SAMA seperti
+  // beli satu-satu; di produksi redirect asli). `bulk` = mode "Checkout semua" → maju ke kartu
+  // berikutnya sesudah satu lunas (kalau tak ke-redirect duluan).
+  const [payId, setPayId] = useState<string | null>(null);
+  const [bulk, setBulk] = useState(false);
 
   return (
     <div
-      className="relative min-h-screen text-zinc-100"
-      style={{ background: PAGE_BG, fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
+      className="page-bg relative min-h-screen text-zinc-100"
+      style={{ fontFamily: "var(--font-outfit), system-ui, sans-serif" }}
     >
       <TopNav active="Marketplace" />
 
@@ -70,13 +77,17 @@ export default function CartPage() {
                     <Idrx amount={l.price} size={14} className="mt-1.5 text-[14px] text-zinc-200" />
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
-                    <Link
-                      href={`/marketplace/${l.id}`}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBulk(false);
+                        setPayId(l.id);
+                      }}
                       className="rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[#171717]"
-                      style={{ backgroundImage: "linear-gradient(180deg,#FBB222,#FFF600)" }}
+                      style={{ backgroundImage: GOLD }}
                     >
                       Buy
-                    </Link>
+                    </button>
                     <button
                       type="button"
                       onClick={() => remove(l.id)}
@@ -89,19 +100,56 @@ export default function CartPage() {
               ))}
             </ul>
 
-            <div className="mt-6 flex items-center justify-between rounded-2xl bg-[#181507] p-5">
-              <span className="text-[15px] uppercase tracking-wide text-zinc-400" style={JERSEY}>
-                Total ({count} {count === 1 ? "card" : "cards"})
-              </span>
-              <Idrx amount={total} size={22} className="text-2xl text-white" />
+            <div className="mt-6 flex flex-col gap-4 rounded-2xl bg-[#181507] p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center justify-between gap-4 sm:justify-start">
+                <span className="text-[15px] uppercase tracking-wide text-zinc-400" style={JERSEY}>
+                  Total ({count} {count === 1 ? "card" : "cards"})
+                </span>
+                <Idrx amount={total} size={22} className="text-2xl text-white" />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (items[0]) {
+                    setBulk(true);
+                    setPayId(items[0].id);
+                  }
+                }}
+                className="w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105 sm:w-auto"
+                style={{ backgroundImage: GOLD }}
+              >
+                Checkout semua ({count}) →
+              </button>
             </div>
             <p className="mt-3 text-center text-[12px] text-zinc-600">
-              POC: buy each card from its detail page (single-card checkout). Cart-wide checkout
-              lands with IDRX settlement.
+              Bayar tiap kartu lewat QRIS / e-wallet / VA (sama seperti beli satu-satu).
             </p>
           </>
         )}
       </main>
+
+      {/* Pembayaran REAL (createListingOrder → IDRX/Duitku), SAMA persis dgn beli kartu satu-satu —
+          tak ada penanganan khusus, tinggal dipakai di produksi. Sesudah satu kartu lunas: keluarkan
+          dari keranjang; mode "Checkout semua" lanjut ke kartu berikutnya. */}
+      {payId && (
+        <PayModal
+          listingId={payId}
+          packType="MARKETPLACE"
+          successHref="/vault"
+          onFulfilled={() => {
+            const paid = payId;
+            remove(paid);
+            if (bulk) {
+              const next = items.find((i) => i.id !== paid);
+              setPayId(next?.id ?? null);
+            }
+          }}
+          onClose={() => {
+            setPayId(null);
+            setBulk(false);
+          }}
+        />
+      )}
     </div>
   );
 }

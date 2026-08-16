@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAdminAuth } from "@/lib/adminAuth";
 import { formatIdr } from "@/components/packs/ui";
+import { ConfirmDialog } from "@/components/account/ui";
 import Pagination from "@/components/admin/Pagination";
 import Thumb from "@/components/admin/Thumb";
 
@@ -94,18 +95,21 @@ export default function AdminOffersPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const act = async (id: string, action: "accept" | "reject") => {
-    if (!token) return;
-    // Accept = irreversible: menjual kartu + mint NFT ke pembeli + auto-reject
-    // offer lain di listing yang sama. Wajib konfirmasi dulu.
+  // Offer yang menunggu konfirmasi "Accept" (dialog bertema, bukan window.confirm bawaan browser).
+  const [confirmAcceptId, setConfirmAcceptId] = useState<string | null>(null);
+
+  // Accept = irreversible (jual kartu + mint NFT ke pembeli + auto-reject offer lain) → lewat
+  // ConfirmDialog dulu. Reject langsung. `act` cuma router; `doAct` yang benar-benar memanggil API.
+  const act = (id: string, action: "accept" | "reject") => {
     if (action === "accept") {
-      const ok = window.confirm(
-        "Terima offer ini?\n\n" +
-        "Ini akan MENJUAL kartu ke pembeli, mint NFT ke wallet mereka, dan otomatis " +
-        "MENOLAK semua offer lain di listing yang sama. Aksi ini TIDAK bisa dibatalkan.",
-      );
-      if (!ok) return;
+      setConfirmAcceptId(id);
+      return;
     }
+    void doAct(id, action);
+  };
+
+  const doAct = async (id: string, action: "accept" | "reject") => {
+    if (!token) return;
     setProcessing(id);
     try {
       const res = await fetch(`${API_BASE}/admin/offers/${id}/${action}`, {
@@ -257,6 +261,19 @@ export default function AdminOffersPage() {
           <Pagination page={result.page} totalPages={result.totalPages} total={result.total} onPage={setPage} unit="offer" />
         </>
       ) : null}
+
+      <ConfirmDialog
+        open={!!confirmAcceptId}
+        title="Terima offer ini?"
+        message="Ini akan MENJUAL kartu ke pembeli, mint NFT ke wallet mereka, dan otomatis MENOLAK semua offer lain di listing yang sama. Aksi ini TIDAK bisa dibatalkan."
+        confirmLabel="Terima"
+        onConfirm={() => {
+          const id = confirmAcceptId;
+          setConfirmAcceptId(null);
+          if (id) void doAct(id, "accept");
+        }}
+        onCancel={() => setConfirmAcceptId(null)}
+      />
     </div>
   );
 }

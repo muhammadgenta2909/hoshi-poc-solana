@@ -89,8 +89,16 @@ export function ItemCell({
       ) : (
         <span aria-hidden className="h-[38px] w-[28px] shrink-0 rounded-[3px] bg-white/[0.06]" />
       )}
-      <span className="min-w-0">
-        <span className="block truncate text-[13px] font-semibold text-zinc-100">{name}</span>
+      {/* max-w WAJIB: tanpa batas lebar, nama panjang bikin kolom auto-layout melar → tombol Action
+          kedorong keluar layar (harus scroll). Dibatasi + `truncate` = elipsis; teks penuh muncul
+          saat hover lewat atribut `title` (tooltip native, tak bikin baris/tombol menggendut). */}
+      <span className="min-w-0 max-w-[150px] sm:max-w-[220px]">
+        <span
+          title={name}
+          className="block truncate text-[13px] font-semibold text-zinc-100"
+        >
+          {name}
+        </span>
         {id && (
           <span className="block truncate font-mono text-[10px] text-zinc-500">
             {shortAddr(id, 6, 4)}
@@ -378,11 +386,18 @@ export function ActiveListingsTable({
 export function OffersMadeTable({
   rows,
   onCancel,
+  onPay,
   busyId,
+  selfId,
 }: {
   rows: OfferRecord[];
   onCancel: (o: OfferRecord) => void;
+  /** Offer DITERIMA penjual & listing masih ACTIVE → tombol "Lanjutkan Pembayaran". */
+  onPay: (o: OfferRecord) => void;
   busyId: string | null;
+  /** id user sekarang → sembunyikan "Lanjutkan Pembayaran" utk offer atas KARTU SENDIRI
+   *  (data lama sebelum guard submitOffer; pembayaran tetap diblokir backend). */
+  selfId?: string | null;
 }) {
   return (
     <TableShell
@@ -397,46 +412,70 @@ export function OffersMadeTable({
         </>
       }
     >
-      {rows.map((o) => (
-        <Row key={o.id}>
-          <Td>
-            <ItemCell
-              name={o.item.name}
-              image={o.item.image}
-              id={o.listingId}
-              href={`/marketplace/${o.listingId}`}
-            />
-          </Td>
-          <Td>
-            <Party party={o.seller} />
-          </Td>
-          <Td>
-            <Amount value={o.amount} />
-          </Td>
-          <Td>
-            <StatusPill status={o.status} />
-          </Td>
-          <Td className="whitespace-nowrap text-[12px] text-zinc-400">
-            {formatActivityDate(o.createdAt)}
-          </Td>
-          <Td>
-            <div className="flex justify-end">
-              {o.actionable ? (
-                <button
-                  type="button"
-                  onClick={() => onCancel(o)}
-                  disabled={busyId === o.id}
-                  className="rounded-lg border border-white/12 bg-white/[0.05] px-4 py-1.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.09] disabled:opacity-50"
-                >
-                  {busyId === o.id ? "…" : "Cancel"}
-                </button>
-              ) : (
-                <span className="text-[12px] text-zinc-600">—</span>
-              )}
-            </div>
-          </Td>
-        </Row>
-      ))}
+      {rows.map((o) => {
+        // Offer atas kartu SENDIRI (data lama). Guard submitOffer sekarang mencegahnya, & backend
+        // tetap tolak bayar ("tak bisa beli kartu sendiri") → jangan tampilkan tombol yg menyesatkan.
+        const isSelf = !!selfId && o.seller?.id === selfId;
+        return (
+          <Row key={o.id}>
+            <Td>
+              <ItemCell
+                name={o.item.name}
+                image={o.item.image}
+                id={o.listingId}
+                href={`/marketplace/${o.listingId}`}
+              />
+            </Td>
+            <Td>
+              <Party party={o.seller} />
+            </Td>
+            <Td>
+              <Amount value={o.amount} />
+            </Td>
+            <Td>
+              <StatusPill status={o.status} />
+            </Td>
+            <Td className="whitespace-nowrap text-[12px] text-zinc-400">
+              {formatActivityDate(o.createdAt)}
+            </Td>
+            <Td>
+              <div className="flex justify-end">
+                {o.actionable ? (
+                  <button
+                    type="button"
+                    onClick={() => onCancel(o)}
+                    disabled={busyId === o.id}
+                    className="rounded-lg border border-white/12 bg-white/[0.05] px-4 py-1.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.09] disabled:opacity-50"
+                  >
+                    {busyId === o.id ? "…" : "Cancel"}
+                  </button>
+                ) : isSelf ? (
+                  // Kartu sendiri → tak ada aksi bayar.
+                  <span className="whitespace-nowrap text-[12px] text-zinc-600">Kartu sendiri</span>
+                ) : o.status === "PAID" ? (
+                  // Offer sudah DIBAYAR & settle → kartu jadi milik pembeli.
+                  <span className="text-[12px] font-semibold text-emerald-400">✓ Dibeli</span>
+                ) : o.status === "ACCEPTED" && o.item.status === "ACTIVE" ? (
+                  // Diterima penjual, BELUM dibayar → lanjutkan bayar (di harga offer).
+                  <button
+                    type="button"
+                    onClick={() => onPay(o)}
+                    className="whitespace-nowrap rounded-lg px-4 py-1.5 text-[13px] font-bold text-[#171717] transition hover:brightness-105"
+                    style={{ backgroundImage: "linear-gradient(180deg,#FBB222,#FFF600)" }}
+                  >
+                    Lanjutkan Pembayaran →
+                  </button>
+                ) : o.status === "ACCEPTED" ? (
+                  // Diterima & listing sudah SOLD → sudah dibeli.
+                  <span className="text-[12px] font-semibold text-emerald-400">✓ Dibeli</span>
+                ) : (
+                  <span className="text-[12px] text-zinc-600">—</span>
+                )}
+              </div>
+            </Td>
+          </Row>
+        );
+      })}
     </TableShell>
   );
 }

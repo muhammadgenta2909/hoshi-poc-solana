@@ -163,6 +163,26 @@ export const relistListing = (id: string, input: RelistInput, token: string) =>
     body: JSON.stringify(input),
   });
 
+/** Escrow langkah 1 (real P2P armed): bangun tx transfer kartu penjual → wallet escrow.
+ *  Hanya untuk listing PENDING_ESCROW; penjual menandatangani hasilnya. Idempoten (build ulang). */
+export const escrowPrepare = (id: string, token: string) =>
+  api<{ serializedTransaction: string }>(
+    `/marketplace/${encodeURIComponent(id)}/escrow/prepare`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    },
+  );
+
+/** Escrow langkah 2: siarkan transfer bertanda tangan penjual → listing jadi ACTIVE.
+ *  Aman di-retry: kalau kartu sudah di escrow, backend melewati broadcast & tetap mengaktifkan. */
+export const escrowSubmit = (id: string, signedTransaction: string, token: string) =>
+  api<Listing>(`/marketplace/${encodeURIComponent(id)}/escrow/submit`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ signedTransaction }),
+  });
+
 /** Change the price of your own ACTIVE listing (PATCH /marketplace/:id).
  *  A dedicated update, not a cancel + re-list: views, listedAt and any live
  *  offers survive it (mirrors Collector Crypt's "update listing"). */
@@ -313,6 +333,76 @@ export const deleteAddress = (id: string, token: string) =>
     headers: { authorization: `Bearer ${token}` },
   });
 
+/* ---------------- redeem: kirim kartu fisik ke rumah ---------------- */
+
+export type RedemptionStatus = "REQUESTED" | "PACKING" | "SHIPPED" | "CANCELED";
+export type CardRedemption = {
+  id: string;
+  nftAddress: string;
+  cardName: string;
+  cardImage: string | null;
+  cardSet: string | null;
+  recipientName: string;
+  city: string;
+  country: string;
+  status: RedemptionStatus;
+  createdAt: string;
+};
+
+/** Minta kirim kartu fisik ke rumah (POST /redemptions). RECORD-ONLY di server: mencatat
+ *  permintaan + tujuan, TIDAK burn/transfer NFT — kartu tetap di wallet sampai admin proses. */
+export const requestRedemption = (
+  input: { nftAddress: string; shippingAddressId: string },
+  token: string,
+) =>
+  api<CardRedemption>("/redemptions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Riwayat permintaan kirim kartu fisik milik user (GET /redemptions/me). */
+export const getMyRedemptions = (token: string) =>
+  api<CardRedemption[]>("/redemptions/me", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/* ---------------- swap: tukar kartu antar kolektor ---------------- */
+
+export type SwapStatus = "REQUESTED" | "CANCELED";
+export type SwapRequest = {
+  id: string;
+  offeredNftAddress: string;
+  offeredCardName: string;
+  offeredCardImage: string | null;
+  recipientMethod: string;
+  recipientValue: string;
+  status: SwapStatus;
+  createdAt: string;
+};
+
+/** Ajukan tukar kartu ke kolektor lain (POST /swaps). RECORD-ONLY: mencatat ajakan + kartu yang
+ *  ditawarkan, TIDAK transfer/burn kartu (akseptasi & perpindahan belum ada di fase ini). */
+export const createSwap = (
+  input: {
+    offeredNftAddress: string;
+    recipientMethod: "wallet" | "email" | "sns";
+    recipientValue: string;
+  },
+  token: string,
+) =>
+  api<SwapRequest>("/swaps", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Riwayat ajakan tukar kartu milik user (GET /swaps/me). */
+export const getMySwaps = (token: string) =>
+  api<SwapRequest[]>("/swaps/me", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
 /* ---------------- gacha (Collector Crypt machines) ---------------- */
 
 /** All gacha machines, normalized. Public — no auth. */
@@ -432,6 +522,17 @@ export const submitBuyback = (memo: string, signedTransaction: string, token: st
 /** True when the rupiah payment UI should be shown (backend IDRX creds ready). */
 export const PAYMENTS_ENABLED = process.env.NEXT_PUBLIC_PAYMENTS_ENABLED === "1";
 
+/** True saat tombol "Beli via Rupiah" (jalur RESELLER kartu katalog CC) boleh muncul.
+ *  Terpisah dari PAYMENTS_ENABLED supaya prod bisa tetap menyembunyikan tombol reseller
+ *  (settlement real belum di-arm) tanpa mematikan pembayaran pack gacha. Staging = "1";
+ *  prod = biarkan unset sampai go-live (treasury didanai + HOSHI_CC_RESELL_ENABLED=true). */
+export const CC_RESELL_ENABLED = process.env.NEXT_PUBLIC_CC_RESELL_ENABLED === "1";
+
+/** True saat tombol "Beli via Rupiah" pada listing USER (jual-beli antar user / Flow B P2P)
+ *  boleh muncul. Terpisah dari reseller: staging = "1"; prod = unset sampai escrow di-arm
+ *  (HOSHI_P2P_ENABLED=true + wallet escrow didanai). */
+export const P2P_ENABLED = process.env.NEXT_PUBLIC_P2P_ENABLED === "1";
+
 export type PaymentStatus =
   | "PENDING"
   | "PAID"
@@ -474,6 +575,87 @@ export const createPackOrder = (
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
+  });
+
+/** Terbitkan tagihan rupiah untuk membeli satu kartu KATALOG CollectorCrypt lewat jalur
+ *  reseller (pembeli bayar harga kita via IDRX; treasury yang beli di CC + kirim ke pembeli).
+ *  POST /payments/listing. Nominal & penerima ditentukan server dari baris Listing. */
+export const createListingOrder = (listingId: string, token: string) =>
+  api<PaymentOrder>("/payments/listing", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ listingId }),
+  });
+
+/** Bayar OFFER yang sudah diterima penjual (POST /payments/offer) — di HARGA OFFER. Saat lunas,
+ *  kartu dikirim ke pembeli & penjual dikredit. Alur bayar & polling IDENTIK order lain. */
+export const createOfferOrder = (offerId: string, token: string) =>
+  api<PaymentOrder>("/payments/offer", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ offerId }),
+  });
+
+/** Isi saldo in-app (top-up). POST /payments/topup. Bayar rupiah lewat IDRX; saat PAID+MINTED,
+ *  saldo dikreditkan sebesar nominal — TIDAK ada USDC treasury yang dibelanjakan (fulfilment
+ *  hanya menulis baris saldo). Alur bayar & polling IDENTIK dengan order lain. */
+export const topUpBalance = (amountIdr: number, token: string) =>
+  api<PaymentOrder>("/payments/topup", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ amountIdr }),
+  });
+
+/** Saldo in-app (Rupiah) hasil penjualan P2P + mutasi terakhir. */
+export type BalanceEntry = {
+  id: string;
+  deltaIdrx: number;
+  reason: string;
+  refId: string | null;
+  createdAt: string;
+};
+export type Balance = { balanceIdrx: number; entries: BalanceEntry[] };
+
+export const getBalance = (token: string) =>
+  api<Balance>("/balance/me", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/* ---------------- tarik saldo (payout ke bank/e-wallet) ---------------- */
+
+export type WithdrawalStatus = "REQUESTED" | "PAID" | "REJECTED";
+export type Withdrawal = {
+  id: string;
+  amountIdr: number;
+  method: "BANK" | "EWALLET" | string;
+  destBank: string;
+  destAccount: string;
+  destName: string;
+  status: WithdrawalStatus;
+  note: string | null;
+  createdAt: string;
+  processedAt: string | null;
+};
+export type WithdrawInput = {
+  amount: number;
+  method: "BANK" | "EWALLET";
+  destBank: string;
+  destAccount: string;
+  destName: string;
+};
+
+/** Minta tarik saldo. Saldo langsung di-hold; admin transfer manual lalu tandai PAID. */
+export const requestWithdrawal = (input: WithdrawInput, token: string) =>
+  api<Withdrawal>("/balance/withdraw", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Riwayat penarikan saldo user login. */
+export const getMyWithdrawals = (token: string) =>
+  api<Withdrawal[]>("/balance/withdrawals", {
+    headers: { authorization: `Bearer ${token}` },
   });
 
 /** Poll one order's status (GET /payments/orders/:merchantOrderId). Ownership is
