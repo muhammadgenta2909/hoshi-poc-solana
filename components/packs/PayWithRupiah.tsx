@@ -269,10 +269,16 @@ export function PayModal({
             clearPendingPayment();
             setErrorMsg(terminalPaymentMessage(existing.status));
             setStage("error");
-          } else {
-            // PENDING/PAID/FULFILLING → treat as paid-and-processing: show "menyiapkan"
-            // and let the poll effect drive it to FULFILLED (IDRX confirm is async).
+          } else if (existing.status === "PAID" || existing.status === "FULFILLING") {
+            // Genuinely paid, settlement in flight → "menyiapkan"; the poll drives it to FULFILLED.
             setStage("fulfilling");
+          } else {
+            // PENDING = order dibuat tapi BELUM dibayar (mis. user klik "Back" dari halaman Duitku
+            // tanpa menuntaskan bayar, atau VA belum ditransfer). JANGAN klaim "Pembayaran
+            // diterima ✓" — tampilkan layar bayar (awaiting) supaya user bisa menyelesaikan. Re-open
+            // memakai order.paymentUrl yang SAMA (bukan order baru) → nol risiko bayar dobel; poll
+            // tetap menangkap begitu lunas.
+            setStage("awaiting");
           }
           return;
         }
