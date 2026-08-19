@@ -125,11 +125,12 @@ export default function OpenPacksPage() {
 
   useEffect(() => {
     // Duitku/IDRX redirects back to /open-packs with ?resultCode&merchantOrderId&reference
-    // appended. Resume runs off localStorage (readPendingPayment), NOT these params — so
-    // strip them from the URL the moment we land. Left in place they linger in the tab's
-    // history/address bar, and a later "Open Packs" navigation can snap back to the stale
-    // payment URL (the "maksa ke url tsb" bug). Preserve ?demo=1 so demo mode survives.
+    // appended. We STRIP them from the address bar the moment we land (left in place they
+    // linger in the tab's history and a later "Open Packs" navigation can snap back to the
+    // stale payment URL — the "maksa ke url tsb" bug), but first CAPTURE merchantOrderId: it
+    // is the resume fallback when localStorage is gone. Preserve ?demo=1 so demo survives.
     const params = new URLSearchParams(window.location.search);
+    const urlOrderId = params.get("merchantOrderId");
     if (
       params.has("merchantOrderId") ||
       params.has("resultCode") ||
@@ -140,15 +141,27 @@ export default function OpenPacksPage() {
     }
 
     const pending = readPendingPayment();
-    if (!pending) return;
-    // Order BELI KARTU (reseller, listingId ada) diresume di /vault (nav Vault + kartu langsung
-    // tampak), BUKAN di halaman pack ini. Biarkan pending-nya untuk /vault yang menuntaskan.
-    if (pending.listingId) return;
     /* eslint-disable react-hooks/set-state-in-effect */
-    setResumeOrderId(pending.merchantOrderId);
-    setResumePackType(pending.packType);
-    setResumeListingId(pending.listingId);
-    setPayModalOpen(true);
+    if (pending) {
+      // Order BELI KARTU (reseller, listingId ada) diresume di /vault (nav Vault + kartu langsung
+      // tampak), BUKAN di halaman pack ini. Biarkan pending-nya untuk /vault yang menuntaskan.
+      if (pending.listingId) return;
+      setResumeOrderId(pending.merchantOrderId);
+      setResumePackType(pending.packType);
+      setResumeListingId(pending.listingId);
+      setPayModalOpen(true);
+    } else if (urlOrderId) {
+      // localStorage HILANG (balik dari in-app browser e-wallet / storage ke-partisi iOS / mode
+      // privat), tapi gateway mengembalikan merchantOrderId di URL → resume cukup dari id itu.
+      // packType/listingId tak diketahui; PayModal resume mem-fetch order-nya sendiri (dan
+      // memanggil login() bila token hilang) untuk poll → reveal. Order kartu-reseller degrade
+      // mulus ke copy "cek di Vault". Tanpa ini, redirect ke konteks storage baru = "udah bayar
+      // tapi halaman kosong, reveal/video tak muncul".
+      setResumeOrderId(urlOrderId);
+      setResumePackType("");
+      setResumeListingId(null);
+      setPayModalOpen(true);
+    }
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 

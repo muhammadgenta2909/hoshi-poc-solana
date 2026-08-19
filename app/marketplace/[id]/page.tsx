@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import Link from "next/link";
 import { isPokemonCard, secondaryPrice, type Listing, type RelistInput } from "@/lib/market";
+import { explorerAddressUrl } from "@/lib/gacha";
 import type { CardDetail, Offer } from "@/lib/cardDetail";
 import {
   ApiError,
@@ -439,7 +440,7 @@ function RightColumn({
       label: "Contract Address",
       value: detail.contractAddress ? shortAsset(detail.contractAddress) : "Pending mint",
       valueColor: detail.contractAddress ? CONTRACT_YELLOW : "#A1A1AA",
-      ...(detail.contractAddress ? { href: `https://explorer.solana.com/address/${detail.contractAddress}?cluster=devnet` } : {}),
+      ...(detail.contractAddress ? { href: explorerAddressUrl(detail.contractAddress) } : {}),
     },
   ].filter(Boolean) as { label: string; value: string; valueColor?: string; href?: string }[];
   // Aksi kartu (offer / message / cart) — SATU sumber modal, dipakai tombol "Message Seller"
