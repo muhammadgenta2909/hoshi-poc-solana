@@ -142,21 +142,27 @@ function Accordion({
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className={`overflow-hidden rounded-2xl ${className}`}>
+      {/* Header: bisa di-tap (accordion) HANYA di mobile. Di desktop (lg) jadi label statis +
+          konten selalu terbuka — accordion memang khusus mobile (Figma); desktop tetap seperti
+          layout lama (section inline, tak bisa dilipat). */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left lg:pointer-events-none"
       >
         <span className="text-[15px] uppercase tracking-wide text-white" style={JERSEY}>
           {title}
         </span>
         <span className="flex items-center gap-2">
           {right}
-          <Chevron open={open} />
+          <span className="lg:hidden">
+            <Chevron open={open} />
+          </span>
         </span>
       </button>
-      {open && <div className="px-5 pb-5">{children}</div>}
+      {/* Konten: di mobile mengikuti state open; di desktop selalu tampil (lg:block). */}
+      <div className={`px-5 pb-5 ${open ? "block" : "hidden"} lg:block`}>{children}</div>
     </div>
   );
 }
@@ -568,8 +574,9 @@ function RightColumn({
         <VaultVerified source={listing.source} />
       </div>
 
-      {/* stats grid (Card Grade dst) — DI BAWAH harga (Figma mobile): 3 kolom */}
-      <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-5 border-t border-white/10 pt-5">
+      {/* stats grid (Card Grade dst) — DI BAWAH harga. Mobile (Figma): 3 kolom; desktop kembali
+          ke baris lebar 5 kolom seperti layout lama. */}
+      <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-5 border-t border-white/10 pt-5 lg:grid-cols-5">
         {stats.map((s) => (
           <Stat key={s.label} label={s.label} value={s.value} valueColor={s.valueColor} href={s.href} />
         ))}
