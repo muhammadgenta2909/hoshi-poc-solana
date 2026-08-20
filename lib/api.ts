@@ -6,6 +6,7 @@ import type { Listing, NewListingInput, RelistInput, UpdateListingInput } from "
 import type { CardDetail } from "./cardDetail";
 import type { ActivityQuery, ActivityRecord, OfferRecord } from "./offers";
 import type { GachaMachine, GachaPull, GachaWinner } from "./gacha";
+import { getPrivyIdentityToken } from "./privyIdentity";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -335,7 +336,30 @@ export const deleteAddress = (id: string, token: string) =>
 
 /* ---------------- redeem: kirim kartu fisik ke rumah ---------------- */
 
-export type RedemptionStatus = "REQUESTED" | "PACKING" | "SHIPPED" | "CANCELED";
+/** True saat alur kirim-fisik REAL (bayar ongkir + burn NFT + serah ke CollectorCrypt shipping)
+ *  boleh jalan. OFF → UI tetap RECORD-ONLY byte-for-byte (POST /redemptions saja, NFT tak bergerak).
+ *  Konvensi sama dgn PAYMENTS_ENABLED dst — nilainya "1", BUKAN "true". Prod: biarkan unset sampai
+ *  backend meng-arm CC shipping (treasury didanai + kredensial CC shipping siap). */
+export const CC_SHIPPING_ENABLED = process.env.NEXT_PUBLIC_CC_SHIPPING_ENABLED === "1";
+
+/** Semua status daur-hidup satu permintaan kirim fisik. Record-only memakai REQUESTED/PACKING/
+ *  SHIPPED/CANCELED; alur real menambah tahap bayar-ongkir → danai+burn → dikirim CC + refund. */
+export type RedemptionStatus =
+  | "REQUESTED"
+  | "AWAITING_PAYMENT"
+  | "READY_TO_FUND"
+  | "FUNDING"
+  | "FUNDED"
+  | "BURN_SUBMITTED"
+  | "IN_TRANSIT"
+  | "DELIVERED"
+  | "PACKING"
+  | "SHIPPED"
+  | "CANCELED"
+  | "REFUND_DUE"
+  | "RECLAIM_DUE"
+  | "SHIP_FAILED_POST_BURN";
+
 export type CardRedemption = {
   id: string;
   nftAddress: string;
@@ -346,8 +370,27 @@ export type CardRedemption = {
   city: string;
   country: string;
   status: RedemptionStatus;
+  /** Nomor resi CC (baru terisi setelah dikirim). Opsional: /redemptions/me record-only bisa
+   *  mengabaikannya; /redemptions/:id/status yang mengembalikannya saat IN_TRANSIT/DELIVERED. */
+  trackingIds?: string[];
+  /** Link lacak resi (sejajar dengan trackingIds). */
+  trackingUrls?: string[];
   createdAt: string;
 };
+
+/** Header untuk endpoint kirim-fisik CC: JWT wallet kita PLUS identity token Privy
+ *  (membuktikan user Google/Privy MANA yang memanggil — API shipping CC ter-scope ke identitas
+ *  itu). Kalau identity token null (mis. user login wallet mentah, bukan Google/Privy), lempar
+ *  pesan ramah supaya UI menyuruh login Google/Privy dulu — bukan error mentah dari server. */
+async function shippingHeaders(token: string): Promise<Record<string, string>> {
+  const identityToken = await getPrivyIdentityToken();
+  if (!identityToken)
+    throw new Error("Login pakai Google/Privy dulu untuk kirim fisik.");
+  return {
+    authorization: `Bearer ${token}`,
+    "X-Privy-Identity-Token": identityToken,
+  };
+}
 
 /** Minta kirim kartu fisik ke rumah (POST /redemptions). RECORD-ONLY di server: mencatat
  *  permintaan + tujuan, TIDAK burn/transfer NFT — kartu tetap di wallet sampai admin proses. */
@@ -365,6 +408,78 @@ export const requestRedemption = (
 export const getMyRedemptions = (token: string) =>
   api<CardRedemption[]>("/redemptions/me", {
     headers: { authorization: `Bearer ${token}` },
+  });
+
+/* --- kirim-fisik REAL (butuh JWT + header X-Privy-Identity-Token; hanya saat backend di-arm) ---
+   Alur: estimate ongkir Rupiah → bayar (order IDRX hosted) → danai+siapkan tx → user TTD →
+   submit burn → lacak resi. Kelima call di bawah melampirkan identity token Privy lewat
+   shippingHeaders() (lempar pesan ramah kalau user belum login Google/Privy). ---------------- */
+
+/** Estimasi ongkir kirim fisik yang dihitung server (POST /redemptions/:id/estimate). */
+export type RedemptionEstimate = {
+  /** Perkiraan biaya kirim CC dalam USD. */
+  usd: number;
+  /** Nilai yang sama dalam base unit USDC (6 desimal). */
+  usdcBaseUnits: number;
+  /** Nominal yang ditagih ke user, dalam Rupiah. */
+  rupiah: number;
+};
+
+export const estimateRedemption = async (id: string, token: string) =>
+  api<RedemptionEstimate>(`/redemptions/${encodeURIComponent(id)}/estimate`, {
+    method: "POST",
+    headers: await shippingHeaders(token),
+  });
+
+/** Terbitkan tagihan Rupiah untuk ONGKIR kirim fisik (POST /payments/shipping). Mengembalikan
+ *  PaymentOrder ber-`paymentUrl` (IDRX/Duitku hosted, bentuk sama dgn order pack). Setelah lunas,
+ *  backend menandai redemption READY_TO_FUND. */
+export const createShippingOrder = async (redemptionId: string, token: string) =>
+  api<PaymentOrder>("/payments/shipping", {
+    method: "POST",
+    headers: await shippingHeaders(token),
+    body: JSON.stringify({ redemptionId }),
+  });
+
+/** Hasil danai+siapkan: transaksi unsigned (base64) yang harus ditandatangani user sebelum burn. */
+export type FundAndPrepareResult = {
+  /** Transaksi utama (danai treasury + burn NFT), base64 unsigned — TTD berurutan. */
+  transactions: string[];
+  /** Transaksi lepas-listing/escrow bila kartu sedang dipajang (bisa []), base64 unsigned. */
+  delistTransactions: string[];
+  outboundShipmentId: string;
+  /** Total biaya dalam base unit USDC (6 desimal). */
+  totalCostUsdc: number;
+};
+
+/** Danai + siapkan transaksi kirim (POST /redemptions/:id/fund-and-prepare). */
+export const fundAndPrepareRedemption = async (id: string, token: string) =>
+  api<FundAndPrepareResult>(`/redemptions/${encodeURIComponent(id)}/fund-and-prepare`, {
+    method: "POST",
+    headers: await shippingHeaders(token),
+  });
+
+/** Kirim transaksi yang sudah ditandatangani user (POST /redemptions/:id/submit-burn).
+ *  NB: gabungan delistTransactions (dulu) + transactions, semuanya sudah ditandatangani. */
+export const submitRedemptionBurn = async (
+  id: string,
+  signedTransactions: string[],
+  token: string,
+) =>
+  api<{ status: RedemptionStatus; burnSignature: string }>(
+    `/redemptions/${encodeURIComponent(id)}/submit-burn`,
+    {
+      method: "POST",
+      headers: await shippingHeaders(token),
+      body: JSON.stringify({ signedTransactions }),
+    },
+  );
+
+/** Status + resi satu permintaan kirim fisik (GET /redemptions/:id/status). Dipakai untuk polling
+ *  tahap "Dalam perjalanan" — menampilkan status & trackingUrls saat IN_TRANSIT/DELIVERED. */
+export const getRedemptionStatus = async (id: string, token: string) =>
+  api<CardRedemption>(`/redemptions/${encodeURIComponent(id)}/status`, {
+    headers: await shippingHeaders(token),
   });
 
 /* ---------------- swap: tukar kartu antar kolektor ---------------- */

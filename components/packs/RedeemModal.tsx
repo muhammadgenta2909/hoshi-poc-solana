@@ -11,6 +11,7 @@ import Link from "next/link";
 import {
   getMyAddresses,
   requestRedemption,
+  type CardRedemption,
   type ShippingAddress,
 } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
@@ -25,7 +26,8 @@ export default function RedeemModal({
   nftAddress: string;
   cardName: string | null;
   onClose: () => void;
-  onRequested?: () => void;
+  /** Menerima redemption yang baru dibuat — parent bisa lanjut ke alur bayar+kirim (flag ON). */
+  onRequested?: (redemption: CardRedemption) => void;
 }) {
   const { token, login } = useAuth();
   const [addresses, setAddresses] = useState<ShippingAddress[] | null>(null);
@@ -63,9 +65,9 @@ export default function RedeemModal({
     try {
       let t = token;
       if (!t) t = await login();
-      await requestRedemption({ nftAddress, shippingAddressId: selectedId }, t);
+      const red = await requestRedemption({ nftAddress, shippingAddressId: selectedId }, t);
       setDone(true);
-      onRequested?.();
+      onRequested?.(red);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal mengirim permintaan.");
     } finally {

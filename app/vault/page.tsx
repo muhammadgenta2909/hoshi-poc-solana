@@ -9,6 +9,7 @@ import type { Listing } from "@/lib/market";
 import type { LiveCard } from "@/lib/packs";
 import {
   ApiError,
+  CC_SHIPPING_ENABLED,
   getBalance,
   getGachaWinners,
   getMyListings,
@@ -47,6 +48,21 @@ function shortAsset(address: string): string {
 
 /** A successfully-opened pull with a minted card address is a real owned card. */
 const isOwnedPull = (p: GachaPull): boolean => p.status === "OPENED" && !!p.nftAddress;
+
+// Redemption yang membuat kartu SUDAH keluar dari vault: begitu burn tersubmit, NFT tak lagi di
+// wallet (di prod di-burn; di staging disimulasi disembunyikan). SHIPPED = status record-only lama.
+const SHIPPED_OUT = new Set<RedemptionStatus>([
+  "BURN_SUBMITTED",
+  "IN_TRANSIT",
+  "DELIVERED",
+  "SHIPPED",
+]);
+// Redemption yang butuh AKSI user (bayar ongkir / tanda tangani) — badge diberi warna beda + ajakan.
+const NEEDS_ACTION = new Set<RedemptionStatus>([
+  "REQUESTED",
+  "AWAITING_PAYMENT",
+  "READY_TO_FUND",
+]);
 
 export default function VaultPage() {
   const { token, hydrated, login } = useAuth();
@@ -201,14 +217,16 @@ export default function VaultPage() {
         listing: l,
       })),
     ];
-    // Sembunyikan kartu yang SUDAH DIKIRIM (keluar vault). REQUESTED/PACKING tetap tampil (badge).
+    // Sembunyikan kartu yang SUDAH KELUAR vault (burn tersubmit / dikirim). Status pra-burn
+    // (REQUESTED/AWAITING_PAYMENT/READY_TO_FUND/FUNDING/FUNDED/PACKING) tetap tampil dengan badge.
     return rows
       .filter((r) => {
         const nft =
           r.kind === "pull"
             ? r.pull.nftAddress
             : (r.listing.nft?.assetAddress ?? r.listing.ccNftAddress);
-        return !(nft && redemptionByNft.get(nft) === "SHIPPED");
+        const st = nft ? redemptionByNft.get(nft) : undefined;
+        return !(st && SHIPPED_OUT.has(st));
       })
       .sort((a, b) => b.at - a.at);
   }, [pulls, items, redemptionByNft]);
@@ -288,8 +306,9 @@ export default function VaultPage() {
                 e.kind === "pull"
                   ? e.pull.nftAddress
                   : (e.listing.nft?.assetAddress ?? e.listing.ccNftAddress);
-              // REQUESTED/PACKING → badge "Sedang dikirim" (SHIPPED sudah difilter keluar).
+              // Status pra-burn → badge (kartu keluar-vault sudah difilter keluar di atas).
               const ship = nft ? redemptionByNft.get(nft) : undefined;
+              const shipActive = !!ship && !SHIPPED_OUT.has(ship);
               const key = e.kind === "pull" ? `pull-${e.pull.memo}` : `bought-${e.listing.id}`;
               return (
                 <div key={key} className="relative">
@@ -310,11 +329,21 @@ export default function VaultPage() {
                       }
                     />
                   )}
-                  {ship && ship !== "SHIPPED" && (
-                    <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full border border-sky-400/40 bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                      📦 Sedang dikirim
-                    </span>
-                  )}
+                  {shipActive && ship &&
+                    (CC_SHIPPING_ENABLED && NEEDS_ACTION.has(ship) ? (
+                      // Flag ON: status pra-bayar/ttd → ajak user menyelesaikan di /withdraw.
+                      <Link
+                        href="/withdraw"
+                        className="absolute left-2 top-2 z-10 rounded-full border border-yellow-400/50 bg-yellow-500/90 px-2 py-0.5 text-[10px] font-bold text-[#171717] shadow transition hover:brightness-110"
+                      >
+                        📦 Selesaikan kirim
+                      </Link>
+                    ) : (
+                      // Flag OFF (record-only) atau status yang sudah berjalan → badge info biasa.
+                      <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full border border-sky-400/40 bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                        📦 Sedang dikirim
+                      </span>
+                    ))}
                 </div>
               );
             })}

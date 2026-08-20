@@ -10,7 +10,7 @@
 // calls Privy hooks, which require a <PrivyProvider> ancestor).
 
 import { useEffect, useRef } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, getIdentityToken } from "@privy-io/react-auth";
 import {
   useWallets,
   useSignMessage,
@@ -24,6 +24,7 @@ import {
   clearAutoLoginSuppression,
 } from "@/lib/useAuth";
 import { registerPrivySigner } from "@/lib/txSigner";
+import { registerPrivyIdentityToken } from "@/lib/privyIdentity";
 
 export default function PrivyBridge() {
   const { ready, authenticated, logout: privyLogout } = usePrivy();
@@ -50,6 +51,16 @@ export default function PrivyBridge() {
       return signedTransaction;
     });
   }, [wallets, signTransaction]);
+
+  // Publish Privy's identity-token getter for the CC-shipping API calls: those
+  // endpoints need an X-Privy-Identity-Token header (proving WHICH Google user is
+  // calling) on top of our JWT. Registered only while authenticated, and the
+  // cleanup unregisters it on logout so a stale token can't be attached after
+  // sign-out. `getIdentityToken` reads Privy's freshest stored token each call.
+  useEffect(() => {
+    if (!authenticated) return;
+    return registerPrivyIdentityToken(getIdentityToken);
+  }, [authenticated]);
 
   useEffect(() => {
     if (!authenticated) {

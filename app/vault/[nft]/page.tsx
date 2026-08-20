@@ -12,7 +12,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Listing } from "@/lib/market";
-import { getBuybackValue, getMyListings, getMyPacks } from "@/lib/api";
+import {
+  CC_SHIPPING_ENABLED,
+  getBuybackValue,
+  getMyListings,
+  getMyPacks,
+  getMyRedemptions,
+  type CardRedemption,
+} from "@/lib/api";
 import { explorerAddressUrl, pullGradeLabel, type GachaPull } from "@/lib/gacha";
 import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
@@ -20,6 +27,11 @@ import TopNav from "@/components/packs/TopNav";
 import ListForSaleModal from "@/components/packs/ListForSaleModal";
 import BuybackModal from "@/components/packs/BuybackModal";
 import RedeemModal from "@/components/packs/RedeemModal";
+import ShippingFlowModal, {
+  STATUS_LABEL,
+  isActionableShipStatus,
+  isTrackingShipStatus,
+} from "@/components/packs/ShippingFlowModal";
 import { GOLD_GRADIENT, Img } from "@/components/packs/ui";
 import {
   Badge,
@@ -56,19 +68,31 @@ export default function PulledCardPage() {
   const [redeemRequested, setRedeemRequested] = useState(false);
   const [soldBack, setSoldBack] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
+  // Redemption AKTIF untuk kartu ini (kalau ada) → menonaktifkan tombol redeem + menampilkan status.
+  const [redemption, setRedemption] = useState<CardRedemption | null>(null);
+  // Modal alur kirim REAL (flag ON) untuk melanjutkan/melacak satu redemption.
+  const [shipping, setShipping] = useState<{ redemptionId: string; resume: boolean } | null>(null);
 
   useEffect(() => {
     if (!token || !nft) return;
     let alive = true;
-    // Pulls give us the card; listings tell us if THIS card is already for sale.
-    Promise.all([getMyPacks(token), getMyListings(token).catch(() => [] as Listing[])])
-      .then(([packs, listings]) => {
+    // Pulls give us the card; listings tell us if THIS card is already for sale; redemptions tell
+    // us if it's mid-shipment (mematikan aksi redeem + surface status/tracking).
+    Promise.all([
+      getMyPacks(token),
+      getMyListings(token).catch(() => [] as Listing[]),
+      getMyRedemptions(token).catch(() => [] as CardRedemption[]),
+    ])
+      .then(([packs, listings, reds]) => {
         if (!alive) return;
         setPull(packs.find((p) => p.nftAddress === nft) ?? null);
         setListing(
           listings.find(
             (l) => (l.ccNftAddress ?? l.nft?.assetAddress) === nft && l.status === "ACTIVE",
           ) ?? null,
+        );
+        setRedemption(
+          reds.find((r) => r.nftAddress === nft && r.status !== "CANCELED") ?? null,
         );
       })
       .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : String(e)))
@@ -320,10 +344,53 @@ export default function PulledCardPage() {
                     </button>
                   )}
 
-                  {/* Kirim kartu fisik ke rumah (redeem). Record-only: NFT tetap di wallet
-                      sampai admin proses. Disembunyikan kalau kartu sudah dijual balik / dilisting. */}
+                  {/* Kirim kartu fisik ke rumah (redeem). Disembunyikan kalau kartu sudah dijual
+                      balik / dilisting. Kalau kartu sedang dalam proses kirim → tombol redeem diganti
+                      panel status (aksi redeem dinonaktifkan) + tautan lacak/lanjutkan. */}
                   {!soldBack && !listing && listable && (
-                    redeemRequested ? (
+                    CC_SHIPPING_ENABLED && redemption ? (
+                      <div className="mt-3 rounded-2xl border border-sky-400/25 bg-sky-500/[0.06] px-5 py-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[13px] font-semibold text-sky-200">
+                            📦 {STATUS_LABEL[redemption.status]}
+                          </span>
+                          {CC_SHIPPING_ENABLED &&
+                            (isActionableShipStatus(redemption.status) ? (
+                              <button
+                                type="button"
+                                onClick={() => setShipping({ redemptionId: redemption.id, resume: true })}
+                                className="rounded-lg border border-yellow-400/40 bg-yellow-400/[0.1] px-3 py-1.5 text-[12px] font-semibold text-yellow-200 transition hover:bg-yellow-400/[0.18]"
+                              >
+                                Lanjutkan
+                              </button>
+                            ) : isTrackingShipStatus(redemption.status) ? (
+                              <button
+                                type="button"
+                                onClick={() => setShipping({ redemptionId: redemption.id, resume: true })}
+                                className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-1.5 text-[12px] font-semibold text-zinc-200 transition hover:bg-white/[0.1]"
+                              >
+                                Lacak
+                              </button>
+                            ) : null)}
+                        </div>
+                        {redemption.trackingUrls && redemption.trackingUrls.length > 0 && (
+                          <div className="mt-3 flex flex-col gap-2">
+                            {redemption.trackingUrls.map((url, i) => (
+                              <a
+                                key={url}
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="truncate rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-center text-[12px] font-semibold text-zinc-200 transition hover:bg-white/[0.08]"
+                              >
+                                Lacak resi{" "}
+                                {redemption.trackingIds?.[i] ? `· ${redemption.trackingIds[i]}` : `#${i + 1}`} ↗
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : redeemRequested ? (
                       <p className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.06] px-6 py-3.5 text-[13px] font-medium text-emerald-300">
                         📦 Permintaan kirim fisik sudah dibuat — cek riwayat di Vault.
                       </p>
@@ -335,7 +402,7 @@ export default function PulledCardPage() {
                       >
                         Kirim kartu fisik ke rumah
                         <span className="ml-1.5 text-[12px] font-normal text-zinc-500">
-                          · gratis diminta
+                          {CC_SHIPPING_ENABLED ? "· bayar ongkir" : "· gratis diminta"}
                         </span>
                       </button>
                     )
@@ -372,10 +439,27 @@ export default function PulledCardPage() {
           nftAddress={pull.nftAddress}
           cardName={pull.nftName}
           onClose={() => setRedeemOpen(false)}
-          onRequested={() => {
-            setRedeemRequested(true);
+          onRequested={(red) => {
             setRedeemOpen(false);
+            if (CC_SHIPPING_ENABLED) {
+              // Flag ON: lanjut ke alur bayar ongkir → tanda tangan → lacak.
+              setRedemption(red);
+              setShipping({ redemptionId: red.id, resume: false });
+            } else {
+              // Flag OFF: perilaku record-only lama (byte-for-byte).
+              setRedeemRequested(true);
+            }
           }}
+        />
+      )}
+
+      {/* Alur kirim REAL (flag ON): estimate → bayar ongkir → tanda tangan → lacak. */}
+      {CC_SHIPPING_ENABLED && shipping && pull && (
+        <ShippingFlowModal
+          redemptionId={shipping.redemptionId}
+          card={{ name: pull.ccItemName ?? pull.nftName ?? "kartu", image: pull.nftImage }}
+          resume={shipping.resume}
+          onClose={() => setShipping(null)}
         />
       )}
     </div>

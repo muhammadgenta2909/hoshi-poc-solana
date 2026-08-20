@@ -21,14 +21,42 @@ import { Img } from "@/components/packs/ui";
 type View = "Active" | "Complete";
 const VIEWS: readonly View[] = ["Active", "Complete"];
 
+const AMBER = "border-amber-400/30 bg-amber-400/10 text-amber-300";
+const SKY = "border-sky-400/30 bg-sky-400/10 text-sky-300";
+const EMERALD = "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
+const RED = "border-red-400/30 bg-red-400/10 text-red-300";
+
 const STATUS_UI: Record<RedemptionStatus, { label: string; cls: string }> = {
-  REQUESTED: { label: "Diminta", cls: "border-amber-400/30 bg-amber-400/10 text-amber-300" },
-  PACKING: { label: "Dikemas", cls: "border-sky-400/30 bg-sky-400/10 text-sky-300" },
-  SHIPPED: { label: "Dikirim", cls: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" },
-  CANCELED: { label: "Dibatalkan", cls: "border-red-400/30 bg-red-400/10 text-red-300" },
+  REQUESTED: { label: "Diminta", cls: AMBER },
+  AWAITING_PAYMENT: { label: "Menunggu bayar ongkir", cls: AMBER },
+  READY_TO_FUND: { label: "Siap ditandatangani", cls: AMBER },
+  FUNDING: { label: "Menyiapkan", cls: SKY },
+  FUNDED: { label: "Menyiapkan", cls: SKY },
+  BURN_SUBMITTED: { label: "Diproses", cls: SKY },
+  IN_TRANSIT: { label: "Dalam perjalanan", cls: SKY },
+  DELIVERED: { label: "Terkirim", cls: EMERALD },
+  PACKING: { label: "Dikemas", cls: SKY },
+  SHIPPED: { label: "Dikirim", cls: EMERALD },
+  CANCELED: { label: "Dibatalkan", cls: RED },
+  REFUND_DUE: { label: "Refund diproses", cls: AMBER },
+  RECLAIM_DUE: { label: "Perlu ditinjau", cls: AMBER },
+  SHIP_FAILED_POST_BURN: { label: "Perlu bantuan tim", cls: RED },
 };
 
-const ACTIVE_STATUSES: RedemptionStatus[] = ["REQUESTED", "PACKING"];
+// "Diproses" = masih berjalan / butuh tindakan. "Selesai" = DELIVERED / SHIPPED / CANCELED.
+const ACTIVE_STATUSES: RedemptionStatus[] = [
+  "REQUESTED",
+  "AWAITING_PAYMENT",
+  "READY_TO_FUND",
+  "FUNDING",
+  "FUNDED",
+  "BURN_SUBMITTED",
+  "IN_TRANSIT",
+  "PACKING",
+  "REFUND_DUE",
+  "RECLAIM_DUE",
+  "SHIP_FAILED_POST_BURN",
+];
 
 const dt = (s: string) =>
   new Date(s).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric" });

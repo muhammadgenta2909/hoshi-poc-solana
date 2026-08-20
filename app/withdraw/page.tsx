@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import {
   ApiError,
+  CC_SHIPPING_ENABLED,
   addAddress,
   getMyAddresses,
   getMyPacks,
@@ -39,6 +40,12 @@ import {
   SearchIcon,
 } from "@/components/account/ui";
 import { Img } from "@/components/packs/ui";
+import ShippingFlowModal, {
+  readPendingShip,
+  clearPendingShip,
+  isActionableShipStatus,
+  isTrackingShipStatus,
+} from "@/components/packs/ShippingFlowModal";
 
 const TOTAL = 4;
 
@@ -87,6 +94,14 @@ export default function WithdrawPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Kirim-fisik REAL (CC_SHIPPING_ENABLED): modal alur estimate→bayar→TTD→lacak untuk 1 redemption.
+  // Inert saat flag OFF — di-render hanya di dalam guard CC_SHIPPING_ENABLED.
+  const [shipping, setShipping] = useState<
+    { redemptionId: string; card: { name: string; image: string | null } | null; resume: boolean } | null
+  >(null);
+  // Redemption milik user (buat panel "Pengiriman berjalan" + resume). Hanya dipakai saat flag ON.
+  const [redemptions, setRedemptions] = useState<CardRedemption[]>([]);
+
   // ------- load: alamat + kartu pack + redemption aktif (buat exclude yang lagi dikirim) -------
   const load = useCallback(async () => {
     if (!token) return;
@@ -100,6 +115,7 @@ export default function WithdrawPage() {
         getMyRedemptions(token).catch(() => [] as CardRedemption[]),
       ]);
       setAddresses(addrs);
+      setRedemptions(reds);
       setSelectedAddr((cur) =>
         cur && addrs.some((a) => a.id === cur)
           ? cur
@@ -139,11 +155,31 @@ export default function WithdrawPage() {
     void load();
   }, [token, load]);
 
+  // Sepulang dari halaman bayar ongkir (IDRX/Duitku): bersihkan query yang ditempel gateway lalu
+  // resume modal kirim (mode resume → modal poll status & lanjut ke tanda tangan). Hanya saat flag
+  // ON; saat OFF ini no-op (modal kirim tak pernah ada). Pola sama dgn /vault & /deposit.
+  useEffect(() => {
+    if (!CC_SHIPPING_ENABLED) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("merchantOrderId") || params.has("resultCode") || params.has("reference")) {
+      window.history.replaceState(null, "", "/withdraw");
+    }
+    const pending = readPendingShip();
+    if (pending) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect */
+      setShipping({ redemptionId: pending.redemptionId, card: null, resume: true });
+    }
+  }, []);
+
   const back = () => setStep((s) => Math.max(1, s - 1));
   const next = () => setStep((s) => Math.min(TOTAL, s + 1));
 
   const toggle = (nftAddress: string) =>
     setSelected((prev) => {
+      // Alur kirim REAL = 1 kartu per pengiriman (potongan pertama) → pilih tunggal, seperti radio.
+      if (CC_SHIPPING_ENABLED) {
+        return prev.has(nftAddress) ? new Set() : new Set([nftAddress]);
+      }
       const nextSet = new Set(prev);
       if (nextSet.has(nftAddress)) nextSet.delete(nftAddress);
       else nextSet.add(nftAddress);
@@ -164,7 +200,34 @@ export default function WithdrawPage() {
   );
   const activeAddr = addresses.find((a) => a.id === selectedAddr) ?? null;
 
+  // Alur kirim REAL (flag ON): buat redemption untuk 1 kartu terpilih, lalu buka modal
+  // estimate→bayar→TTD→lacak. Kartu tetap aman di vault sampai user menandatangani burn.
+  const startShipping = async () => {
+    if (!token || !selectedAddr || selectedCards.length !== 1 || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const card = selectedCards[0];
+      const red = await requestRedemption(
+        { nftAddress: card.nftAddress, shippingAddressId: selectedAddr },
+        token,
+      );
+      setShipping({ redemptionId: red.id, card, resume: false });
+    } catch (e) {
+      setSubmitError(
+        e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Gagal membuat permintaan.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submit = async () => {
+    // Flag ON → alur berbayar+burn (1 kartu). Flag OFF → record-only lama (byte-for-byte).
+    if (CC_SHIPPING_ENABLED) {
+      await startShipping();
+      return;
+    }
     if (!token || !selectedAddr || selectedCards.length === 0 || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
@@ -234,6 +297,65 @@ export default function WithdrawPage() {
           {flash}
         </div>
       )}
+
+      {/* Pengiriman yang sedang berjalan (flag ON): lanjutkan yang belum lunas/ttd, atau lacak yang
+          sudah dikirim. Juga jalur resume kalau localStorage hilang (mode privat / URL balik beda). */}
+      {CC_SHIPPING_ENABLED &&
+        (() => {
+          const active = redemptions.filter(
+            (r) =>
+              r.status !== "CANCELED" &&
+              (isActionableShipStatus(r.status) || isTrackingShipStatus(r.status)),
+          );
+          if (active.length === 0) return null;
+          return (
+            <Panel className="mt-5 p-4 sm:p-5">
+              <SectionTitle>Pengiriman berjalan</SectionTitle>
+              <div className="mt-3 flex flex-col gap-2.5">
+                {active.map((r) => {
+                  const needsAction = isActionableShipStatus(r.status);
+                  return (
+                    <div
+                      key={r.id}
+                      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-2.5"
+                    >
+                      <Img
+                        src={r.cardImage ?? "/card-back.svg"}
+                        alt=""
+                        className="h-12 w-[36px] shrink-0 rounded object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-zinc-100">
+                          {r.cardName}
+                        </p>
+                        <p className="truncate text-[11px] text-zinc-500">
+                          {needsAction ? "Perlu dilanjutkan" : "Sedang dikirim"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShipping({
+                            redemptionId: r.id,
+                            card: { name: r.cardName, image: r.cardImage },
+                            resume: true,
+                          })
+                        }
+                        className={`shrink-0 rounded-xl border px-3 py-2 text-[12px] font-semibold transition ${
+                          needsAction
+                            ? "border-yellow-400/40 bg-yellow-400/[0.1] text-yellow-200 hover:bg-yellow-400/[0.18]"
+                            : "border-white/12 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        {needsAction ? "Lanjutkan" : "Lacak"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+          );
+        })()}
 
       <div className="mt-6">
         <h2 className="text-lg font-semibold text-white sm:text-xl">{STEP_TITLE[step]}</h2>
@@ -468,24 +590,60 @@ export default function WithdrawPage() {
           <>
             <Panel className="mt-4 p-6">
               <SectionTitle>Konfirmasi & kirim</SectionTitle>
-              <p className="mt-3 text-[14px] leading-relaxed text-zinc-400">
-                Kami akan memproses pengiriman <span className="font-semibold text-zinc-200">{selectedCards.length} kartu</span>{" "}
-                ke <span className="font-semibold text-zinc-200">{activeAddr?.city ?? "alamatmu"}</span>. Kartu tetap
-                aman di vault sampai kami packing — statusnya bisa kamu pantau di Aktivitas.
-              </p>
+              {CC_SHIPPING_ENABLED ? (
+                <p className="mt-3 text-[14px] leading-relaxed text-zinc-400">
+                  Kamu akan mengirim{" "}
+                  <span className="font-semibold text-zinc-200">
+                    {selectedCards[0]?.name ?? "1 kartu"}
+                  </span>{" "}
+                  ke <span className="font-semibold text-zinc-200">{activeAddr?.city ?? "alamatmu"}</span>.
+                  Langkah berikutnya: <span className="text-zinc-200">hitung ongkir → bayar ongkir →
+                  tanda tangani pengiriman</span>. Kartu tetap aman di vault sampai kamu tanda tangan.
+                </p>
+              ) : (
+                <p className="mt-3 text-[14px] leading-relaxed text-zinc-400">
+                  Kami akan memproses pengiriman <span className="font-semibold text-zinc-200">{selectedCards.length} kartu</span>{" "}
+                  ke <span className="font-semibold text-zinc-200">{activeAddr?.city ?? "alamatmu"}</span>. Kartu tetap
+                  aman di vault sampai kami packing — statusnya bisa kamu pantau di Aktivitas.
+                </p>
+              )}
               {submitError && <p className="mt-3 text-[13px] text-red-400">{submitError}</p>}
             </Panel>
             <BottomBar
               left={<GhostButton onClick={back} disabled={submitting}>Kembali</GhostButton>}
               right={
                 <PrimaryButton onClick={submit} disabled={submitting || selectedCards.length === 0}>
-                  {submitting ? "Mengirim…" : "Kirim sekarang"}
+                  {submitting
+                    ? CC_SHIPPING_ENABLED
+                      ? "Menyiapkan…"
+                      : "Mengirim…"
+                    : CC_SHIPPING_ENABLED
+                      ? "Lanjut ke ongkir →"
+                      : "Kirim sekarang"}
                 </PrimaryButton>
               }
             />
           </>
         )}
       </div>
+
+      {/* Modal alur kirim REAL (flag ON): estimate → bayar ongkir → tanda tangan → lacak. Saat OFF
+          `shipping` selalu null (submit tetap record-only) → tak pernah ter-render. */}
+      {CC_SHIPPING_ENABLED && shipping && (
+        <ShippingFlowModal
+          redemptionId={shipping.redemptionId}
+          card={shipping.card}
+          resume={shipping.resume}
+          onFinished={() => void load()}
+          onClose={() => {
+            clearPendingShip();
+            setShipping(null);
+            setSelected(new Set());
+            setStep(1);
+            void load();
+          }}
+        />
+      )}
     </AccountShell>
   );
 }
