@@ -137,7 +137,7 @@ export default function PayWithRupiah({
   );
 }
 
-type Stage = "creating" | "awaiting" | "fulfilling" | "done" | "error";
+type Stage = "creating" | "checking" | "awaiting" | "fulfilling" | "done" | "error";
 
 // Exported so the Rip Pack payment-method chooser can open the rupiah flow
 // directly (mounting this creates the IDRX order). The default-export button
@@ -175,10 +175,12 @@ export function PayModal({
   const { setVisible } = useWalletConnect();
   const { publicKey } = useWallet();
   const router = useRouter();
-  // Resume (balik dari halaman bayar) langsung mulai di "fulfilling" — bukan "creating" —
-  // supaya tidak flash "Membuat tagihan…" padahal tagihannya sudah ada & sudah dibayar.
+  // Resume (balik dari halaman bayar) mulai di "checking" — BUKAN "fulfilling" — supaya TIDAK
+  // flash "Pembayaran diterima ✓" padahal statusnya belum tentu PAID (mis. user klik Back tanpa
+  // membayar). "checking" cuma spinner netral; resume effect di bawah langsung mengoreksi ke stage
+  // yang benar (awaiting kalau PENDING, fulfilling kalau PAID/FULFILLING) begitu order ter-fetch.
   const [stage, setStage] = useState<Stage>(
-    resumeOrderId ? "fulfilling" : "creating",
+    resumeOrderId ? "checking" : "creating",
   );
   const [order, setOrder] = useState<PaymentOrder | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -427,6 +429,13 @@ export function PayModal({
           <Center>
             <Spinner />
             <p className="text-sm text-zinc-400">Membuat tagihan…</p>
+          </Center>
+        )}
+
+        {stage === "checking" && (
+          <Center>
+            <Spinner />
+            <p className="text-sm text-zinc-400">Memeriksa status pembayaran…</p>
           </Center>
         )}
 
