@@ -252,6 +252,9 @@ export type Profile = {
   website: string | null;
   phoneCountryCode: string | null;
   phoneNumber: string | null;
+  notifyOffers: boolean;
+  notifyOfferThreshold: number;
+  notifyMessages: boolean;
   createdAt: string;
 };
 
@@ -260,17 +263,21 @@ export const getProfile = (token: string) =>
     headers: { authorization: `Bearer ${token}` },
   });
 
-/** Any subset of the editable profile fields. For bio/twitter/website/phone an
- *  empty string CLEARS the field (stored as null); displayName is MANDATORY
+/** Any subset of the editable profile fields. For bio/twitter/website/phone/email
+ *  an empty string CLEARS the field (stored as null); displayName is MANDATORY
  *  server-side (1–32 chars) and must never be sent empty. Omitted keys are left
  *  untouched. */
 export type UpdateProfileInput = Partial<{
   displayName: string;
+  email: string;
   bio: string;
   twitter: string;
   website: string;
   phoneCountryCode: string;
   phoneNumber: string;
+  notifyOffers: boolean;
+  notifyOfferThreshold: number;
+  notifyMessages: boolean;
 }>;
 
 /** Update your own profile (rename pencil sends { displayName } alone; the
