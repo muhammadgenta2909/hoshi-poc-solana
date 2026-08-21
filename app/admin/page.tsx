@@ -41,6 +41,73 @@ function CryptoChip({ label }: { label: string }) {
   );
 }
 
+/** Alamat wallet escrow P2P (publik) — dibaca on-chain buat pantau gas SOL-nya. */
+const ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_ADDRESS ?? "";
+
+const STATUS_SHORT: Record<AdminTreasury["status"], string> = {
+  healthy: "Sehat",
+  low: "Menipis",
+  critical: "Kritis",
+  unknown: "—",
+};
+
+/** Lampu status SOL (gas): ambang kecil karena transfer mpl-core murah. */
+function solStatus(sol: number | null): AdminTreasury["status"] {
+  if (sol === null) return "unknown";
+  if (sol < 0.005) return "critical";
+  if (sol < 0.02) return "low";
+  return "healthy";
+}
+
+function StatusPill({ status }: { status: AdminTreasury["status"] }) {
+  const ui = TREASURY_STATUS_UI[status];
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white/[0.05] px-2.5 py-1 text-[11px] font-medium text-zinc-300">
+      <span className="h-2 w-2 rounded-full" style={{ background: ui.dot }} />
+      {STATUS_SHORT[status]}
+    </span>
+  );
+}
+
+/** Kartu wallet operasional (Treasury / Escrow) — stat tile per aset, pill status. */
+function WalletCard({
+  title,
+  subtitle,
+  status,
+  rows,
+  note,
+}: {
+  title: string;
+  subtitle: string;
+  status: AdminTreasury["status"];
+  rows: { icon: string; label: string; value: string; hint: string }[];
+  note?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[13px] font-semibold text-zinc-100">{title}</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">{subtitle}</p>
+        </div>
+        <StatusPill status={status} />
+      </div>
+      <div className={`grid gap-2 ${rows.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+        {rows.map((r) => (
+          <div key={r.label} className="rounded-lg bg-white/[0.025] px-3 py-2.5">
+            <p className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <span aria-hidden>{r.icon}</span> {r.label}
+            </p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-white">{r.value}</p>
+            <p className="mt-0.5 text-[10px] leading-tight text-zinc-600">{r.hint}</p>
+          </div>
+        ))}
+      </div>
+      {note && <p className="mt-2.5 text-[11px] text-amber-400/80">{note}</p>}
+    </div>
+  );
+}
+
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
@@ -60,6 +127,7 @@ export default function AdminDashboardPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [daily, setDaily] = useState<AdminDailyStats | null>(null);
   const [treasury, setTreasury] = useState<AdminTreasury | null>(null);
+  const [escrowSol, setEscrowSol] = useState<number | null>(null);
   const [finance, setFinance] = useState<AdminFinance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +155,33 @@ export default function AdminDashboardPage() {
     load();
     return () => { alive = false; };
   }, [token]);
+
+  // Saldo SOL wallet escrow (gas transfer kartu P2P) — dibaca on-chain langsung (data publik,
+  // read-only), jadi tak perlu endpoint backend baru. null = alamat/RPC belum di-set atau gagal baca.
+  useEffect(() => {
+    const rpc = process.env.NEXT_PUBLIC_RPC_URL;
+    if (!ESCROW_ADDRESS || !rpc) return;
+    let alive = true;
+    fetch(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getBalance",
+        params: [ESCROW_ADDRESS],
+      }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (alive && typeof j?.result?.value === "number")
+          setEscrowSol(j.result.value / 1_000_000_000);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   if (loading) return <p className="py-12 text-center text-sm text-zinc-500">Loading stats…</p>;
   if (error) return (
@@ -193,39 +288,68 @@ export default function AdminDashboardPage() {
         ))}
       </div>
 
-      {/* BLOK 3 — kripto operasional (kecil, redup). SIMULASI di staging → tanpa angka $ palsu. */}
+      {/* BLOK 3 — Kripto Operasional: monitoring Treasury (USDC modal + SOL gas) & Escrow (SOL gas). */}
       {treasury && (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.015] px-5 py-4">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[12px] font-semibold text-zinc-400">
-              Kripto operasional — buat beli kartu CC &amp; gas (pengeluaran, bukan pemasukan)
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-zinc-200">Kripto Operasional</h3>
+            <p className="mt-0.5 text-[12px] leading-snug text-zinc-500">
+              Buat beli kartu CC &amp; bayar gas jaringan —{" "}
+              <span className="text-zinc-400">pengeluaran, bukan pemasukan</span>. Pantau &amp; isi ulang sebelum habis.
             </p>
-            {!treasury.simulated && treasury.configured && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.05] px-2.5 py-0.5 text-[11px] text-zinc-300">
-                <span className="h-2 w-2 rounded-full" style={{ background: TREASURY_STATUS_UI[treasury.status].dot }} />
-                {TREASURY_STATUS_UI[treasury.status].label}
-              </span>
-            )}
           </div>
+
           {treasury.simulated ? (
             <div className="flex flex-wrap items-center gap-2 text-[12px]">
               <CryptoChip label="Modal beli kartu — USDC" />
               <CryptoChip label="Gas jaringan — SOL" />
               <span className="text-zinc-600">Angka kripto disimulasi di staging — bukan saldo asli, abaikan.</span>
             </div>
-          ) : treasury.configured ? (
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-[13px]">
-              <span className="text-zinc-400">
-                Modal beli kartu (USDC): <span className="font-semibold text-zinc-200">${(treasury.usdc ?? 0).toFixed(2)}</span>
-              </span>
-              <span className="text-zinc-400">
-                Gas (SOL): <span className="font-semibold text-zinc-200">{(treasury.sol ?? 0).toFixed(3)}</span>
-              </span>
-            </div>
           ) : (
-            <p className="text-[12px] text-zinc-600">
-              Saldo kripto belum terbaca (cek <code className="text-zinc-500">SOLANA_RPC_URL</code> / <code className="text-zinc-500">HOSHI_TREASURY_ADDRESS</code>).
-            </p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <WalletCard
+                title="Treasury"
+                subtitle="Mesin belanja — beli kartu/pack di CollectorCrypt"
+                status={treasury.configured ? treasury.status : "unknown"}
+                rows={[
+                  {
+                    icon: "💵",
+                    label: "Modal (USDC)",
+                    value: treasury.configured ? `$${(treasury.usdc ?? 0).toFixed(2)}` : "—",
+                    hint: "nalangin beli kartu/pack",
+                  },
+                  {
+                    icon: "⛽",
+                    label: "Gas (SOL)",
+                    value: treasury.configured ? (treasury.sol ?? 0).toFixed(3) : "—",
+                    hint: "tiap transaksi + mint",
+                  },
+                ]}
+                note={
+                  treasury.configured
+                    ? undefined
+                    : "Saldo belum terbaca (cek SOLANA_RPC_URL / HOSHI_TREASURY_ADDRESS)."
+                }
+              />
+              <WalletCard
+                title="Escrow (P2P)"
+                subtitle="Nyimpen kartu penjual selama dijual antar user"
+                status={solStatus(escrowSol)}
+                rows={[
+                  {
+                    icon: "⛽",
+                    label: "Gas (SOL)",
+                    value: escrowSol === null ? "—" : escrowSol.toFixed(3),
+                    hint: "transfer kartu ke pembeli (murah)",
+                  },
+                ]}
+                note={
+                  ESCROW_ADDRESS
+                    ? "Cuma butuh SOL (gas) — nggak nyimpen USDC."
+                    : "Alamat escrow belum di-set (NEXT_PUBLIC_ESCROW_ADDRESS)."
+                }
+              />
+            </div>
           )}
         </div>
       )}
