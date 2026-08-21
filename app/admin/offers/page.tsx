@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAdminAuth } from "@/lib/adminAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import { formatIdr } from "@/components/packs/ui";
 import { ConfirmDialog } from "@/components/account/ui";
 import Pagination from "@/components/admin/Pagination";
@@ -49,6 +50,8 @@ const STATUS_TABS: { label: string; value: string }[] = [
   { label: "Rejected", value: "REJECTED" },
   { label: "Cancelled", value: "CANCELED" },
 ];
+// Nilai tab yang sah untuk persist di URL (?status=…) — refresh/back tetap di tab yang dipilih.
+const STATUS_VALUES = STATUS_TABS.map((t) => t.value);
 
 function shortAddr(a: string | null): string {
   if (!a) return "—";
@@ -71,7 +74,8 @@ export default function AdminOffersPage() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  // Tab status persisten di URL (?status=…) → refresh/back/forward memulihkan tab yang aktif.
+  const [status, setStatus] = useTabParam<string>("", STATUS_VALUES, "status");
   const [processing, setProcessing] = useState<string | null>(null);
   const limit = 20;
 

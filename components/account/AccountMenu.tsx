@@ -31,6 +31,7 @@ import {
   DepositIcon,
   WithdrawIcon,
   HistoryIcon,
+  BoxIcon,
   LogoutIcon,
 } from "./ui";
 
@@ -49,10 +50,17 @@ export default function AccountMenu() {
     { label: "Messages", href: "/messages", icon: <MessageIcon className={iconCls} /> },
     { label: "Swap", href: "/swap", icon: <SwapArrowsIcon className={iconCls} /> },
   ];
-  const SHIPMENTS: NavItem[] = [
+  // DUA grup terpisah biar "tarik DUIT" vs "tarik/kirim KARTU" nggak ketuker.
+  // Balance = Rupiah (isi saldo + tarik saldo ke bank/e-wallet). "Cash Out" SELALU tampil (beda dari
+  // chip "Tarik →" di panel saldo yang cuma muncul saat saldo>0) supaya WD duit gampang ketemu.
+  const BALANCE_NAV: NavItem[] = [
     { label: "Deposit", href: "/deposit", icon: <DepositIcon className={iconCls} />, tint: "text-emerald-400" },
-    { label: "Withdraw", href: "/withdraw", icon: <WithdrawIcon className={iconCls} />, tint: "text-amber-400" },
-    { label: "Withdraw History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Cash Out", href: "/tarik-saldo", icon: <WithdrawIcon className={iconCls} />, tint: "text-[#F2C101]" },
+  ];
+  // Physical Cards = kirim/redeem KARTU FISIK ke rumah (bukan duit).
+  const CARDS_NAV: NavItem[] = [
+    { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];
 
   const { disconnect } = useWallet();
@@ -160,9 +168,18 @@ export default function AccountMenu() {
 
           <div className="border-t border-white/[0.06] p-2">
             <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
-              My shipments
+              Balance
             </p>
-            {SHIPMENTS.map((n) => (
+            {BALANCE_NAV.map((n) => (
+              <MenuLink key={n.label} item={n} onNavigate={() => setOpen(false)} />
+            ))}
+          </div>
+
+          <div className="border-t border-white/[0.06] p-2">
+            <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
+              Physical Cards
+            </p>
+            {CARDS_NAV.map((n) => (
               <MenuLink key={n.label} item={n} onNavigate={() => setOpen(false)} />
             ))}
           </div>
@@ -283,28 +300,25 @@ export function WalletIdentityPanel({ address }: { address: string }) {
           it was pure fiction. */}
       <div className="mt-2 space-y-1 rounded-xl bg-white/[0.03] p-2.5">
         <BalanceRow label="SOL" value={sol === null ? "…" : formatSol(sol)} dot="#9945FF" />
-        <BalanceRow label="USDC" value={usdc === null ? "…" : formatUsdc(usdc)} dot="#2775CA" />
-        {/* Saldo JUAL (IDRX) — hasil jual kartu P2P. Diberi aksen EMAS + latar tipis supaya menonjol
-            sebagai "pemasukanmu" (bukan sekadar baris datar seperti saldo wallet). Hanya muncul bila
-            ada saldo (> 0), sama seperti pill di /vault. */}
-        {idrx != null && idrx > 0 && (
-          <Link
-            href="/tarik-saldo"
-            className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-[#F2C101]/30 bg-gradient-to-r from-[#F2C101]/[0.12] to-transparent px-2 py-1.5 transition hover:from-[#F2C101]/[0.2]"
-            title="Tarik saldo ke bank / e-wallet"
-          >
-            <span
-              className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-bold text-[#171717]"
-              style={{ background: "linear-gradient(180deg,#FBB222,#FFF600)" }}
-            >
-              Rp
-            </span>
-            <span className="flex-1 tabular-nums text-[13px] font-bold text-[#F7D046]">
-              {idrFmt.format(idrx)}
-            </span>
+        {/* Saldo JUAL in-app (IDRX, Rupiah hasil jual kartu P2P) — SELALU tampil sebagai baris saldo
+            (sejajar SOL/USDC, di antara keduanya sesuai permintaan), nilai EMAS biar menonjol sebagai
+            "pemasukanmu". Seluruh baris bisa diklik → /tarik-saldo (WD ke bank / e-wallet). CTA eksplisit
+            ada di menu "Cash Out". Rp 0 tetap ditampilkan supaya user tahu ada saldo jual yang bisa ditarik. */}
+        <Link
+          href="/tarik-saldo"
+          title="Saldo jual (IDRX) — tarik ke bank / e-wallet"
+          className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 transition hover:bg-[#F2C101]/[0.08]"
+        >
+          <span className="h-4 w-4 shrink-0 rounded-full" style={{ background: "#F2C101" }} />
+          <span className="flex-1 tabular-nums text-[13px] font-semibold text-[#F7D046]">
+            {idrx === null ? "…" : `Rp ${idrFmt.format(idrx)}`}
+          </span>
+          {idrx != null && idrx > 0 && (
             <span className="text-[11px] font-medium text-[#F2C101]/80">Tarik →</span>
-          </Link>
-        )}
+          )}
+          <span className="text-[12px] text-zinc-500">IDRX</span>
+        </Link>
+        <BalanceRow label="USDC" value={usdc === null ? "…" : formatUsdc(usdc)} dot="#2775CA" />
       </div>
       {copied && <p className="mt-2 text-center text-[11px] text-emerald-400">Address copied</p>}
     </>

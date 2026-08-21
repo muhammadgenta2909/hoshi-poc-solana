@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAdminAuth } from "@/lib/adminAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import {
   getAdminRedemptions,
   updateRedemptionStatus,
@@ -43,6 +44,8 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "CANCELED", label: "Dibatalkan" },
   { key: "", label: "Semua" },
 ];
+// Nilai tab yang sah untuk persist di URL (?status=…) — refresh/back tetap di tab yang dipilih.
+const FILTER_KEYS = FILTERS.map((f) => f.key);
 
 const dt = (s: string) =>
   new Date(s).toLocaleString("id-ID", {
@@ -55,7 +58,8 @@ const dt = (s: string) =>
 export default function AdminRedemptionsPage() {
   const { token } = useAdminAuth();
   const [rows, setRows] = useState<AdminRedemption[]>([]);
-  const [filter, setFilter] = useState<string>("REQUESTED");
+  // Tab status persisten di URL (?status=…) → refresh/back/forward memulihkan tab yang aktif.
+  const [filter, setFilter] = useTabParam<string>("REQUESTED", FILTER_KEYS, "status");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

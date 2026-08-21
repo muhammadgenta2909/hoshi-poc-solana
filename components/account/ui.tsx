@@ -755,6 +755,14 @@ export const HistoryIcon = (p: IP) => (
     <path d="M12 8v4l3 2" />
   </S>
 );
+// Paket/kotak — dipakai "Ship Card" (kirim kartu FISIK), biar beda jelas dari "Cash Out" (WithdrawIcon = tarik duit).
+export const BoxIcon = (p: IP) => (
+  <S {...p}>
+    <path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" />
+    <path d="M3 8l9 5 9-5" />
+    <path d="M12 13v8" />
+  </S>
+);
 export const LogoutIcon = (p: IP) => (
   <S {...p}>
     <path d="M15 12H4" />
