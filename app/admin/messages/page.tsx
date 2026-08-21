@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAdminAuth } from "@/lib/adminAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import Select from "@/components/admin/Select";
 import Pagination from "@/components/admin/Pagination";
 import {
@@ -353,9 +354,13 @@ function SupportTab({ token }: { token: string }) {
 
 /* ================================== Page ================================== */
 
+// Tab yang sah untuk persist di URL (?tab=…) → refresh/back tetap di tab yang dipilih.
+const MESSAGE_TABS: readonly ("support" | "contact")[] = ["support", "contact"];
+
 export default function AdminMessagesPage() {
   const { token } = useAdminAuth();
-  const [tab, setTab] = useState<"support" | "contact">("support");
+  // Tab aktif persisten di URL (?tab=…) → refresh/back/forward memulihkan tab yang dibuka.
+  const [tab, setTab] = useTabParam<"support" | "contact">("support", MESSAGE_TABS, "tab");
 
   return (
     <div>

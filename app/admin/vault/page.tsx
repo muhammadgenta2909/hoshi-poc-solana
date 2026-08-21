@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAdminAuth } from "@/lib/adminAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import {
   getAdminVaultItems,
   STORAGE_PROVIDERS,
@@ -25,6 +26,9 @@ const STATUS_STYLE: Record<string, string> = {
   REDEEMED: "text-zinc-400 bg-zinc-400/10",
 };
 
+// Nilai tab status yang sah untuk persist di URL (?status=…) — "" = semua.
+const STATUS_VALUES = ["", ...VAULT_STATUSES];
+
 function shortAddr(a: string | null): string {
   if (!a) return "—";
   if (a.length <= 12) return a;
@@ -38,7 +42,8 @@ export default function AdminVaultPage() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  // Tab status persisten di URL (?status=…) → refresh/back/forward memulihkan tab yang aktif.
+  const [status, setStatus] = useTabParam<string>("", STATUS_VALUES, "status");
   const [provider, setProvider] = useState("");
 
   const fetchData = useCallback(async () => {

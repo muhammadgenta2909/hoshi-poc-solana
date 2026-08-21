@@ -20,6 +20,7 @@ import {
   WarningIcon,
 } from "@/components/account/ui";
 import { useAuth } from "@/lib/useAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import {
   getSupportThreads,
   getSupportThread,
@@ -37,6 +38,8 @@ import {
 } from "@/lib/marketMessaging";
 
 type Channel = "support" | "marketplace";
+// Channel yang sah untuk persist di URL (?tab=…) → refresh/back tetap di channel yang dipilih.
+const CHANNELS: readonly Channel[] = ["support", "marketplace"];
 
 // Module-level (bukan didefinisikan saat render) — jaga identitas komponen stabil.
 function Tab({
@@ -72,7 +75,8 @@ function Tab({
 
 export default function MessagesPage() {
   const { token, hydrated, login } = useAuth();
-  const [channel, setChannel] = useState<Channel>("support");
+  // Channel aktif persisten di URL (?tab=…) → refresh/back/forward memulihkan channel yang dibuka.
+  const [channel, setChannel] = useTabParam<Channel>("support", CHANNELS, "tab");
   const [error, setError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
 

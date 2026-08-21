@@ -17,6 +17,7 @@ import {
   getPaymentOrder,
   isTerminalPaymentStatus,
   topUpBalance,
+  type PaymentOrder,
   type PaymentStatus,
 } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
@@ -28,7 +29,10 @@ const PRESETS = [50_000, 100_000, 250_000, 500_000];
 const MIN_TOPUP = 20_000;
 const POLL_MS = 4_000;
 
-type Stage = "idle" | "creating" | "polling" | "done" | "error";
+// "checking" = balik dari halaman bayar, sedang MENGECEK status (spinner netral, BUKAN klaim sukses).
+// "awaiting" = order ternyata masih PENDING (belum dibayar) → tampilkan layar bayar, bukan sukses.
+// "polling"  = order BENAR-BENAR sudah dibayar (PAID/FULFILLING), saldo sedang disiapkan.
+type Stage = "idle" | "creating" | "checking" | "awaiting" | "polling" | "done" | "error";
 
 function terminalMessage(status: PaymentStatus): string {
   if (status === "EXPIRED") return "Pembayaran kedaluwarsa. Silakan ulangi.";
@@ -45,7 +49,11 @@ export default function DepositPage() {
   const [stage, setStage] = useState<Stage>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [creditedIdr, setCreditedIdr] = useState<number | null>(null);
+  // Order yang di-resume (dipakai layar "awaiting": nominal + tombol buka halaman bayar yang SAMA).
+  const [order, setOrder] = useState<PaymentOrder | null>(null);
   const resumedRef = useRef(false);
+  // id interval poll resume, supaya tombol "Isi nominal lain" bisa menghentikannya lalu balik ke form.
+  const pollRef = useRef<number | null>(null);
   // Token TERBARU via ref. Effect resume ber-deps [] jalan SEKALI saat mount — sering SEBELUM token
   // ter-hidrasi dari storage, jadi menutupnya di closure = token basi (null) selamanya → tiap tick
   // jatuh ke login() yang di background gagal/menggantung → poll tak pernah query order → loading
@@ -86,8 +94,13 @@ export default function DepositPage() {
     }
     if (!pending) return;
     resumedRef.current = true;
+    // Balik dari halaman bayar: JANGAN langsung klaim sukses. Mulai netral "checking" (cuma cek
+    // status). Tick pertama mengoreksi ke stage yang benar begitu order ter-fetch: "done" kalau
+    // FULFILLED, "polling" ("Pembayaran diproses ✓") kalau PAID/FULFILLING, "awaiting" (layar bayar)
+    // kalau masih PENDING — mis. user klik Back tanpa membayar. Tanpa ini order PENDING salah tampil
+    // "Pembayaran diproses ✓" padahal uangnya belum masuk (false success di halaman uang).
     /* eslint-disable-next-line react-hooks/set-state-in-effect */
-    setStage("polling");
+    setStage("checking");
 
     let alive = true;
     const clear = () => {
@@ -102,25 +115,35 @@ export default function DepositPage() {
       if (!t) return; // token belum ter-hidrasi → lewati; tick berikutnya coba lagi (JANGAN pop login
       //                  di background poll — itu yang bikin loading abadi saat token sesaat null).
       try {
-        const order = await getPaymentOrder(pending as string, t);
+        const fetched = await getPaymentOrder(pending as string, t);
         if (!alive) return;
-        if (order.status === "FULFILLED") {
-          clearInterval(interval);
+        setOrder(fetched);
+        if (fetched.status === "FULFILLED") {
+          window.clearInterval(interval);
           clear();
-          setCreditedIdr(order.priceIdr);
+          setCreditedIdr(fetched.priceIdr);
           setStage("done");
           void refreshBalance();
-        } else if (isTerminalPaymentStatus(order.status)) {
-          clearInterval(interval);
+        } else if (isTerminalPaymentStatus(fetched.status)) {
+          window.clearInterval(interval);
           clear();
-          setErrorMsg(terminalMessage(order.status));
+          setErrorMsg(terminalMessage(fetched.status));
           setStage("error");
+        } else if (fetched.status === "PAID" || fetched.status === "FULFILLING") {
+          // Benar-benar sudah dibayar, saldo sedang disiapkan → "diproses ✓"; poll lanjut ke FULFILLED.
+          setStage("polling");
+        } else {
+          // PENDING = order dibuat tapi BELUM dibayar (klik Back tanpa menuntaskan bayar / VA belum
+          // ditransfer). JANGAN klaim sukses — tampilkan layar bayar (awaiting) memakai paymentUrl
+          // yang SAMA (bukan order baru) → nol risiko bayar dobel; poll tetap menangkap begitu lunas.
+          setStage("awaiting");
         }
       } catch {
         /* transien — terus poll; status terminal yang menghentikan */
       }
     };
     const interval = window.setInterval(() => void tick(), POLL_MS);
+    pollRef.current = interval;
     void tick();
     return () => {
       alive = false;
@@ -128,6 +151,23 @@ export default function DepositPage() {
     };
     // token/login/refreshBalance dibaca saat fire; sekali-jalan dijaga resumedRef.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Tinggalkan order PENDING yang di-resume: hentikan poll, lupakan order, balik ke form isi-saldo.
+  // Callback backend tetap mengkredit kalau ternyata user jadi membayar setelah ini.
+  const leaveResume = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    try {
+      localStorage.removeItem(PENDING_TOPUP_KEY);
+    } catch {
+      /* ignore */
+    }
+    setOrder(null);
+    setErrorMsg(null);
+    setStage("idle");
   }, []);
 
   const submit = useCallback(async () => {
@@ -245,13 +285,57 @@ export default function DepositPage() {
               </Link>
             </div>
           </div>
-        ) : stage === "polling" ? (
+        ) : stage === "checking" ? (
+          /* Balik dari halaman bayar → cek status dulu. Netral: TIDAK mengklaim sukses. */
           <div className="mt-6 flex flex-col items-center gap-3 py-8 text-center">
             <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/25 border-t-yellow-400" />
-            <p className="text-sm font-medium text-emerald-400">Pembayaran diproses ✓</p>
+            <p className="text-sm text-zinc-400">Memeriksa status pembayaran…</p>
+          </div>
+        ) : stage === "polling" ? (
+          /* Hanya untuk order yang BENAR-BENAR sudah dibayar (PAID/FULFILLING). */
+          <div className="mt-6 flex flex-col items-center gap-3 py-8 text-center">
+            <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/25 border-t-yellow-400" />
+            <p className="text-sm font-medium text-emerald-400">Pembayaran diterima ✓</p>
             <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
               Lagi dikonfirmasi — biasanya 1–3 menit. Saldo otomatis update di sini.
             </p>
+          </div>
+        ) : stage === "awaiting" ? (
+          /* Order masih PENDING (belum dibayar) → layar bayar, BUKAN layar sukses. */
+          <div className="mt-6 flex flex-col items-center gap-4 py-6 text-center">
+            <p className="text-sm text-zinc-300">
+              Isi saldo{" "}
+              <span className="font-semibold text-white">
+                Rp {idr.format(order?.priceIdr ?? 0)}
+              </span>
+            </p>
+            <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+              Pembayaran belum selesai. Buka lagi halaman pembayaran untuk menuntaskannya, atau isi
+              nominal lain.
+            </p>
+            {order?.paymentUrl && (
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = order.paymentUrl as string;
+                }}
+                className="w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105"
+                style={{ backgroundImage: GOLD }}
+              >
+                Buka Halaman Pembayaran ↗
+              </button>
+            )}
+            <p className="flex items-center gap-2 text-xs text-zinc-500">
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/25 border-t-yellow-400" />
+              Menunggu pembayaran…
+            </p>
+            <button
+              type="button"
+              onClick={leaveResume}
+              className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2 text-[13px] font-semibold text-zinc-300 transition hover:bg-white/10"
+            >
+              Isi nominal lain
+            </button>
           </div>
         ) : (
           <>

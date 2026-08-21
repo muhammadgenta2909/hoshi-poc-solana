@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getMyRedemptions, type CardRedemption, type RedemptionStatus } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import {
   AccountShell,
   Panel,
@@ -63,7 +64,8 @@ const dt = (s: string) =>
 
 export default function WithdrawHistoryPage() {
   const { token, hydrated } = useAuth();
-  const [view, setView] = useState<View>("Active");
+  // View aktif persisten di URL (?view=…) → refresh/back/forward memulihkan tab yang dibuka.
+  const [view, setView] = useTabParam<View>("Active", VIEWS, "view");
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<CardRedemption[]>([]);
   const [loading, setLoading] = useState(true);

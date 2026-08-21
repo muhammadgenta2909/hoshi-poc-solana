@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useAdminAuth } from "@/lib/adminAuth";
+import { useTabParam } from "@/lib/useTabParam";
 import {
   getAdminWithdrawals,
   approveWithdrawal,
@@ -26,6 +27,8 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "REJECTED", label: "Ditolak" },
   { key: "", label: "Semua" },
 ];
+// Nilai tab yang sah untuk persist di URL (?status=…) — refresh/back tetap di tab yang dipilih.
+const FILTER_KEYS = FILTERS.map((f) => f.key);
 
 const dt = (s: string | null) =>
   s ? new Date(s).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -33,7 +36,8 @@ const dt = (s: string | null) =>
 export default function AdminWithdrawalsPage() {
   const { token } = useAdminAuth();
   const [rows, setRows] = useState<AdminWithdrawal[]>([]);
-  const [filter, setFilter] = useState<string>("REQUESTED");
+  // Tab status persisten di URL (?status=…) → refresh/back/forward memulihkan tab yang aktif.
+  const [filter, setFilter] = useTabParam<string>("REQUESTED", FILTER_KEYS, "status");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
