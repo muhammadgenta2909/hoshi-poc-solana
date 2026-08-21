@@ -1,12 +1,12 @@
 "use client";
 
 // Settings page — the user's own account preferences. Main Info is wired to
-// the backend: profile fields read/write /users/me and shipment addresses
-// persist via /users/me/addresses; Account Balance reads live SOL/USDC over
-// the wallet's RPC connection. Notifications, discoverable and blocked users
-// remain local-only POC UI.
+// the backend: profile fields (incl. email + notification prefs) read/write
+// /users/me and shipment addresses persist via /users/me/addresses; Account
+// Balance reads live SOL/USDC over the wallet's RPC connection. Discoverable
+// and blocked users remain local-only POC UI.
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
@@ -65,19 +65,49 @@ const COUNTRIES = [
   "Australia",
 ];
 
-// State/Province BERGANTUNG negara: pilihan menyesuaikan Country yang dipilih (dependent dropdown).
+// State/Province BERGANTUNG negara: saran menyesuaikan Country yang dipilih. Bukan lagi daftar
+// tertutup — sekarang jadi datalist (input bebas + autocomplete), jadi ini murni saran.
 const STATES_BY_COUNTRY: Record<string, string[]> = {
+  // All 38 provinsi Indonesia (per 2022–2024 pemekaran Papua).
   Indonesia: [
+    "Aceh",
+    "Sumatera Utara",
+    "Sumatera Barat",
+    "Riau",
+    "Kepulauan Riau",
+    "Jambi",
+    "Bengkulu",
+    "Sumatera Selatan",
+    "Kepulauan Bangka Belitung",
+    "Lampung",
     "DKI Jakarta",
     "Jawa Barat",
-    "Jawa Tengah",
-    "Jawa Timur",
-    "DI Yogyakarta",
     "Banten",
+    "Jawa Tengah",
+    "DI Yogyakarta",
+    "Jawa Timur",
     "Bali",
-    "Sumatera Utara",
-    "Sulawesi Selatan",
+    "Nusa Tenggara Barat",
+    "Nusa Tenggara Timur",
+    "Kalimantan Barat",
+    "Kalimantan Tengah",
+    "Kalimantan Selatan",
     "Kalimantan Timur",
+    "Kalimantan Utara",
+    "Sulawesi Utara",
+    "Gorontalo",
+    "Sulawesi Tengah",
+    "Sulawesi Barat",
+    "Sulawesi Selatan",
+    "Sulawesi Tenggara",
+    "Maluku",
+    "Maluku Utara",
+    "Papua",
+    "Papua Barat",
+    "Papua Barat Daya",
+    "Papua Selatan",
+    "Papua Tengah",
+    "Papua Pegunungan",
   ],
   "United States of America": [
     "California",
@@ -115,15 +145,19 @@ const emptyForm = {
   isDefault: false,
 };
 
-/** The six editable profile fields as strings (server nulls seeded to ""). Save
- *  diffs the live form against a seeded baseline of this shape. */
+/** The editable profile fields (server nulls seeded to ""). Save diffs the live
+ *  form against a seeded baseline of this shape. */
 type ProfileForm = {
   displayName: string;
+  email: string;
   bio: string;
   twitter: string;
   website: string;
   phoneCountryCode: string;
   phoneNumber: string;
+  notifyOffers: boolean;
+  notifyOfferThreshold: number;
+  notifyMessages: boolean;
 };
 
 export default function SettingsPage() {
@@ -146,6 +180,7 @@ export default function SettingsPage() {
 
   // MAIN INFO — profile fields (username maps to displayName, site to website)
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [discoverable, setDiscoverable] = useState(false);
   const [phoneCode, setPhoneCode] = useState("");
   const [phone, setPhone] = useState("");
@@ -198,18 +233,26 @@ export default function SettingsPage() {
    *  effect and Cancel both go through it, so they can't drift apart. */
   const seedForm = useCallback((p: Profile) => {
     setUsername(p.displayName ?? "");
+    setEmail(p.email ?? "");
     setBio(p.bio ?? "");
     setTwitter(p.twitter ?? "");
     setSite(p.website ?? "");
     setPhoneCode(p.phoneCountryCode ?? "");
     setPhone(p.phoneNumber ?? "");
+    setNotifyOffers(p.notifyOffers);
+    setOfferThreshold(p.notifyOfferThreshold);
+    setNotifyMessages(p.notifyMessages);
     setBaseline({
       displayName: p.displayName ?? "",
+      email: p.email ?? "",
       bio: p.bio ?? "",
       twitter: p.twitter ?? "",
       website: p.website ?? "",
       phoneCountryCode: p.phoneCountryCode ?? "",
       phoneNumber: p.phoneNumber ?? "",
+      notifyOffers: p.notifyOffers,
+      notifyOfferThreshold: p.notifyOfferThreshold,
+      notifyMessages: p.notifyMessages,
     });
   }, []);
 
@@ -278,15 +321,25 @@ export default function SettingsPage() {
 
     const payload: UpdateProfileInput = {};
     if (username !== baseline.displayName) payload.displayName = username;
+    if (email !== baseline.email) payload.email = email; // "" clears it — backend allows
     if (bio !== baseline.bio) payload.bio = bio;
     if (twitter !== baseline.twitter) payload.twitter = twitter;
     if (site !== baseline.website) payload.website = site;
     if (phoneCode !== baseline.phoneCountryCode) payload.phoneCountryCode = phoneCode;
     if (phone !== baseline.phoneNumber) payload.phoneNumber = phone;
+    if (notifyOffers !== baseline.notifyOffers) payload.notifyOffers = notifyOffers;
+    if (offerThreshold !== baseline.notifyOfferThreshold)
+      payload.notifyOfferThreshold = offerThreshold;
+    if (notifyMessages !== baseline.notifyMessages) payload.notifyMessages = notifyMessages;
 
     // Client-side guards so a predictable bad value never round-trips a 400.
     if (payload.displayName !== undefined && !payload.displayName.trim()) {
       setSaveError("Display name can't be empty");
+      return;
+    }
+    // A non-empty email must at least look like one ("" is a valid clear).
+    if (payload.email && !payload.email.includes("@")) {
+      setSaveError("Enter a valid email");
       return;
     }
     if (payload.phoneNumber && payload.phoneNumber.length < 4) {
@@ -314,7 +367,21 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
-  }, [token, baseline, username, bio, twitter, site, phoneCode, phone, seedForm]);
+  }, [
+    token,
+    baseline,
+    username,
+    email,
+    bio,
+    twitter,
+    site,
+    phoneCode,
+    phone,
+    notifyOffers,
+    offerThreshold,
+    notifyMessages,
+    seedForm,
+  ]);
 
   /** Cancel = discard edits: back to the last server snapshot (blank pre-login). */
   const onCancel = useCallback(() => {
@@ -324,6 +391,7 @@ export default function SettingsPage() {
       return;
     }
     setUsername("");
+    setEmail("");
     setBio("");
     setTwitter("");
     setSite("");
@@ -333,6 +401,14 @@ export default function SettingsPage() {
 
   const setField = <K extends keyof typeof emptyForm>(key: K, value: (typeof emptyForm)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // The province field is a free-text input backed by a <datalist> of suggestions.
+  // The id folds in the selected country so the browser re-reads a FRESH option
+  // list when the country changes (some engines cache a datalist keyed by id) —
+  // and useId keeps it unique if the page ever mounts twice.
+  const provinceSeed = useId().replace(/:/g, "");
+  const provinceListId = `province-${provinceSeed}-${form.country.replace(/[^A-Za-z]/g, "")}`;
+  const provinceOptions = STATES_BY_COUNTRY[form.country] ?? [];
 
   const closeAddr = useCallback(() => {
     setAddrOpen(false);
@@ -464,9 +540,14 @@ export default function SettingsPage() {
 
               <FieldRow label="Email">
                 <div className="space-y-3">
-                  <TextInput readOnly value={profile?.email ?? ""} placeholder="No email set" />
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <GhostButton className="px-3.5 py-1.5 text-[13px]">Change</GhostButton>
+                  <TextInput
+                    type="email"
+                    value={email}
+                    maxLength={254}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@email.com"
+                  />
+                  <div className="flex flex-wrap items-center justify-end gap-3">
                     <Toggle
                       checked={discoverable}
                       onChange={setDiscoverable}
@@ -708,17 +789,23 @@ export default function SettingsPage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <ModalField label="State/Province">
-              <Select
+              {/* Free text + native autocomplete: the user may type ANY province
+                  (never blocked), with suggestions filtered by the chosen country.
+                  Styled via TextInput so it matches every other field. */}
+              <TextInput
+                list={provinceListId}
                 value={form.state}
-                onChange={(v) => setField("state", v)}
-                options={STATES_BY_COUNTRY[form.country] ?? []}
-                placeholder={
-                  (STATES_BY_COUNTRY[form.country] ?? []).length
-                    ? "Select…"
-                    : "Pilih negara dulu"
-                }
-                ariaLabel="State or province"
+                maxLength={80}
+                onChange={(e) => setField("state", e.target.value)}
+                placeholder={provinceOptions.length ? "Type or pick a province" : "Type your state/province"}
+                aria-label="State or province"
+                autoComplete="off"
               />
+              <datalist id={provinceListId}>
+                {provinceOptions.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
             </ModalField>
 
             <ModalField label="City/Department">
@@ -731,25 +818,25 @@ export default function SettingsPage() {
             </ModalField>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <ModalField label="Phone Number">
-              <PhoneField
-                code={form.phoneCode}
-                onCodeChange={(v) => setField("phoneCode", v)}
-                value={form.phone}
-                onChange={(v) => setField("phone", v)}
-              />
-            </ModalField>
+          {/* Phone gets its OWN full-width row: the +code Select already eats ~148px,
+              so sharing a half-column left the number input painfully narrow. */}
+          <ModalField label="Phone Number">
+            <PhoneField
+              code={form.phoneCode}
+              onCodeChange={(v) => setField("phoneCode", v)}
+              value={form.phone}
+              onChange={(v) => setField("phone", v)}
+            />
+          </ModalField>
 
-            <ModalField label="Zip/Postal code">
-              <TextInput
-                value={form.zip}
-                maxLength={16}
-                onChange={(e) => setField("zip", e.target.value)}
-                placeholder="Postal code"
-              />
-            </ModalField>
-          </div>
+          <ModalField label="Zip/Postal code">
+            <TextInput
+              value={form.zip}
+              maxLength={16}
+              onChange={(e) => setField("zip", e.target.value)}
+              placeholder="Postal code"
+            />
+          </ModalField>
 
           <Toggle
             checked={form.isDefault}
