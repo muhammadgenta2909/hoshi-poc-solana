@@ -7,6 +7,7 @@ import type { CardDetail } from "./cardDetail";
 import type { ActivityQuery, ActivityRecord, OfferRecord } from "./offers";
 import type { GachaMachine, GachaPull, GachaWinner } from "./gacha";
 import { getPrivyIdentityToken } from "./privyIdentity";
+import { ensureCcSiwsToken, getCcWalletSigner } from "./ccShippingAuth";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -385,19 +386,73 @@ export type CardRedemption = {
   createdAt: string;
 };
 
-/** Header untuk endpoint kirim-fisik CC: JWT wallet kita PLUS identity token Privy
- *  (membuktikan user Google/Privy MANA yang memanggil — API shipping CC ter-scope ke identitas
- *  itu). Kalau identity token null (mis. user login wallet mentah, bukan Google/Privy), lempar
- *  pesan ramah supaya UI menyuruh login Google/Privy dulu — bukan error mentah dari server. */
+/** Header untuk endpoint kirim-fisik CC: JWT wallet kita PLUS satu token identitas yang
+ *  dibawa di header X-Privy-Identity-Token (backend merelaikannya apa adanya ke CC sebagai
+ *  Authorization: Bearer). Dua jalur menyuplai token itu:
+ *   - TRACK A (user Google/Privy): identity token Privy — membuktikan user Google MANA yang memanggil.
+ *   - TRACK B (user wallet mentah, mis. Phantom, tanpa identitas Privy): token CC hasil SIWS —
+ *     wallet menandatangani pesan SIWS lalu backend menukarnya jadi token CC (lib/ccShippingAuth).
+ *  Header-nya SAMA untuk keduanya; backend tak peduli asalnya. Kalau tak ada Privy dan tak ada
+ *  wallet yang bisa SIWS, lempar pesan ramah (bukan error mentah server). */
 async function shippingHeaders(token: string): Promise<Record<string, string>> {
-  const identityToken = await getPrivyIdentityToken();
-  if (!identityToken)
-    throw new Error("Login pakai Google/Privy dulu untuk kirim fisik.");
+  // Track A — Google/Privy user: their Privy identity token names which user calls.
+  const privy = await getPrivyIdentityToken();
+  // Track B — raw-wallet user with no Privy identity: mint a CC token via SIWS.
+  const shipToken = privy ?? (getCcWalletSigner() ? await ensureCcSiwsToken(token) : null);
+  if (!shipToken)
+    throw new Error(
+      "Hubungkan wallet atau login Google dulu untuk kirim kartu fisik. / Connect a wallet or sign in with Google to ship your card.",
+    );
   return {
     authorization: `Bearer ${token}`,
-    "X-Privy-Identity-Token": identityToken,
+    "X-Privy-Identity-Token": shipToken,
   };
 }
+
+/* --- CC SIWS (Track B): tukar tanda-tangan wallet → token CC untuk kirim fisik --------------
+   Untuk user wallet mentah (Phantom dll.) yang TIDAK punya identitas Privy. Ketiga endpoint di
+   bawah ada di controller redemption kita dan DIJAGA JwtAuthGuard → semuanya Bearer JWT kita.
+   Backend meneruskan ke CC (/auth/wallet/nonce|verify|refresh). Handshake dijalankan oleh
+   lib/ccShippingAuth.ensureCcSiwsToken; header pengirimannya sama dengan Track A. ------------- */
+
+/** Balasan nonce SIWS. `message` = teks SIWS kanonik yang HARUS ditandatangani VERBATIM. */
+export type SiwsNonceResponse = { nonce: string; expiresAt: number; message: string };
+
+/** Triple token CC hasil verify/refresh (accessToken `cca_…`, refreshToken `ccr_…`). */
+export type SiwsTokenResponse = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+};
+
+/** Minta nonce SIWS untuk `wallet` (POST /redemptions/siws/nonce). `wallet` harus = wallet
+ *  di JWT kita — backend menolak (403) kalau beda (user hanya boleh SIWS wallet-nya sendiri). */
+export const siwsNonce = (input: { wallet: string }, token: string) =>
+  api<SiwsNonceResponse>("/redemptions/siws/nonce", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Verifikasi pesan SIWS bertanda tangan → token CC (POST /redemptions/siws/verify).
+ *  `signature` = ed25519 base58 atas byte UTF-8 dari `message`. */
+export const siwsVerify = (
+  input: { message: string; signature: string },
+  token: string,
+) =>
+  api<SiwsTokenResponse>("/redemptions/siws/verify", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/** Perbarui token CC dari refreshToken (POST /redemptions/siws/refresh) — tanpa prompt wallet. */
+export const siwsRefresh = (input: { refreshToken: string }, token: string) =>
+  api<SiwsTokenResponse>("/redemptions/siws/refresh", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
 
 /** Minta kirim kartu fisik ke rumah (POST /redemptions). RECORD-ONLY di server: mencatat
  *  permintaan + tujuan, TIDAK burn/transfer NFT — kartu tetap di wallet sampai admin proses. */

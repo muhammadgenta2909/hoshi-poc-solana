@@ -11,6 +11,7 @@ import { WalletConnectProvider, emitWalletError } from "@/lib/useWalletConnect";
 import { warmBackend } from "@/lib/api";
 import PrivyProviders, { PRIVY_ENABLED } from "./PrivyProviders";
 import PrivyBridge from "@/components/account/PrivyBridge";
+import CcShippingBridge from "@/components/account/CcShippingBridge";
 
 // Required for the legacy wallet-adapter-react-ui modal (still used by the POC
 // landing page `/`). Our own Hoshi modal lives in <WalletConnectProvider>.
@@ -60,6 +61,9 @@ export default function Providers({ children }: { children: ReactNode }) {
                 {/* Turns a Privy (Google) login into our JWT session. Only mounted
                     when Privy is enabled, so it never calls Privy hooks otherwise. */}
                 {PRIVY_ENABLED && <PrivyBridge />}
+                {/* Publishes the connected wallet's SIWS signer for CC shipping
+                    (Track B). Always mounted; dormant for Google/Privy users. */}
+                <CcShippingBridge />
                 <AdminAuthProvider>
                   <CartProvider>{children}</CartProvider>
                 </AdminAuthProvider>
