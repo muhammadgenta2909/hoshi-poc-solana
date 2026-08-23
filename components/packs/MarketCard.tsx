@@ -4,8 +4,10 @@ import type { Currency, Listing } from "@/lib/market";
 import { secondaryPrice } from "@/lib/market";
 import { formatIdr, GOLD_GRADIENT, GradientText, Img } from "./ui";
 
-/** Frosted badge (Figma: white 21% + blur) for grade / language / era. */
-function Badge({ children }: { children: ReactNode }) {
+/** Frosted badge (Figma: white 21% + blur) for grade / language / era.
+ *  Exported so the Vault tile (app/vault/page.tsx) reuses the exact same
+ *  primitive instead of drifting a private copy. */
+export function Badge({ children }: { children: ReactNode }) {
   return (
     <span
       className="inline-flex items-center rounded-md bg-white/[0.21] px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-white backdrop-blur-sm"
@@ -16,8 +18,9 @@ function Badge({ children }: { children: ReactNode }) {
   );
 }
 
-/** Illustration-category badge (Figma gambar 2: white 3% fill + drop shadow). */
-function CategoryBadge({ children }: { children: ReactNode }) {
+/** Illustration-category badge (Figma gambar 2: white 3% fill + drop shadow).
+ *  Exported for reuse by the Vault tile (shows the CC series there). */
+export function CategoryBadge({ children }: { children: ReactNode }) {
   return (
     <span
       className="inline-flex items-center rounded-md px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-white"

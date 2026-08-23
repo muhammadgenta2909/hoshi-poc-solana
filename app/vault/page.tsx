@@ -20,14 +20,14 @@ import {
   type CardRedemption,
   type RedemptionStatus,
 } from "@/lib/api";
-import { explorerAddressUrl, winnersToLiveCards, type GachaPull } from "@/lib/gacha";
+import { explorerAddressUrl, pullGradeLabel, winnersToLiveCards, type GachaPull } from "@/lib/gacha";
 import { useAuth } from "@/lib/useAuth";
 import { useFavorites } from "@/lib/favorites";
 import { HeartIcon } from "@/components/account/ui";
 import { useFinishListingEscrow } from "@/lib/useListingEscrow";
 import TopNav from "@/components/packs/TopNav";
 import LiveTicker from "@/components/packs/LiveTicker";
-import MarketCard from "@/components/packs/MarketCard";
+import MarketCard, { Badge, CategoryBadge } from "@/components/packs/MarketCard";
 import ListForSaleModal from "@/components/packs/ListForSaleModal";
 import {
   PayModal,
@@ -399,6 +399,8 @@ function PullCard({
   const { favorites, toggle } = useFavorites(wallet);
   const faved = !!pull.nftAddress && favorites.includes(pull.nftAddress);
   const [maxNote, setMaxNote] = useState(false);
+  // Grade dari katalog CC ("PSA 10"), null bila CC belum memberi tahu → badge hilang.
+  const grade = pullGradeLabel(pull);
 
   return (
     <div className="relative flex flex-col gap-2">
@@ -429,32 +431,67 @@ function PullCard({
         </>
       )}
 
-      {/* Card visual → click through to the CC-style detail/manage page. */}
+      {/* Card visual — mirrors MarketCard's polished panel (frosted image parent +
+          #181507 lower section), click-through to the CC-style detail/manage page. */}
       <Link
         href={`/vault/${pull.nftAddress}`}
-        className="group relative block overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition hover:border-yellow-400/40"
+        aria-label={`View ${pull.ccItemName ?? pull.nftName ?? "your card"}`}
+        className="group flex flex-col overflow-hidden rounded-2xl border border-white/5 text-left transition hover:border-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
       >
-        <span className="absolute left-2 top-2 z-10 rounded-md bg-yellow-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#171717]">
-          Pulled
-        </span>
-        {pull.nftImage ? (
-          <Img
-            src={pull.nftImage}
-            alt={pull.nftName ?? "Pulled card"}
-            className="aspect-[5/7] w-full bg-white/[0.03] object-contain transition duration-300 group-hover:scale-[1.02]"
-          />
-        ) : (
-          <div className="grid aspect-[5/7] w-full place-items-center bg-white/[0.04]">
-            <Img src="/card-back.svg" alt="" className="h-24 w-auto opacity-60" />
+        {/* Image parent — frosted white 9% (Figma), same treatment as MarketCard. */}
+        <div className="relative bg-white/[0.09] p-3 backdrop-blur-sm">
+          {/* PULLED origin badge — restyled to the Jersey/gold chip MarketCard uses. */}
+          <span
+            className="absolute left-2 top-2 z-10 inline-flex items-center rounded-md px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-[#171717]"
+            style={{ fontFamily: "var(--font-jersey)", backgroundImage: GOLD_GRADIENT }}
+          >
+            Pulled
+          </span>
+          {pull.nftImage ? (
+            <Img
+              src={pull.nftImage}
+              alt={pull.nftName ?? "Pulled card"}
+              className="mx-auto aspect-[3/4] w-full rounded-lg object-contain transition duration-300 group-hover:scale-[1.02]"
+            />
+          ) : (
+            <div className="mx-auto grid aspect-[3/4] w-full place-items-center rounded-lg bg-white/[0.04]">
+              <Img src="/card-back.svg" alt="" className="h-24 w-auto opacity-60" />
+            </div>
+          )}
+        </div>
+
+        {/* Lower section — #181507, same as MarketCard. */}
+        <div className="flex flex-1 flex-col bg-[#181507] p-3.5">
+          {/* grade / rarity badges — hanya yang benar-benar diketahui (mirror MarketCard:
+              field kosong = badge hilang, bukan tebakan). */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {grade && <Badge>{grade}</Badge>}
+            {pull.rarity && <Badge>{pull.rarity}</Badge>}
           </div>
-        )}
-        <div className="p-2.5">
-          {/* Judul katalog CC yang lengkap kalau sudah tersinkron; `nftName`
-              (metadata on-chain) terpotong 32 karakter, jadi cuma cadangan. */}
-          <p className="truncate text-[13px] font-semibold text-zinc-100">
-            {pull.ccItemName ?? pull.nftName ?? "Your card"}
-          </p>
-          {pull.rarity && <p className="text-[11px] text-zinc-500">{pull.rarity}</p>}
+
+          {/* title + vault mark — kartu hasil pull selalu ter-vault di CollectorCrypt,
+              jadi selalu tampil "CC" teal (sama seperti MarketCard source=COLLECTORCRYPT).
+              `ccItemName` = judul katalog CC lengkap; `nftName` (metadata on-chain, 32 char)
+              cuma cadangan. */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="truncate text-[17px] font-bold uppercase leading-tight text-white">
+              {pull.ccItemName ?? pull.nftName ?? "Your card"}
+            </span>
+            <span
+              className="shrink-0 text-lg leading-none text-[#38E5D0]"
+              style={{ fontFamily: "var(--font-jersey)" }}
+              title="Vault: CollectorCrypt"
+            >
+              CC
+            </span>
+          </div>
+
+          {/* seri/set kartu (analog CategoryBadge di MarketCard) — hanya bila CC memberi tahu. */}
+          {pull.ccSet && (
+            <div className="mt-2">
+              <CategoryBadge>{pull.ccSet}</CategoryBadge>
+            </div>
+          )}
         </div>
       </Link>
 
