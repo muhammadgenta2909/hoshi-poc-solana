@@ -255,15 +255,17 @@ export default function OpenPacksPage() {
     };
   }, []);
 
-  // Map machines -> the existing Pack shape the panels already consume. Unavailable
-  // machines get a name suffix so the Select Pack grid flags them (the panels can't
-  // be given a new "disabled" prop without breaking their other callers).
-  const packs = useMemo<Pack[]>(
-    () =>
-      machines.map((m) => {
-        const pack = machineToPack(m);
-        return isMachineAvailable(m) ? pack : { ...pack, name: `${pack.name} · tidak tersedia` };
-      }),
+  // Map machines -> the existing Pack shape the panels already consume. Names stay
+  // clean now; out-of-stock machines are flagged by the `soldOut` set below, which the
+  // Select Pack grid renders as a dimmed, disabled "Stok habis" tile.
+  const packs = useMemo<Pack[]>(() => machines.map(machineToPack), [machines]);
+
+  // Pack ids (== machine.code) whose CC machine has no stock in ANY rarity — derived
+  // straight from real CC data via isMachineAvailable, never hardcoded. Passed to the
+  // Select Pack panels as an OPTIONAL prop, so their other callers keep the default
+  // (nothing sold out) behavior untouched.
+  const soldOut = useMemo<Set<string>>(
+    () => new Set(machines.filter((m) => !isMachineAvailable(m)).map((m) => m.code)),
     [machines],
   );
 
@@ -301,7 +303,7 @@ export default function OpenPacksPage() {
 
     // Never spend on an empty/off machine.
     if (!isMachineAvailable(selectedMachine)) {
-      setOpenMsg("Mesin ini sedang tidak tersedia (devnet).");
+      setOpenMsg("Stok pack ini sedang habis — coba pack lain.");
       return;
     }
 
@@ -619,6 +621,7 @@ export default function OpenPacksPage() {
           selectedId={selectedId}
           onSelect={onSelect}
           group={group}
+          soldOut={soldOut}
           className="hidden lg:block"
         />
 
@@ -629,11 +632,11 @@ export default function OpenPacksPage() {
             <>
               {/* No spinner overlay anymore: the RipReveal takeover mounts the
                   moment the pull starts and the video carries the wait. */}
-              <PackShowcase pack={selected} onRip={handleRipClick} />
+              <PackShowcase pack={selected} onRip={handleRipClick} disabled={!selectedAvailable} />
 
               {!selectedAvailable && (
                 <p className="mt-3 text-center text-sm font-medium text-amber-300/90">
-                  Mesin ini sedang tidak tersedia (devnet).
+                  Stok pack ini sedang habis — coba pack lain.
                 </p>
               )}
 
@@ -702,6 +705,7 @@ export default function OpenPacksPage() {
             setSheet(null);
           }}
           group={group}
+          soldOut={soldOut}
         />
       </MobileSheet>
 

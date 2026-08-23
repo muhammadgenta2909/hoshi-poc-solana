@@ -19,12 +19,18 @@ export function SelectPackList({
   selectedId,
   onSelect,
   group = ALL_GROUPS,
+  soldOut,
 }: {
   packs: Pack[];
   selectedId: string;
   onSelect: (id: string) => void;
   /** Batasi ke satu grup; "All" menampilkan keduanya. */
   group?: GroupFilter;
+  /** Id pack (== machine.code) yang stok CC-nya habis. Tile-nya dirender redup +
+   *  badge "Stok habis" dan tidak mengarahkan ke pembelian. Opsional: kalau tidak
+   *  diberikan, semua pack dianggap tersedia (perilaku lama, aman untuk pemanggil
+   *  lain). */
+  soldOut?: Set<string>;
 }) {
   const shown = PACK_GROUPS.filter((g) => group === ALL_GROUPS || g === group);
 
@@ -44,16 +50,22 @@ export function SelectPackList({
               .filter((p) => p.group === g)
               .map((p) => {
                 const selected = p.id === selectedId;
+                const isSoldOut = soldOut?.has(p.id) ?? false;
                 return (
                   <button
                     key={p.id}
                     onClick={() => onSelect(p.id)}
                     aria-pressed={selected}
-                    title={p.name}
+                    // Sold-out tiles stay clickable so the user can still open the
+                    // pack's preview + details, but the "Rip Pack" CTA is disabled
+                    // downstream — so tapping one never starts a purchase.
+                    title={isSoldOut ? `${p.name} — stok habis` : p.name}
                     className={`relative flex flex-col items-center gap-2 rounded-xl border p-2.5 pt-3.5 text-center transition ${
-                      selected
-                        ? "border-yellow-400 bg-yellow-400/10 shadow-[0_0_0_1px_rgba(250,204,21,0.4),0_0_26px_-6px_rgba(250,204,21,0.65)]"
-                        : "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04]"
+                      isSoldOut
+                        ? "border-red-400/25 bg-red-500/[0.05] opacity-60 hover:opacity-80"
+                        : selected
+                          ? "border-yellow-400 bg-yellow-400/10 shadow-[0_0_0_1px_rgba(250,204,21,0.4),0_0_26px_-6px_rgba(250,204,21,0.65)]"
+                          : "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.04]"
                     }`}
                   >
                     {/* price chip — centered ON the tile's top border */}
@@ -64,10 +76,19 @@ export function SelectPackList({
                         className="text-[11px] font-semibold text-zinc-100"
                       />
                     </span>
-                    <PackArt pack={p} label={p.tierLabel} className="aspect-[3/4] w-full" />
+                    <PackArt
+                      pack={p}
+                      label={p.tierLabel}
+                      className={`aspect-[3/4] w-full ${isSoldOut ? "grayscale" : ""}`}
+                    />
                     <GradientText className="line-clamp-2 w-full text-[11px] font-semibold leading-tight">
                       {p.name}
                     </GradientText>
+                    {isSoldOut && (
+                      <span className="rounded-md border border-red-400/40 bg-red-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-200">
+                        Stok habis
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -84,12 +105,15 @@ export default function SelectPackPanel({
   onSelect,
   group = ALL_GROUPS,
   className = "",
+  soldOut,
 }: {
   packs: Pack[];
   selectedId: string;
   onSelect: (id: string) => void;
   group?: GroupFilter;
   className?: string;
+  /** Diteruskan apa adanya ke SelectPackList — lihat dok di sana. */
+  soldOut?: Set<string>;
 }) {
   return (
     <CollapsePanel
@@ -106,7 +130,13 @@ export default function SelectPackPanel({
       // stray horizontal bar.
       bodyClassName="lg:max-h-[calc(100vh-12rem)] lg:overflow-y-auto lg:overflow-x-hidden no-scrollbar"
     >
-      <SelectPackList packs={packs} selectedId={selectedId} onSelect={onSelect} group={group} />
+      <SelectPackList
+        packs={packs}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        group={group}
+        soldOut={soldOut}
+      />
     </CollapsePanel>
   );
 }
