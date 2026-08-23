@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CardCategory, Currency, Listing, SortKey } from "@/lib/market";
-import { CATEGORY_TABS, CURRENCIES, SORT_LABEL } from "@/lib/market";
+import { CURRENCIES, SORT_LABEL } from "@/lib/market";
 import MarketCard from "./MarketCard";
 import { GradientText, Img } from "./ui";
 
-const SORT_KEYS: SortKey[] = ["newest", "price-asc", "price-desc", "rarity", "value"];
+// Sort options OFFERED in the menu. "rarity" is intentionally omitted — CC gives
+// no per-card rarity so every real card sorts equal (the SortKey type, SORT_LABEL
+// and the comparator keep "rarity" for back-compat; it's just never shown).
+const SORT_OPTIONS: SortKey[] = ["newest", "price-asc", "price-desc", "value"];
 
 type Category = CardCategory | "All";
 
@@ -107,7 +110,7 @@ function SortSelect({ sort, onSort }: { sort: SortKey; onSort: (s: SortKey) => v
           role="listbox"
           className="absolute right-0 z-40 mt-2 min-w-[200px] overflow-hidden rounded-xl border border-white/10 bg-[#1b1810] p-1 shadow-[0_16px_40px_-10px_rgba(0,0,0,0.75)]"
         >
-          {SORT_KEYS.map((k) => {
+          {SORT_OPTIONS.map((k) => {
             const active = k === sort;
             return (
               <button
@@ -150,6 +153,7 @@ export default function MarketGrid({
   chips = [],
   filtersOpen,
   onOpenFilters,
+  categoryTabs,
   category,
   onCategory,
   currency,
@@ -161,6 +165,8 @@ export default function MarketGrid({
   chips?: { key: string; label: string; onRemove: () => void }[];
   filtersOpen: boolean;
   onOpenFilters: () => void;
+  /** Data-driven tab list from the page ("All" + categories present in the catalog). */
+  categoryTabs: Category[];
   category: Category;
   onCategory: (c: Category) => void;
   currency: Currency;
@@ -183,28 +189,32 @@ export default function MarketGrid({
         </div>
       ) : (
         <div className="mb-4 flex flex-col gap-3">
-          {/* Tab kategori — di mobile SCROLL ke samping (bukan wrap), scrollbar disembunyikan. */}
-          <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {CATEGORY_TABS.map((t) => {
-              const active = category === t;
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => onCategory(t)}
-                  aria-pressed={active}
-                  style={{ fontFamily: "var(--font-jersey)" }}
-                  className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1 text-[16px] leading-none tracking-wide transition ${
-                    active
-                      ? "border-yellow-400 text-yellow-400"
-                      : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
-                  }`}
-                >
-                  {t}
-                </button>
-              );
-            })}
-          </div>
+          {/* Tab kategori — DATA-DRIVEN dari `categoryTabs`. Kalau cuma "All" (tak ada
+              kategori nyata di katalog), baris disembunyikan supaya tak ada chip yatim.
+              Di mobile SCROLL ke samping (bukan wrap), scrollbar disembunyikan. */}
+          {categoryTabs.length > 1 && (
+            <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {categoryTabs.map((t) => {
+                const active = category === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => onCategory(t)}
+                    aria-pressed={active}
+                    style={{ fontFamily: "var(--font-jersey)" }}
+                    className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1 text-[16px] leading-none tracking-wide transition ${
+                      active
+                        ? "border-yellow-400 text-yellow-400"
+                        : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {/* Baris: Filters (kiri) ↔ Recently Listed / sort (kanan). */}
           <div className="flex items-center justify-between gap-3">
             <button

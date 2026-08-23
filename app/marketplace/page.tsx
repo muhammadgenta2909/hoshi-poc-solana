@@ -13,7 +13,7 @@ import type {
   SortKey,
   VaultSource,
 } from "@/lib/market";
-import { ELEMENTS, ERAS, GRADE_FLOOR, GRADERS, VAULT_SOURCES, valueDeltaPct } from "@/lib/market";
+import { CARD_CATEGORIES, ELEMENTS, ERAS, GRADE_FLOOR, GRADERS, VAULT_SOURCES, valueDeltaPct } from "@/lib/market";
 import { getListings } from "@/lib/api";
 import TopNav from "@/components/packs/TopNav";
 import MarketFilterPanel from "@/components/packs/MarketFilterPanel";
@@ -107,6 +107,14 @@ export default function MarketplacePage() {
     const upper =
       maxPrice > 0 ? Math.ceil(maxPrice / PRICE_STEP) * PRICE_STEP : PRICE_MAX_FALLBACK;
     return [0, upper];
+  }, [listings]);
+
+  // Category tabs are DATA-DRIVEN: only illustration categories that actually
+  // appear in the loaded catalog are offered (real CC data leaves most of the
+  // static taxonomy empty). "All" is always first. Empty catalog ⇒ just ["All"].
+  const categoryTabs = useMemo<Category[]>(() => {
+    const present = CARD_CATEGORIES.filter((c) => listings.some((l) => l.category === c));
+    return ["All", ...present];
   }, [listings]);
 
   // null = pinned to the current catalog bound (full range) — so the slider tracks
@@ -255,6 +263,7 @@ export default function MarketplacePage() {
             chips={activeChips}
             filtersOpen={filtersOpen}
             onOpenFilters={() => setFiltersOpen(true)}
+            categoryTabs={categoryTabs}
             category={category}
             onCategory={setCategory}
             currency={currency}
