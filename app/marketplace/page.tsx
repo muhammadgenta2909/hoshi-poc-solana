@@ -212,11 +212,6 @@ export default function MarketplacePage() {
           <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             The Hoshi Market
           </h1>
-          <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
-            {loading
-              ? "Syncing live marketplace catalog..."
-              : `${listings.length.toLocaleString("en-US")} kartu vault siap dibeli — ditarik langsung dari backend Hoshi.`}
-          </p>
           {loading && <p className="mt-2 text-[13px] text-zinc-500">Loading listings…</p>}
           {error && (
             <p className="mt-2 text-[13px] text-red-400">
