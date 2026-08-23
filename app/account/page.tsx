@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
-import { useFavorites } from "@/lib/favorites";
+import { useFavorites, buildFavoriteCards } from "@/lib/favorites";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import { countUnseenRejected, markOffersRejectedSeen } from "@/lib/useAccountBadges";
 import {
@@ -179,31 +179,12 @@ export default function ProfilePage() {
   // Favorit (maks 3) untuk box "Your Favorite Card" di banner. Id = nftAddress kartu; di-resolve
   // ke kartu hasil pack milik user (nama + art). Di-toggle lewat ♥ di Vault, sinkron via event.
   const { favorites: favoriteIds, clear: clearFavorites } = useFavorites(address);
-  const favoriteCards = useMemo(() => {
-    // Peta key→kartu dari SEMUA kartu milik: pull (key = nftAddress) DAN listing/bought (key =
-    // listing.id). Jadi ♥ di kartu mana pun tampil di banner (tak dibeda-bedakan).
-    const byKey = new Map<
-      string,
-      { nftAddress: string; name: string; image: string | null }
-    >();
-    for (const p of pulls) {
-      if (p.nftAddress) {
-        byKey.set(p.nftAddress, {
-          nftAddress: p.nftAddress,
-          name: p.ccItemName ?? p.nftName ?? "Kartu",
-          image: p.nftImage ?? null,
-        });
-      }
-    }
-    for (const l of assets) {
-      byKey.set(l.id, { nftAddress: l.id, name: l.name, image: l.image ?? null });
-    }
-    return favoriteIds
-      .map((id) => byKey.get(id))
-      .filter(
-        (c): c is { nftAddress: string; name: string; image: string | null } => !!c,
-      );
-  }, [favoriteIds, pulls, assets]);
+  // Resolve id favorit → kartu (nama + art) dari pulls/assets yang SUDAH dimuat halaman ini
+  // (jadi tak ada fetch dobel). Logika peta-nya dibagi dengan /settings lewat buildFavoriteCards.
+  const favoriteCards = useMemo(
+    () => buildFavoriteCards(favoriteIds, pulls, assets),
+    [favoriteIds, pulls, assets],
+  );
 
   /** Bumped by the banner's refresh badge AND after every mutation. The fetch
    *  effect owns loading, so an action on one tab refreshes the others it affects

@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
+import { useFavoriteCards } from "@/lib/favorites";
 import {
   addAddress,
   deleteAddress,
@@ -167,6 +168,11 @@ export default function SettingsPage() {
   const address = publicKey?.toBase58() ?? null;
 
   const [tab, setTab] = useTabParam<Tab>("MAIN INFO", TABS);
+
+  // Favorit (maks 3) untuk box "Your Favorite Card" di banner — sama seperti /account.
+  // Settings belum memuat pulls/assets sendiri, jadi hook ini fetch-nya sendiri (JWT).
+  // Sinkron via event/localStorage (useFavorites), jadi ♥ di Vault langsung tercermin.
+  const { favoriteCards, clearFavorites } = useFavoriteCards(address);
 
   // The last server snapshot of /users/me — the banner reads it and Cancel
   // resets the form to it.
@@ -517,6 +523,8 @@ export default function SettingsPage() {
             joined={joined}
             onRename={isAuthed ? () => setRenaming(true) : undefined}
             onCopy={onCopy}
+            favorites={favoriteCards}
+            onClearFavorites={clearFavorites}
           />
         </div>
       </div>
