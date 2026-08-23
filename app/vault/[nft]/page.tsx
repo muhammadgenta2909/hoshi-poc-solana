@@ -106,17 +106,28 @@ export default function PulledCardPage() {
   // softly) because it is the ONLY value signal a holder has: the pack price says
   // what they paid, not what they hold. Read-only — issues no transaction.
   const [ccUsd, setCcUsd] = useState<number | null>(null);
+  // Ketersediaan buyback CC (jendela 72 jam). `checked` = respons CC sudah tiba, supaya
+  // tombol/nota hanya muncul setelah kita TAHU jawabannya — bukan menampilkan tombol yang
+  // pasti gagal 400 ("No matching NFT within the allowed time window") untuk kartu di luar jendela.
+  const [buyback, setBuyback] = useState<{ checked: boolean; available: boolean }>({
+    checked: false,
+    available: false,
+  });
   useEffect(() => {
     if (!token || !nft) return;
     let alive = true;
     getBuybackValue(nft, token)
       .then((v) => {
-        if (alive && v.available && v.refundAmountUsdc != null) {
+        if (!alive) return;
+        setBuyback({ checked: true, available: !!v.available });
+        if (v.available && v.refundAmountUsdc != null) {
           setCcUsd(v.refundAmountUsdc / 1_000_000);
         }
       })
       .catch(() => {
-        /* a valuation is a nicety — never let it break the card page */
+        // Gagal cek → perlakukan sebagai TIDAK tersedia: lebih baik sembunyikan tombol
+        // daripada user mengkliknya lalu kena error dari CC.
+        if (alive) setBuyback({ checked: true, available: false });
       });
     return () => {
       alive = false;
@@ -331,7 +342,7 @@ export default function PulledCardPage() {
                       alongside listing because they are genuine alternatives:
                       sell now at their price, or set your own and wait. Hidden
                       once the card is listed (it is spoken for) or already sold. */}
-                  {!soldBack && !listing && listable && (
+                  {!soldBack && !listing && listable && buyback.available && (
                     <button
                       type="button"
                       onClick={() => setBuybackOpen(true)}
@@ -342,6 +353,16 @@ export default function PulledCardPage() {
                         · instant, jendela 72 jam
                       </span>
                     </button>
+                  )}
+                  {/* Di luar jendela 72 jam CC (atau kartu yang buyback-nya tak dikenali, mis. kartu
+                      test lama): SEMBUNYIKAN tombol yang pasti gagal, jelaskan kenapa, arahkan ke
+                      alternatif yang masih jalan. */}
+                  {!soldBack && !listing && listable && buyback.checked && !buyback.available && (
+                    <p className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] px-5 py-3 text-center text-[12px] leading-relaxed text-zinc-500">
+                      Buyback instan CollectorCrypt hanya berlaku 72 jam sejak kartu ditarik — kartu
+                      ini sudah di luar jendela itu. Kamu masih bisa menjualnya di marketplace atau
+                      mengirim fisiknya.
+                    </p>
                   )}
 
                   {/* Kirim kartu fisik ke rumah (redeem). Disembunyikan kalau kartu sudah dijual

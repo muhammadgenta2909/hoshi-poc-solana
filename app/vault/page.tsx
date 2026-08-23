@@ -244,13 +244,13 @@ export default function VaultPage() {
       <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">
         <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[13px] text-zinc-500">
+            <p className="text-[13px] text-white">
               Every card you own — pulled from packs or bought on the marketplace.
             </p>
             <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-white sm:text-3xl">
               Your Vault
             </h1>
-            <p className="mt-1 text-[12px] text-zinc-600">
+            <p className="mt-1 text-[12px] text-zinc-200">
               Mau jual? Buka kartunya dan pilih “List for Sale”.
             </p>
           </div>
@@ -441,7 +441,7 @@ function PullCard({
           <Img
             src={pull.nftImage}
             alt={pull.nftName ?? "Pulled card"}
-            className="aspect-[5/7] w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+            className="aspect-[5/7] w-full bg-white/[0.03] object-contain transition duration-300 group-hover:scale-[1.02]"
           />
         ) : (
           <div className="grid aspect-[5/7] w-full place-items-center bg-white/[0.04]">
@@ -681,7 +681,7 @@ function RelistModal({
 
         <div className="mb-4 flex gap-3">
           <div className="h-24 w-[68px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
-            <Img src={listing.image} alt={listing.name} className="h-full w-full object-cover" />
+            <Img src={listing.image} alt={listing.name} className="h-full w-full bg-white/[0.03] object-contain" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-zinc-100">{listing.name}</p>

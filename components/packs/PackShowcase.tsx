@@ -5,7 +5,17 @@ import type { Pack } from "@/lib/packs";
 import Pack3D from "./Pack3D";
 import { GOLD_GRADIENT, GradientText, Idrx, Img } from "./ui";
 
-export default function PackShowcase({ pack, onRip }: { pack: Pack; onRip?: () => void }) {
+export default function PackShowcase({
+  pack,
+  onRip,
+  disabled = false,
+}: {
+  pack: Pack;
+  onRip?: () => void;
+  /** Sold-out / unavailable: the CTA is greyed and inert. Optional; defaults to
+   *  the normal live "Rip Pack" button. */
+  disabled?: boolean;
+}) {
   // Float the PERSISTENT wrapper, not the pack image. Pack3D swaps its <img>
   // elements internally to crossfade on pack change, so a ref captured on the
   // image goes stale the moment you pick another pack (the animated node gets
@@ -48,7 +58,13 @@ export default function PackShowcase({ pack, onRip }: { pack: Pack; onRip?: () =
         <button
           type="button"
           onClick={onRip}
-          className="relative w-full rounded-2xl px-6 py-4 text-center transition hover:brightness-105 active:scale-[0.99]"
+          disabled={disabled}
+          aria-disabled={disabled}
+          className={`relative w-full rounded-2xl px-6 py-4 text-center transition ${
+            disabled
+              ? "cursor-not-allowed opacity-50 grayscale"
+              : "hover:brightness-105 active:scale-[0.99]"
+          }`}
           style={{
             backgroundImage: GOLD_GRADIENT,
             border: "1px solid #F2C101",
