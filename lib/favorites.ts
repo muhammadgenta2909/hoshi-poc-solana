@@ -4,7 +4,11 @@
 // Heart toggle ada di kartu Vault; banner profil membaca set ini + resolve ke kartu milik user.
 // Sinkron lintas-komponen (same-tab) lewat custom event + lintas-tab lewat "storage".
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/lib/useAuth";
+import { getMyPacks, getMyPurchases } from "@/lib/api";
+import type { GachaPull } from "@/lib/gacha";
+import type { Listing } from "@/lib/market";
 
 const KEY_PREFIX = "hoshi_favorites_";
 export const MAX_FAVORITES = 3;
@@ -118,4 +122,85 @@ export function useFavorites(wallet: string | null | undefined): {
   }, [wallet]);
 
   return { favorites, toggle, clear };
+}
+
+/** Satu kartu favorit yang sudah di-resolve ke nama + art (untuk banner profil). */
+export type FavoriteCard = { nftAddress: string; name: string; image: string | null };
+
+/**
+ * Resolve id favorit → kartu (nama + art) dari kartu milik user. PURE, dipakai
+ * bersama oleh /account (yang sudah punya pulls/assets) dan hook di bawah, jadi
+ * logika peta-nya SATU sumber. Key: pull = `nftAddress`, listing/bought = `listing.id`
+ * (♥ di kartu mana pun tampil di banner, tak dibeda-bedakan). Maks mengikuti favoriteIds.
+ */
+export function buildFavoriteCards(
+  favoriteIds: string[],
+  pulls: GachaPull[],
+  assets: Listing[],
+): FavoriteCard[] {
+  const byKey = new Map<string, FavoriteCard>();
+  for (const p of pulls) {
+    if (p.nftAddress) {
+      byKey.set(p.nftAddress, {
+        nftAddress: p.nftAddress,
+        name: p.ccItemName ?? p.nftName ?? "Kartu",
+        image: p.nftImage ?? null,
+      });
+    }
+  }
+  for (const l of assets) {
+    byKey.set(l.id, { nftAddress: l.id, name: l.name, image: l.image ?? null });
+  }
+  return favoriteIds
+    .map((id) => byKey.get(id))
+    .filter((c): c is FavoriteCard => !!c);
+}
+
+/**
+ * Self-contained: daftar kartu favorit (maks 3, resolved) + clear, untuk halaman
+ * yang BELUM memuat pulls/assets sendiri (mis. /settings). Fetch pulls (gacha) +
+ * assets (marketplace purchases) pakai JWT dari useAuth, lalu resolve lewat
+ * `buildFavoriteCards`. Sinkron via `useFavorites` (event/localStorage). Semua
+ * setState ada di callback async (tak ada sync-in-effect); aman SSR / tanpa token.
+ *
+ * Catatan: halaman yang SUDAH punya pulls/assets (mis. /account) sebaiknya pakai
+ * `buildFavoriteCards` langsung agar tak fetch dobel.
+ */
+export function useFavoriteCards(wallet: string | null | undefined): {
+  favoriteCards: FavoriteCard[];
+  clearFavorites: () => void;
+} {
+  const { token } = useAuth();
+  const { favorites: favoriteIds, clear } = useFavorites(wallet);
+  const [pulls, setPulls] = useState<GachaPull[]>([]);
+  const [assets, setAssets] = useState<Listing[]>([]);
+
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    Promise.all([
+      // Assets = marketplace purchases; pulls = opened gacha packs. Kegagalan salah
+      // satunya tak boleh membuang yang lain — resolve masing-masing ke [].
+      getMyPurchases(token).catch(() => [] as Listing[]),
+      getMyPacks(token).catch(() => [] as GachaPull[]),
+    ])
+      .then(([a, pk]) => {
+        if (!alive) return;
+        setAssets(a);
+        setPulls(pk.filter((p) => p.status === "OPENED" && !!p.nftAddress));
+      })
+      .catch(() => {
+        /* box favorit sekadar kosong — kosmetik */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
+  const favoriteCards = useMemo(
+    () => buildFavoriteCards(favoriteIds, pulls, assets),
+    [favoriteIds, pulls, assets],
+  );
+
+  return { favoriteCards, clearFavorites: clear };
 }
