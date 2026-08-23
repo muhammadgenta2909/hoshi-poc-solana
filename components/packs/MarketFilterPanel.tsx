@@ -165,6 +165,21 @@ export default function MarketFilterPanel({
   onToggleVaultSource: (s: VaultSource) => void;
   vaultSourceCounts: Record<VaultSource, number>;
 }) {
+  // Data-driven facets: only surface options that ACTUALLY exist in the current inventory
+  // (count > 0), plus any option the user has selected (so a live filter never vanishes under
+  // them). A whole checkbox section hides when there is nothing meaningful to filter by — most
+  // importantly ELEMENT, which CC never populates (element is '' on every synced card), so it
+  // was a permanently-dead facet showing six zeros. A single-option section is also hidden:
+  // one checkbox filters nothing.
+  const vaultVisible = VAULT_SOURCES.filter((s) => vaultSourceCounts[s] > 0 || vaultSources.has(s));
+  const eraVisible = ERAS.filter((e) => eraCounts[e] > 0 || eras.has(e));
+  const graderVisible = GRADERS.filter((g) => graderCounts[g] > 0 || graders.has(g));
+  const elementVisible = ELEMENTS.filter((el) => elementCounts[el] > 0 || elements.has(el));
+
+  const showVault = vaultVisible.length >= 2 || vaultSources.size > 0;
+  const showEra = eraVisible.length >= 2 || eras.size > 0;
+  const showElement = elementVisible.length >= 2 || elements.size > 0;
+
   return (
     <aside className="self-start rounded-2xl bg-[#181507] p-4">
       {/* Header: icon + title + Clear All, with the collapse toggle at the far right */}
@@ -195,21 +210,24 @@ export default function MarketFilterPanel({
 
       <div className="mt-3 border-t border-white/10 pt-4">
         <div className="flex flex-col gap-6">
-          {/* Vault — Hoshi vs CollectorCrypt provenance (PM requirement) */}
-          <div>
-            <SectionTitle>Vault</SectionTitle>
-            <div className="flex flex-col">
-              {VAULT_SOURCES.map((s) => (
-                <CheckRow
-                  key={s}
-                  label={VAULT_FILTER_LABEL[s]}
-                  count={vaultSourceCounts[s]}
-                  checked={vaultSources.has(s)}
-                  onToggle={() => onToggleVaultSource(s)}
-                />
-              ))}
+          {/* Vault — Hoshi vs CollectorCrypt provenance (PM requirement). Hidden when the data
+              offers only one provenance (nothing to filter between). */}
+          {showVault && (
+            <div>
+              <SectionTitle>Vault</SectionTitle>
+              <div className="flex flex-col">
+                {vaultVisible.map((s) => (
+                  <CheckRow
+                    key={s}
+                    label={VAULT_FILTER_LABEL[s]}
+                    count={vaultSourceCounts[s]}
+                    checked={vaultSources.has(s)}
+                    onToggle={() => onToggleVaultSource(s)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Price Range */}
           <div>
@@ -229,20 +247,22 @@ export default function MarketFilterPanel({
           </div>
 
           {/* Era / Generation */}
-          <div>
-            <SectionTitle>Era / Generation</SectionTitle>
-            <div className="flex flex-col">
-              {ERAS.map((e) => (
-                <CheckRow
-                  key={e}
-                  label={e}
-                  count={eraCounts[e]}
-                  checked={eras.has(e)}
-                  onToggle={() => onToggleEra(e)}
-                />
-              ))}
+          {showEra && (
+            <div>
+              <SectionTitle>Era / Generation</SectionTitle>
+              <div className="flex flex-col">
+                {eraVisible.map((e) => (
+                  <CheckRow
+                    key={e}
+                    label={e}
+                    count={eraCounts[e]}
+                    checked={eras.has(e)}
+                    onToggle={() => onToggleEra(e)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Grade & Grader */}
           <div>
@@ -267,7 +287,7 @@ export default function MarketFilterPanel({
               })}
             </div>
             <div className="flex flex-col">
-              {GRADERS.map((g) => (
+              {graderVisible.map((g) => (
                 <CheckRow
                   key={g}
                   label={g}
@@ -279,21 +299,24 @@ export default function MarketFilterPanel({
             </div>
           </div>
 
-          {/* Element */}
-          <div>
-            <SectionTitle>Element</SectionTitle>
-            <div className="flex flex-col">
-              {ELEMENTS.map((el) => (
-                <CheckRow
-                  key={el}
-                  label={el}
-                  count={elementCounts[el]}
-                  checked={elements.has(el)}
-                  onToggle={() => onToggleElement(el)}
-                />
-              ))}
+          {/* Element — Pokémon type. CC never populates this (element is '' on synced cards), so
+              the section only appears if real element data ever exists; otherwise it stays hidden. */}
+          {showElement && (
+            <div>
+              <SectionTitle>Element</SectionTitle>
+              <div className="flex flex-col">
+                {elementVisible.map((el) => (
+                  <CheckRow
+                    key={el}
+                    label={el}
+                    count={elementCounts[el]}
+                    checked={elements.has(el)}
+                    onToggle={() => onToggleElement(el)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </aside>
