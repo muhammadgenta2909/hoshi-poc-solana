@@ -159,6 +159,7 @@ type ProfileForm = {
   notifyOffers: boolean;
   notifyOfferThreshold: number;
   notifyMessages: boolean;
+  discoverable: boolean;
 };
 
 export default function SettingsPage() {
@@ -211,18 +212,24 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Change Email — readonly display + explicit modal (mirrors CollectorCrypt).
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+
   // Riwayat saldo in-app (ledger IDRX) — modal "View history".
   const [historyOpen, setHistoryOpen] = useState(false);
   const [ledger, setLedger] = useState<Balance | null>(null);
   const openHistory = useCallback(async () => {
     setHistoryOpen(true);
-    if (!token) return;
+    if (!token || ledger) return; // reuse the balance already fetched for the tab
     try {
       setLedger(await getBalance(token));
     } catch {
       /* biarkan kosong — modal tampilkan "belum ada" */
     }
-  }, [token]);
+  }, [token, ledger]);
 
   // ACCOUNT BALANCE — live wallet balances, stored WITH the wallet they belong
   // to so switching wallets derives back to "…" instead of flashing the
@@ -248,6 +255,7 @@ export default function SettingsPage() {
     setNotifyOffers(p.notifyOffers);
     setOfferThreshold(p.notifyOfferThreshold);
     setNotifyMessages(p.notifyMessages);
+    setDiscoverable(p.discoverable);
     setBaseline({
       displayName: p.displayName ?? "",
       email: p.email ?? "",
@@ -259,6 +267,7 @@ export default function SettingsPage() {
       notifyOffers: p.notifyOffers,
       notifyOfferThreshold: p.notifyOfferThreshold,
       notifyMessages: p.notifyMessages,
+      discoverable: p.discoverable,
     });
   }, []);
 
@@ -318,6 +327,23 @@ export default function SettingsPage() {
     };
   }, [connection, publicKey]);
 
+  // In-app IDRX balance (sale proceeds ledger) for the Account Balance tab —
+  // the same snapshot the "View history" modal reuses.
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    getBalance(token)
+      .then((b) => {
+        if (alive) setLedger(b);
+      })
+      .catch(() => {
+        /* a failed load just leaves the IDRX tile at "…" */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
   /** PATCH only the fields that changed vs the seeded baseline — never re-send
    *  "" for a field the user didn't touch. The whole patch is atomic server-side,
    *  so bio/twitter/website/phone may send "" to clear themselves, but displayName
@@ -337,6 +363,7 @@ export default function SettingsPage() {
     if (offerThreshold !== baseline.notifyOfferThreshold)
       payload.notifyOfferThreshold = offerThreshold;
     if (notifyMessages !== baseline.notifyMessages) payload.notifyMessages = notifyMessages;
+    if (discoverable !== baseline.discoverable) payload.discoverable = discoverable;
 
     // Client-side guards so a predictable bad value never round-trips a 400.
     if (payload.displayName !== undefined && !payload.displayName.trim()) {
@@ -386,6 +413,7 @@ export default function SettingsPage() {
     notifyOffers,
     offerThreshold,
     notifyMessages,
+    discoverable,
     seedForm,
   ]);
 
@@ -404,6 +432,42 @@ export default function SettingsPage() {
     setPhoneCode("");
     setPhone("");
   }, [profile, seedForm]);
+
+  /** Open the Change Email modal, seeded with the current email. */
+  const openEmailModal = useCallback(() => {
+    setNewEmail(profile?.email ?? "");
+    setEmailError(null);
+    setEmailOpen(true);
+  }, [profile]);
+
+  const closeEmailModal = useCallback(() => {
+    setEmailOpen(false);
+    setEmailError(null);
+  }, []);
+
+  /** Save the new email via updateProfile, then keep local state + baseline in
+   *  sync (so the Main Info diff never re-sends it) and close the modal. */
+  const submitEmail = useCallback(async () => {
+    if (!token) return;
+    const next = newEmail.trim();
+    if (!next || !next.includes("@")) {
+      setEmailError("Enter a valid email");
+      return;
+    }
+    setEmailBusy(true);
+    setEmailError(null);
+    try {
+      const p = await updateProfile({ email: next }, token);
+      setProfile(p);
+      setEmail(p.email ?? "");
+      setBaseline((prev) => (prev ? { ...prev, email: p.email ?? "" } : prev));
+      setEmailOpen(false);
+    } catch (e) {
+      setEmailError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEmailBusy(false);
+    }
+  }, [token, newEmail]);
 
   const setField = <K extends keyof typeof emptyForm>(key: K, value: (typeof emptyForm)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -500,6 +564,14 @@ export default function SettingsPage() {
     return kind === "sol" ? formatSol(balances.sol) : formatUsdc(balances.usdc);
   };
 
+  // In-app sale balance (IDRX, Rupiah) — token-gated, not on-chain.
+  const idrFmt = new Intl.NumberFormat("id-ID");
+  const balanceIdrx = () => {
+    if (!isAuthed) return "Rp 0"; // signed out — no ledger to read
+    if (!ledger) return "…"; // fetch in flight
+    return `Rp ${idrFmt.format(ledger.balanceIdrx)}`;
+  };
+
   return (
     <AccountShell active="Vault">
       {/* Rail on the left, banner on the right — mirrors the profile page. Below
@@ -548,19 +620,29 @@ export default function SettingsPage() {
 
               <FieldRow label="Email">
                 <div className="space-y-3">
-                  <TextInput
-                    type="email"
-                    value={email}
-                    maxLength={254}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@email.com"
-                  />
-                  <div className="flex flex-wrap items-center justify-end gap-3">
+                  {/* Readonly display + explicit "Change" (mirrors CollectorCrypt):
+                      the address is never edited inline — it goes through the modal
+                      so a typo can't be saved by the whole-form Save. */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="min-w-0 flex-1 truncate rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-[14px] text-zinc-500">
+                      {email || "No email set"}
+                    </div>
+                    <GhostButton
+                      type="button"
+                      onClick={openEmailModal}
+                      disabled={!isAuthed}
+                      className="shrink-0 px-4 py-2.5 text-[13px]"
+                    >
+                      Change
+                    </GhostButton>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <Toggle
                       checked={discoverable}
                       onChange={setDiscoverable}
                       label="Discoverable"
                     />
+                    <InfoHint text="Making your email discoverable lets other users find your account by email." />
                   </div>
                 </div>
               </FieldRow>
@@ -719,6 +801,7 @@ export default function SettingsPage() {
             <div className="mt-4 flex flex-col gap-3 sm:flex-row">
               <BalanceTile dot="#9945FF" label="Solana" amount={balanceFor("sol")} unit="SOL" />
               <BalanceTile dot="#2775CA" label="USDC" amount={balanceFor("usdc")} unit="USDC" />
+              <BalanceTile dot="#F2C101" label="IDRX" amount={balanceIdrx()} unit="Saldo" gold />
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -869,6 +952,36 @@ export default function SettingsPage() {
         </div>
       </ModalShell>
 
+      {/* Change Email */}
+      <ModalShell open={emailOpen} onClose={closeEmailModal} title="Change Email" maxWidth={440}>
+        <div className="space-y-4">
+          <ModalField label="New Email">
+            <TextInput
+              type="email"
+              value={newEmail}
+              maxLength={254}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="you@email.com"
+            />
+          </ModalField>
+
+          {emailError && (
+            <p className="text-[12px] text-red-400" role="alert">
+              {emailError}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <GhostButton type="button" onClick={closeEmailModal}>
+              Cancel
+            </GhostButton>
+            <PrimaryButton type="button" onClick={submitEmail} disabled={emailBusy}>
+              {emailBusy ? "Saving…" : "Change"}
+            </PrimaryButton>
+          </div>
+        </div>
+      </ModalShell>
+
       {renaming && token && (
         // key on the loaded name so the modal reseeds if it opened before the
         // profile fetch resolved (the pencil is gated only on isAuthed).
@@ -954,6 +1067,21 @@ function ModalField({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+/** Tiny "i" badge with a native hover tooltip — a restrained hint next to a
+ *  control that needs one line of explanation. */
+function InfoHint({ text }: { text: string }) {
+  return (
+    <span
+      title={text}
+      aria-label={text}
+      role="img"
+      className="grid h-[18px] w-[18px] shrink-0 cursor-help place-items-center rounded-full border border-white/20 text-[11px] font-semibold leading-none text-zinc-400"
+    >
+      i
+    </span>
+  );
+}
+
 /** Riwayat mutasi saldo in-app (IDRX): top-up (+), hasil jual (+), penarikan (−), refund (+). */
 function BalanceHistory({ ledger }: { ledger: Balance | null }) {
   const idr = new Intl.NumberFormat("id-ID");
@@ -1018,19 +1146,31 @@ function BalanceTile({
   label,
   amount,
   unit,
+  gold = false,
 }: {
   dot: string;
   label: string;
   amount: string;
   unit: string;
+  /** Gold accent — used by the IDRX (in-app sale) tile so it reads as "income",
+   *  matching the gold IDRX row in the account menu. */
+  gold?: boolean;
 }) {
   return (
-    <div className="flex-1 rounded-xl border border-white/[0.07] bg-white/[0.03] p-4">
+    <div
+      className={`flex-1 rounded-xl border p-4 ${
+        gold ? "border-yellow-400/25 bg-yellow-400/[0.06]" : "border-white/[0.07] bg-white/[0.03]"
+      }`}
+    >
       <div className="flex items-center gap-2 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: dot }} />
         {label}
       </div>
-      <div className="mt-2 text-[20px] font-semibold tabular-nums text-zinc-100">
+      <div
+        className={`mt-2 text-[20px] font-semibold tabular-nums ${
+          gold ? "text-yellow-200" : "text-zinc-100"
+        }`}
+      >
         {amount}{" "}
         <span className="text-[13px] font-normal text-zinc-500">{unit}</span>
       </div>
