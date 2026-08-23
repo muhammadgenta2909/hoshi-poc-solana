@@ -256,6 +256,8 @@ export type Profile = {
   notifyOffers: boolean;
   notifyOfferThreshold: number;
   notifyMessages: boolean;
+  /** Lets other users find this account by email (default false). */
+  discoverable: boolean;
   createdAt: string;
 };
 
@@ -279,6 +281,7 @@ export type UpdateProfileInput = Partial<{
   notifyOffers: boolean;
   notifyOfferThreshold: number;
   notifyMessages: boolean;
+  discoverable: boolean;
 }>;
 
 /** Update your own profile (rename pencil sends { displayName } alone; the
