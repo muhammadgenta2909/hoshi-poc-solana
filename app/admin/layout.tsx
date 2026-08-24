@@ -48,14 +48,27 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     }
   }, [hydrated, isAdmin, isLoginRoute, pathname, router]);
 
-  // Badge unread pada nav Messages.
+  // Badge unread pada nav Messages — REALTIME(-ish): fetch awal + poll tiap 15 detik + refetch
+  // begitu tab kembali fokus/terlihat. Jadi angka pesan baru muncul tanpa perlu refresh manual.
   useEffect(() => {
     if (!token) return;
     let alive = true;
-    getAdminSupportUnread(token)
-      .then((r) => { if (alive) setUnread(r.unread); })
-      .catch(() => {});
-    return () => { alive = false; };
+    const load = () => {
+      getAdminSupportUnread(token)
+        .then((r) => { if (alive) setUnread(r.unread); })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 15_000);
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [token, pathname]);
 
   // Login page merender dirinya sendiri (tanpa shell).
