@@ -41,9 +41,6 @@ function CryptoChip({ label }: { label: string }) {
   );
 }
 
-/** Alamat wallet escrow P2P (publik) — dibaca on-chain buat pantau gas SOL-nya. */
-const ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_ADDRESS ?? "";
-
 const STATUS_SHORT: Record<AdminTreasury["status"], string> = {
   healthy: "Sehat",
   low: "Menipis",
@@ -127,7 +124,6 @@ export default function AdminDashboardPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [daily, setDaily] = useState<AdminDailyStats | null>(null);
   const [treasury, setTreasury] = useState<AdminTreasury | null>(null);
-  const [escrowSol, setEscrowSol] = useState<number | null>(null);
   const [finance, setFinance] = useState<AdminFinance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -155,33 +151,6 @@ export default function AdminDashboardPage() {
     load();
     return () => { alive = false; };
   }, [token]);
-
-  // Saldo SOL wallet escrow (gas transfer kartu P2P) — dibaca on-chain langsung (data publik,
-  // read-only), jadi tak perlu endpoint backend baru. null = alamat/RPC belum di-set atau gagal baca.
-  useEffect(() => {
-    const rpc = process.env.NEXT_PUBLIC_RPC_URL;
-    if (!ESCROW_ADDRESS || !rpc) return;
-    let alive = true;
-    fetch(rpc, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getBalance",
-        params: [ESCROW_ADDRESS],
-      }),
-    })
-      .then((r) => r.json())
-      .then((j) => {
-        if (alive && typeof j?.result?.value === "number")
-          setEscrowSol(j.result.value / 1_000_000_000);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   if (loading) return <p className="py-12 text-center text-sm text-zinc-500">Loading stats…</p>;
   if (error) return (
@@ -334,19 +303,22 @@ export default function AdminDashboardPage() {
               <WalletCard
                 title="Escrow (P2P)"
                 subtitle="Nyimpen kartu penjual selama dijual antar user"
-                status={solStatus(escrowSol)}
+                status={treasury.escrowConfigured ? solStatus(treasury.escrowSol) : "unknown"}
                 rows={[
                   {
                     icon: "⛽",
                     label: "Gas (SOL)",
-                    value: escrowSol === null ? "—" : escrowSol.toFixed(3),
+                    value:
+                      treasury.escrowConfigured && treasury.escrowSol !== null
+                        ? treasury.escrowSol.toFixed(3)
+                        : "—",
                     hint: "transfer kartu ke pembeli (murah)",
                   },
                 ]}
                 note={
-                  ESCROW_ADDRESS
+                  treasury.escrowConfigured
                     ? "Cuma butuh SOL (gas) — nggak nyimpen USDC."
-                    : "Alamat escrow belum di-set (NEXT_PUBLIC_ESCROW_ADDRESS)."
+                    : "Alamat escrow belum di-set (ESCROW_ADDRESS)."
                 }
               />
             </div>

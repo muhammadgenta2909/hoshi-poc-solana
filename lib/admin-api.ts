@@ -134,6 +134,10 @@ export type AdminTreasury = {
   status: "healthy" | "low" | "critical" | "unknown";
   /** true = USDC/SOL adalah MOCK (staging) — UI menandainya, tak menampilkan angka $ sbg saldo asli. */
   simulated: boolean;
+  /** Saldo SOL wallet escrow P2P, dibaca SERVER-SIDE (via ESCROW_ADDRESS env). null = belum di-set / gagal baca. */
+  escrowSol: number | null;
+  /** true saat ESCROW_ADDRESS env di-set — escrow bisa dipantau. */
+  escrowConfigured: boolean;
 };
 
 export const getAdminTreasury = (token: string) =>

@@ -431,15 +431,15 @@ function PullCard({
         </>
       )}
 
-      {/* Card visual — mirrors MarketCard's polished panel (frosted image parent +
-          #181507 lower section), click-through to the CC-style detail/manage page. */}
-      <Link
-        href={`/vault/${pull.nftAddress}`}
-        aria-label={`View ${pull.ccItemName ?? pull.nftName ?? "your card"}`}
-        className="group flex flex-col overflow-hidden rounded-2xl border border-white/5 text-left transition hover:border-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
-      >
-        {/* Image parent — frosted white 9% (Figma), same treatment as MarketCard. */}
-        <div className="relative bg-white/[0.09] p-3 backdrop-blur-sm">
+      {/* Card panel — a <div> (NOT a <Link>) so the in-body actions (List for Sale / NFT) aren't
+          nested inside an anchor. Image + title link to the detail page instead. */}
+      <div className="group flex flex-col overflow-hidden rounded-2xl border border-white/5 text-left transition hover:border-white/15">
+        {/* Image parent — frosted white 9% (Figma); click-through to detail. */}
+        <Link
+          href={`/vault/${pull.nftAddress}`}
+          aria-label={`View ${pull.ccItemName ?? pull.nftName ?? "your card"}`}
+          className="relative block bg-white/[0.09] p-3 backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+        >
           {/* PULLED origin badge — restyled to the Jersey/gold chip MarketCard uses. */}
           <span
             className="absolute left-2 top-2 z-10 inline-flex items-center rounded-md px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-[#171717]"
@@ -458,9 +458,9 @@ function PullCard({
               <Img src="/card-back.svg" alt="" className="h-24 w-auto opacity-60" />
             </div>
           )}
-        </div>
+        </Link>
 
-        {/* Lower section — #181507, same as MarketCard. */}
+        {/* Lower section — #181507; carries badges, title, set, and the in-body actions. */}
         <div className="flex flex-1 flex-col bg-[#181507] p-3.5">
           {/* grade / rarity badges — hanya yang benar-benar diketahui (mirror MarketCard:
               field kosong = badge hilang, bukan tebakan). */}
@@ -473,8 +473,8 @@ function PullCard({
               jadi selalu tampil "CC" teal (sama seperti MarketCard source=COLLECTORCRYPT).
               `ccItemName` = judul katalog CC lengkap; `nftName` (metadata on-chain, 32 char)
               cuma cadangan. */}
-          <div className="mt-3 flex items-center gap-2">
-            <span className="truncate text-[17px] font-bold uppercase leading-tight text-white">
+          <Link href={`/vault/${pull.nftAddress}`} className="mt-3 flex items-center gap-2 focus-visible:outline-none">
+            <span className="truncate text-[17px] font-bold uppercase leading-tight text-white transition group-hover:text-yellow-100">
               {pull.ccItemName ?? pull.nftName ?? "Your card"}
             </span>
             <span
@@ -484,7 +484,7 @@ function PullCard({
             >
               CC
             </span>
-          </div>
+          </Link>
 
           {/* seri/set kartu (analog CategoryBadge di MarketCard) — hanya bila CC memberi tahu. */}
           {pull.ccSet && (
@@ -492,36 +492,39 @@ function PullCard({
               <CategoryBadge>{pull.ccSet}</CategoryBadge>
             </div>
           )}
+
+          {/* Aksi DI DALAM body card, di bawah judul (permintaan user) — bukan tombol lepas di luar. */}
+          <div className="mt-3 flex flex-col gap-2">
+            {effectiveListedId ? (
+              <Link
+                href={`/marketplace/${effectiveListedId}`}
+                className="rounded-xl border border-emerald-400/25 bg-emerald-400/[0.08] px-3 py-2 text-center text-xs font-semibold text-emerald-300 transition hover:bg-emerald-400/[0.14]"
+              >
+                Listed ✓ — lihat di marketplace
+              </Link>
+            ) : listable ? (
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                className="rounded-xl border border-yellow-400/30 bg-yellow-400/[0.1] px-3 py-2 text-center text-xs font-semibold text-yellow-200 transition hover:bg-yellow-400/[0.18]"
+              >
+                + List for Sale
+              </button>
+            ) : null}
+
+            {pull.nftAddress && (
+              <a
+                href={explorerAddressUrl(pull.nftAddress)}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-xs font-semibold text-zinc-400 transition hover:bg-white/[0.08]"
+              >
+                NFT {shortAsset(pull.nftAddress)}
+              </a>
+            )}
+          </div>
         </div>
-      </Link>
-
-      {effectiveListedId ? (
-        <Link
-          href={`/marketplace/${effectiveListedId}`}
-          className="rounded-xl border border-emerald-400/25 bg-emerald-400/[0.08] px-3 py-2 text-center text-xs font-semibold text-emerald-300 transition hover:bg-emerald-400/[0.14]"
-        >
-          Listed ✓ — lihat di marketplace
-        </Link>
-      ) : listable ? (
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className="rounded-xl border border-yellow-400/30 bg-yellow-400/[0.1] px-3 py-2 text-center text-xs font-semibold text-yellow-200 transition hover:bg-yellow-400/[0.18]"
-        >
-          + List for Sale
-        </button>
-      ) : null}
-
-      {pull.nftAddress && (
-        <a
-          href={explorerAddressUrl(pull.nftAddress)}
-          target="_blank"
-          rel="noreferrer"
-          className="truncate rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-xs font-semibold text-zinc-400 transition hover:bg-white/[0.08]"
-        >
-          NFT {shortAsset(pull.nftAddress)}
-        </a>
-      )}
+      </div>
 
       {modalOpen && (
         <ListForSaleModal
