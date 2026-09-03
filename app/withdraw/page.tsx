@@ -1,7 +1,7 @@
 "use client";
 
 // Withdraw / kirim kartu fisik ke rumah (redeem). REAL end-to-end:
-//   step 1 alamat kirim (getMyAddresses + addAddress)  ·  step 2 pilih kartu (getMyPacks) ·
+//   step 1 alamat kirim (getMyAddresses + shared AddAddressModal)  ·  step 2 pilih kartu (getMyPacks) ·
 //   step 3 review  ·  step 4 submit → requestRedemption per kartu.
 //
 // Yang bisa dikirim HANYA kartu HASIL PACK (backend memverifikasi kepemilikan lewat ledger
@@ -13,14 +13,12 @@ import Link from "next/link";
 import {
   ApiError,
   CC_SHIPPING_ENABLED,
-  addAddress,
   getMyAddresses,
   getMyPacks,
   getMyPurchases,
   getMyRedemptions,
   requestRedemption,
   type CardRedemption,
-  type NewAddressInput,
   type ShippingAddress,
 } from "@/lib/api";
 import type { Listing } from "@/lib/market";
@@ -35,10 +33,10 @@ import {
   TextInput,
   PrimaryButton,
   GhostButton,
-  ModalShell,
   PlusIcon,
   SearchIcon,
 } from "@/components/account/ui";
+import AddAddressModal from "@/components/account/AddAddressModal";
 import { Img } from "@/components/packs/ui";
 import ShippingFlowModal, {
   readPendingShip,
@@ -50,7 +48,7 @@ import ShippingFlowModal, {
 const TOTAL = 4;
 
 const STEP_TITLE: Record<number, string> = {
-  1: "Mau dikirim ke mana?",
+  1: "Where should we ship it?",
   2: "Pilih kartu yang mau dikirim",
   3: "Cek dulu pengirimanmu",
   4: "Konfirmasi & kirim",
@@ -154,6 +152,16 @@ export default function WithdrawPage() {
     }
     void load();
   }, [token, load]);
+
+  // A new address came back from the shared AddAddressModal: select it, then
+  // re-pull the list (load keeps the current selection if it's still present).
+  const onAddressAdded = useCallback(
+    async (a: ShippingAddress) => {
+      setSelectedAddr(a.id);
+      await load();
+    },
+    [load],
+  );
 
   // Sepulang dari halaman bayar ongkir (IDRX/Duitku): bersihkan query yang ditempel gateway lalu
   // resume modal kirim (mode resume → modal poll status & lanjut ke tanda tangan). Hanya saat flag
@@ -363,10 +371,10 @@ export default function WithdrawPage() {
         {/* --------------------------- STEP 1: alamat --------------------------- */}
         {step === 1 && (
           <>
-            <SectionTitle>Alamat pengiriman</SectionTitle>
+            <SectionTitle>Shipping address</SectionTitle>
             <Panel className="mt-3 p-4 sm:p-5">
               {loading ? (
-                <p className="py-8 text-center text-sm text-zinc-500">Memuat alamat…</p>
+                <p className="py-8 text-center text-sm text-zinc-500">Loading addresses…</p>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
                   {addresses.map((a) => {
@@ -386,7 +394,7 @@ export default function WithdrawPage() {
                           <span className="text-[15px] font-semibold text-zinc-100">{a.fullName}</span>
                           {a.isDefault && (
                             <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                              Utama
+                              Default
                             </span>
                           )}
                         </div>
@@ -406,13 +414,13 @@ export default function WithdrawPage() {
                           >
                             ✓
                           </span>
-                          {on ? "Dipilih" : "Kirim ke sini"}
+                          {on ? "Selected" : "Ship here"}
                         </span>
                       </button>
                     );
                   })}
 
-                  <AddAddressButton token={token} onAdded={load} />
+                  <AddAddressButton token={token} onAdded={onAddressAdded} />
                 </div>
               )}
               {loadError && <p className="mt-3 text-[13px] text-red-400">{loadError}</p>}
@@ -421,7 +429,7 @@ export default function WithdrawPage() {
             <BottomBar
               right={
                 <PrimaryButton onClick={next} disabled={!selectedAddr}>
-                  Pilih kartu →
+                  Select cards →
                 </PrimaryButton>
               }
             />
@@ -664,60 +672,17 @@ function WithdrawHeader() {
   );
 }
 
-/** Tombol + modal tambah alamat (fullName, negara, kota, jalan, kodepos — field wajib backend). */
-function AddAddressButton({ token, onAdded }: { token: string | null; onAdded: () => Promise<void> | void }) {
+/** Dashed "+ Add new address" grid tile + the SHARED AddAddressModal (the same
+ *  component Settings uses — full geo cascade + phone picker). On success the
+ *  parent's onAdded selects the new address and refreshes the list. */
+function AddAddressButton({
+  token,
+  onAdded,
+}: {
+  token: string | null;
+  onAdded: (a: ShippingAddress) => Promise<void> | void;
+}) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<NewAddressInput>({
-    fullName: "",
-    country: "Indonesia",
-    street: "",
-    city: "",
-    zip: "",
-  });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const valid =
-    form.fullName.trim() && form.country.trim() && form.street.trim() && form.city.trim() && form.zip.trim();
-
-  const save = async () => {
-    if (!token || !valid || busy) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await addAddress(
-        {
-          fullName: form.fullName.trim(),
-          country: form.country.trim(),
-          street: form.street.trim(),
-          city: form.city.trim(),
-          zip: form.zip.trim(),
-          isDefault: true,
-        },
-        token,
-      );
-      setOpen(false);
-      setForm({ fullName: "", country: "Indonesia", street: "", city: "", zip: "" });
-      await onAdded();
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Gagal menyimpan.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Hanya field bertipe string (isDefault boolean tidak lewat sini).
-  type StrKey = "fullName" | "country" | "street" | "city" | "zip";
-  const field = (label: string, key: StrKey, placeholder: string) => (
-    <div>
-      <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">{label}</label>
-      <TextInput
-        value={form[key] ?? ""}
-        onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-        placeholder={placeholder}
-      />
-    </div>
-  );
 
   return (
     <>
@@ -727,29 +692,18 @@ function AddAddressButton({ token, onAdded }: { token: string | null; onAdded: (
         className="flex min-h-[124px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 bg-white/[0.01] p-4 text-zinc-400 transition hover:border-yellow-400/40 hover:text-yellow-300"
       >
         <PlusIcon className="h-5 w-5" />
-        <span className="text-[13px] font-semibold">Tambah alamat</span>
+        <span className="text-[13px] font-semibold">Add new address</span>
       </button>
 
-      <ModalShell open={open} onClose={() => setOpen(false)} title="Tambah alamat" subtitle="Ke mana kartunya dikirim?">
-        <div className="space-y-4">
-          {field("Nama penerima", "fullName", "mis. Genta Pratama")}
-          {field("Jalan / detail", "street", "Jl. Contoh No. 1, RT/RW")}
-          <div className="grid grid-cols-2 gap-3">
-            {field("Kota", "city", "Tasikmalaya")}
-            {field("Kode pos", "zip", "46100")}
-          </div>
-          {field("Negara", "country", "Indonesia")}
-          {err && <p className="text-[13px] text-red-400">{err}</p>}
-          <div className="flex justify-end gap-3 pt-1">
-            <GhostButton onClick={() => setOpen(false)} disabled={busy}>
-              Batal
-            </GhostButton>
-            <PrimaryButton onClick={save} disabled={!valid || busy}>
-              {busy ? "Menyimpan…" : "Simpan alamat"}
-            </PrimaryButton>
-          </div>
-        </div>
-      </ModalShell>
+      <AddAddressModal
+        open={open}
+        onClose={() => setOpen(false)}
+        onAdded={(a) => {
+          setOpen(false);
+          void onAdded(a);
+        }}
+        token={token}
+      />
     </>
   );
 }
