@@ -148,6 +148,123 @@ function SortSelect({ sort, onSort }: { sort: SortKey; onSort: (s: SortKey) => v
   );
 }
 
+/** Nol hasil itu TIGA keadaan yang berbeda, dan menyamakan ketiganya membuat user buntu:
+ *  (1) pencarian masih terbang; (2) namanya memang tidak ada di katalog; (3) namanya ADA
+ *  tapi filter yang sedang aktif menyaring habis semuanya. Nomor 3 yang paling menjebak —
+ *  tanpa dibedakan, user menyalahkan kata kuncinya dan mengetik ulang terus, padahal yang
+ *  menghalangi ada di panel filter. Tiap keadaan karena itu menyebut jalan keluarnya sendiri. */
+function EmptyState({
+  searching,
+  searchTerm,
+  searchMatchCount,
+  searchFailed = false,
+  onClearSearch,
+  onRetrySearch,
+}: {
+  searching: boolean;
+  searchTerm: string;
+  searchMatchCount: number | null;
+  /** Request untuk kata ini GAGAL — beda dari "hasilnya nol". Lihat cabang di bawah. */
+  searchFailed?: boolean;
+  onClearSearch?: () => void;
+  onRetrySearch?: () => void;
+}) {
+  // Selama request untuk kata INI masih terbang, layar kosong belum boleh berbicara: yang
+  // ada di tangan cuma hasil kata SEBELUMNYA, jadi menyebut angkanya akan salah.
+  if (searchTerm && searching) {
+    return (
+      <p className="py-16 text-center text-sm text-zinc-500">Mencari “{searchTerm}”…</p>
+    );
+  }
+
+  // ╔══════════════════════════════════════════════════════════════════════════════════════╗
+  // ║ REQUEST GAGAL ≠ HASIL NOL. Ini cabang tersendiri, dan wajib ada.                     ║
+  // ╚══════════════════════════════════════════════════════════════════════════════════════╝
+  // Kalau request-nya gagal, `hits` tetap null dan halaman menurunkannya jadi array kosong —
+  // bentuknya persis sama dengan "memang tidak ada kartu bernama itu". DULU keduanya jatuh ke
+  // kalimat yang sama, jadi sinyal HP yang putus sebentar membuat layar menyatakan sebuah
+  // kartu yang JELAS ADA di katalog itu tidak ada. User menyimpulkan kartunya sudah terjual
+  // dan berhenti mencoba — kita berbohong soal isi inventaris karena satu request gagal.
+  if (searchTerm && searchFailed) {
+    return (
+      <div className="py-16 text-center">
+        <p className="mx-auto max-w-sm text-sm leading-relaxed text-zinc-400">
+          Pencarian “{searchTerm}” belum berhasil dimuat — jaringannya sedang tidak stabil.
+          <span className="mt-1 block text-zinc-500">
+            Ini <span className="text-zinc-300">bukan</span> berarti kartunya tidak ada. Kami
+            belum bisa memeriksanya sekarang.
+          </span>
+        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          {onRetrySearch && (
+            <button
+              type="button"
+              onClick={onRetrySearch}
+              className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-zinc-200 transition hover:border-white/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400/60"
+            >
+              Coba lagi
+            </button>
+          )}
+          {onClearSearch && (
+            <button
+              type="button"
+              onClick={onClearSearch}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-zinc-400 transition hover:border-white/25 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400/60"
+            >
+              Hapus pencarian
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const filteredOut = searchTerm !== "" && (searchMatchCount ?? 0) > 0;
+
+  return (
+    <div className="py-16 text-center">
+      <Img src="/notes.png" alt="" className="mx-auto h-12 opacity-40" />
+      <GradientText
+        style={{ fontFamily: "var(--font-jersey)" }}
+        className="mt-3 block text-2xl"
+      >
+        {searchTerm ? "Tidak ada yang cocok" : "No cards found"}
+      </GradientText>
+
+      {searchTerm ? (
+        <>
+          <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-zinc-500">
+            {filteredOut ? (
+              <>
+                Ada {searchMatchCount} kartu dengan nama “{searchTerm}”, tapi semuanya tersaring
+                oleh filter yang sedang aktif. Longgarkan filternya, atau hapus pencarian ini.
+              </>
+            ) : (
+              <>
+                Tidak ada kartu yang namanya mengandung “{searchTerm}”. Pencarian mencocokkan
+                nama kartu saja — coba kata yang lebih pendek, atau periksa ejaannya.
+              </>
+            )}
+          </p>
+          {onClearSearch && (
+            <button
+              type="button"
+              onClick={onClearSearch}
+              className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-zinc-200 transition hover:border-white/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400/60"
+            >
+              Hapus pencarian
+            </button>
+          )}
+        </>
+      ) : (
+        <p className="mt-1 text-sm text-zinc-500">
+          Try clearing a filter or widening the price range.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MarketGrid({
   results,
   chips = [],
@@ -160,6 +277,12 @@ export default function MarketGrid({
   onCurrency,
   sort,
   onSort,
+  searching = false,
+  searchTerm = "",
+  searchMatchCount = null,
+  searchFailed = false,
+  onClearSearch,
+  onRetrySearch,
 }: {
   results: Listing[];
   chips?: { key: string; label: string; onRemove: () => void }[];
@@ -173,6 +296,19 @@ export default function MarketGrid({
   onCurrency: (c: Currency) => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
+  /** Request ?search= sedang terbang. Hanya dipakai empty state — grid yang sudah terisi
+   *  sengaja dibiarkan apa adanya supaya tidak berkedip di sela dua ketikan. */
+  searching?: boolean;
+  /** Kata yang BENAR-BENAR dicari (sesudah debounce), bukan isi kotak saat ini. */
+  searchTerm?: string;
+  /** Jumlah kartu yang cocok NAMANYA sebelum filter lain memotong; null = tak ada pencarian
+   *  aktif / hasil pertama belum tiba. Inilah yang memisahkan "tak ada" dari "habis difilter". */
+  searchMatchCount?: number | null;
+  /** Request ?search= untuk kata ini GAGAL. Dipisah dari "hasil nol" karena di data keduanya
+   *  berbentuk identik (`hits` null → array kosong) sementara artinya berlawanan. */
+  searchFailed?: boolean;
+  onClearSearch?: () => void;
+  onRetrySearch?: () => void;
 }) {
   return (
     <section>
@@ -254,16 +390,14 @@ export default function MarketGrid({
       )}
 
       {results.length === 0 ? (
-        <div className="py-16 text-center">
-          <Img src="/notes.png" alt="" className="mx-auto h-12 opacity-40" />
-          <GradientText
-            style={{ fontFamily: "var(--font-jersey)" }}
-            className="mt-3 block text-2xl"
-          >
-            No cards found
-          </GradientText>
-          <p className="mt-1 text-sm text-zinc-500">Try clearing a filter or widening the price range.</p>
-        </div>
+        <EmptyState
+          searching={searching}
+          searchTerm={searchTerm}
+          searchMatchCount={searchMatchCount}
+          searchFailed={searchFailed}
+          onClearSearch={onClearSearch}
+          onRetrySearch={onRetrySearch}
+        />
       ) : (
         <div
           className={`grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 ${

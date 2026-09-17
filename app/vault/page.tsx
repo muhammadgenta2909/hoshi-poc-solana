@@ -437,8 +437,10 @@ function PullCard({
   const listable = pull.status === "OPENED" && !!pull.nftAddress;
 
   // Favorit (♥) — id = nftAddress; tampil di box "Your Favorite Card" di banner profil.
-  const { publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() ?? null;
+  // Key = SESSION address (adapter key, else the JWT user's wallet), sama dengan yang
+  // dibaca banner /account dan /settings — user Google tak punya publicKey adapter, jadi
+  // memakai useWallet() di sini akan menulis ♥ ke bucket "anon" yang tak pernah dibaca.
+  const { activeAddress: wallet } = useAuth();
   const { favorites, toggle } = useFavorites(wallet);
   const faved = !!pull.nftAddress && favorites.includes(pull.nftAddress);
   const [maxNote, setMaxNote] = useState(false);
@@ -604,8 +606,8 @@ function BoughtCard({
   const pendingEscrow = listing.status === "PENDING_ESCROW";
 
   // Favorit (♥) — key = listing.id (sama dgn resolusi banner di /account). Heart di semua kartu.
-  const { publicKey } = useWallet();
-  const favWallet = publicKey?.toBase58() ?? null;
+  // Bucket-nya SESSION address, bukan publicKey adapter (lihat catatan di PullCard).
+  const { activeAddress: favWallet } = useAuth();
   const { favorites, toggle } = useFavorites(favWallet);
   const faved = favorites.includes(listing.id);
   const [maxNote, setMaxNote] = useState(false);

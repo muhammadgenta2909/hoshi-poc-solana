@@ -100,7 +100,26 @@ export function warmBackend() {
 
 /* ---------------- marketplace ---------------- */
 
-export const getListings = () => api<Listing[]>("/marketplace");
+/**
+ * Feed marketplace (GET /marketplace). `search` adalah param milik BACKEND sendiri —
+ * `QueryListingDto.search` (hoshi-backend/src/marketplace/dto/query-listing.dto.ts) yang
+ * di `MarketplaceService.list()` menjadi `where.name = { contains, mode: 'insensitive' }`.
+ *
+ * Semantiknya sempit dan perlu diketahui sebelum dipakai: yang dicocokkan HANYA `name`
+ * kartu — bukan set/seri, bukan penjual, bukan grader — sebagai substring tanpa peduli
+ * besar-kecil huruf, dan di server ia di-AND dengan filter query lain. Backend juga tidak
+ * memberi paginasi: ia mengembalikan SEMUA listing ACTIVE yang cocok.
+ *
+ * Kosong/whitespace ⇒ param tidak dikirim ⇒ feed penuh, sama persis dengan panggilan
+ * tanpa argumen yang lama. `signal` dipakai pemanggil untuk membatalkan pencarian yang
+ * sudah didahului ketikan berikutnya — AbortError-nya naik ke pemanggil, jadi pemanggil
+ * yang harus menelannya.
+ */
+export const getListings = (search?: string, signal?: AbortSignal) => {
+  const term = search?.trim();
+  const qs = term ? `?search=${encodeURIComponent(term)}` : "";
+  return api<Listing[]>(`/marketplace${qs}`, signal ? { signal } : undefined);
+};
 
 export const getListingDetail = (id: string) =>
   api<CardDetail>(`/marketplace/${encodeURIComponent(id)}`);

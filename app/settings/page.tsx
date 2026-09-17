@@ -6,9 +6,10 @@
 // Balance reads live SOL/USDC over the wallet's RPC connection. Discoverable
 // and blocked users remain local-only POC UI.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
+import { PublicKey } from "@solana/web3.js";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
 import { useFavoriteCards } from "@/lib/favorites";
@@ -73,10 +74,24 @@ type ProfileForm = {
 };
 
 export default function SettingsPage() {
-  const { token, isAuthed, user } = useAuth();
+  const { token, isAuthed, user, activeAddress } = useAuth();
   const { connection } = useConnection();
-  const { publicKey } = useWallet();
-  const address = publicKey?.toBase58() ?? null;
+  // The SESSION's address, not the wallet-adapter key: a Google/Privy user is
+  // signed in against a real wallet address but has no adapter key, so keying
+  // this on useWallet() showed them "Guest", an empty address and a hard 0.000
+  // SOL on their own settings page. `activeAddress` is the adapter key when
+  // there is one, else the signed-in user's wallet from the JWT.
+  const address = activeAddress;
+  // Same address as a PublicKey for the on-chain reads below (mirrors
+  // <WalletIdentityPanel>); null when there is none / it can't be parsed.
+  const owner = useMemo(() => {
+    if (!address) return null;
+    try {
+      return new PublicKey(address);
+    } catch {
+      return null;
+    }
+  }, [address]);
 
   const [tab, setTab] = useTabParam<Tab>("MAIN INFO", TABS);
 
@@ -214,26 +229,27 @@ export default function SettingsPage() {
     };
   }, [token]);
 
-  // Live SOL + devnet-USDC balances for the Account Balance tab.
+  // Live SOL + devnet-USDC balances for the Account Balance tab. Read BY ADDRESS
+  // (see `owner` above) so a Google/Privy user's embedded wallet is read too.
   useEffect(() => {
-    if (!publicKey) return;
+    if (!owner) return;
     let alive = true;
-    const owner = publicKey.toBase58();
+    const ownerAddr = owner.toBase58();
     Promise.all([
-      fetchSolBalance(connection, publicKey),
-      fetchSplBalance(connection, publicKey, DEVNET_USDC_MINT),
+      fetchSolBalance(connection, owner),
+      fetchSplBalance(connection, owner, DEVNET_USDC_MINT),
     ])
       .then(([sol, usdc]) => {
-        if (alive) setBalances({ owner, sol, usdc });
+        if (alive) setBalances({ owner: ownerAddr, sol, usdc });
       })
       .catch(() => {
         // RPC hiccup — a zero reads better than an eternal spinner
-        if (alive) setBalances({ owner, sol: 0, usdc: 0 });
+        if (alive) setBalances({ owner: ownerAddr, sol: 0, usdc: 0 });
       });
     return () => {
       alive = false;
     };
-  }, [connection, publicKey]);
+  }, [connection, owner]);
 
   // In-app IDRX balance (sale proceeds ledger) for the Account Balance tab —
   // the same snapshot the "View history" modal reuses.

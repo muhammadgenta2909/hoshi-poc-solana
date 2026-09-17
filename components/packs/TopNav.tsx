@@ -20,8 +20,10 @@ import {
   DepositIcon,
   WithdrawIcon,
   HistoryIcon,
+  BoxIcon,
   LogoutIcon,
 } from "@/components/account/ui";
+import { markSoldSeen, useAccountBadges } from "@/lib/useAccountBadges";
 import { lockBodyScroll } from "@/lib/scrollLock";
 
 // Admin is intentionally NOT a nav entry: /admin is staff-only and reached by
@@ -190,9 +192,11 @@ function CartButton() {
  *  dropdown holds, in one sheet. Portalled to <body> so it can't be trapped by
  *  the header's sticky stacking context.
  *
- *  NOTE: the account icons are read INSIDE the component, never at module scope
- *  — account/ui.tsx → TopNav → account/ui.tsx is a circular import, so touching
- *  those exports at module-init time would hit their temporal dead zone. */
+ *  VISIBILITY IS `lg:hidden` — the same breakpoint that hides the hamburger that
+ *  opens it and brings <AccountMenu> back. It used to be `md:hidden`, which left
+ *  768–1023px with a hamburger, no desktop dropdown, and a drawer that rendered
+ *  `display:none`: tapping the button locked body scroll behind a sheet nobody
+ *  could see. Keep it in sync with DESKTOP and the `lg:` classes in the bar. */
 function MobileMenu({
   open,
   onClose,
@@ -202,10 +206,6 @@ function MobileMenu({
   onClose: () => void;
   active?: NavLabel;
 }) {
-  const { publicKey, disconnect } = useWallet();
-  const { logout } = useAuth();
-  const { open: openConnect } = useWalletConnect();
-
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -226,130 +226,220 @@ function MobileMenu({
 
   if (!open || typeof document === "undefined") return null;
 
-  const address = publicKey?.toBase58() ?? null;
-  const iconCls = "h-[18px] w-[18px]";
+  return createPortal(
+    <div className="fixed inset-0 z-[90] lg:hidden" role="presentation" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <MobileMenuSheet onClose={onClose} active={active} />
+    </div>,
+    document.body,
+  );
+}
 
-  const ACCOUNT = [
+/** The sheet itself. Split out so it MOUNTS ONLY WHILE THE DRAWER IS OPEN:
+ *  <MobileMenu> is rendered by the bar on every page, and hooks keep running in a
+ *  component that returns null — the badge poll (and the balance reads inside
+ *  <WalletIdentityPanel>) would otherwise run for every visitor on every page.
+ *
+ *  NOTE: the account icons are read INSIDE the component, never at module scope
+ *  — account/ui.tsx → TopNav → account/ui.tsx is a circular import, so touching
+ *  those exports at module-init time would hit their temporal dead zone. */
+function MobileMenuSheet({ onClose, active }: { onClose: () => void; active?: NavLabel }) {
+  const { disconnect } = useWallet();
+  // SESSION, not wallet connection. `isAuthed` is our JWT — the one thing BOTH
+  // sign-in paths mint (Phantom via useAuth.login(), Google/Privy via
+  // <PrivyBridge> → useAuth.loginWith()) — and `activeAddress` is the address to
+  // DISPLAY for either: the wallet-adapter key when there is one, else the
+  // signed-in user's wallet carried in the JWT. Reading `useWallet().publicKey`
+  // here (as this drawer used to) shows a fully signed-in Google user "Connect
+  // Wallet" and hides every account destination from them — on the only menu a
+  // phone gets, because <AccountMenu> is `hidden lg:block`.
+  const { isAuthed, activeAddress, logout } = useAuth();
+  const { open: openConnect } = useWalletConnect();
+  const badges = useAccountBadges();
+
+  const address = activeAddress;
+  // A wallet that is connected but not yet signed still gets the menu, exactly as
+  // it does in the desktop dropdown (which renders on `activeAddress` alone); the
+  // pages behind these links run their own token gate and ask for the signature.
+  const signedIn = isAuthed || !!address;
+
+  const iconCls = "h-[18px] w-[18px]";
+  // The SAME destinations as the desktop dropdown (components/account/AccountMenu),
+  // re-ordered for a phone: money first (top-up / cash-out are the errands that
+  // cannot wait), then the account pages, then physical shipping.
+  const BALANCE_NAV = [
+    { label: "Deposit", href: "/deposit", icon: <DepositIcon className={iconCls} />, tint: "text-emerald-400" },
+    { label: "Cash Out", href: "/tarik-saldo", icon: <WithdrawIcon className={iconCls} />, tint: "text-[#F2C101]" },
+  ];
+  const ACCOUNT_NAV = [
     { label: "Profile", href: "/account", icon: <UserIcon className={iconCls} /> },
     { label: "Setting", href: "/settings", icon: <GearIcon className={iconCls} /> },
     { label: "Messages", href: "/messages", icon: <MessageIcon className={iconCls} /> },
     { label: "Swap", href: "/swap", icon: <SwapArrowsIcon className={iconCls} /> },
   ];
-  const SHIPMENTS = [
-    { label: "Deposit", href: "/deposit", icon: <DepositIcon className={iconCls} />, tint: "text-emerald-400" },
-    { label: "Withdraw", href: "/withdraw", icon: <WithdrawIcon className={iconCls} />, tint: "text-amber-400" },
-    { label: "Withdraw History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
+  // Physical Cards = kirim/redeem KARTU FISIK ke rumah (bukan duit) — grup sendiri,
+  // persis seperti di dropdown desktop, biar "tarik DUIT" vs "tarik KARTU" tak ketuker.
+  const CARDS_NAV = [
+    { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];
+
+  const offersCount =
+    badges.offersPending + badges.offersRejectedNew + badges.offersAccepted;
 
   const onLogout = () => {
     onClose();
-    logout();
-    disconnect().catch(() => {});
+    logout(); // clears our JWT and ends the Privy session too (see useAuth)
+    disconnect().catch(() => {}); // no-op for a Google user, who has no adapter
   };
 
-  return createPortal(
-    <div className="fixed inset-0 z-[90] md:hidden" role="presentation" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label="Menu"
-        onClick={(e) => e.stopPropagation()}
-        className="absolute right-0 top-0 flex h-full w-[84%] max-w-[320px] flex-col overflow-y-auto border-l border-white/10 bg-[#141206] shadow-[0_0_80px_rgba(0,0,0,0.6)]"
-      >
-        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5">
-          <Img src="/logo.png" alt="HOSHI" className="h-[30px] w-auto" />
-          <button
-            type="button"
+  return (
+    <aside
+      role="dialog"
+      aria-modal="true"
+      aria-label="Menu"
+      onClick={(e) => e.stopPropagation()}
+      className="absolute right-0 top-0 flex h-full w-[84%] max-w-[320px] flex-col overflow-y-auto border-l border-white/10 bg-[#141206] shadow-[0_0_80px_rgba(0,0,0,0.6)]"
+    >
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5">
+        <Img src="/logo.png" alt="HOSHI" className="h-[30px] w-auto" />
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close menu"
+          className="grid h-9 w-9 place-items-center rounded-full text-zinc-400 transition hover:bg-white/10 hover:text-white"
+        >
+          <CloseIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      <nav className="p-2">
+        {NAV.map((n) => (
+          <Link
+            key={n.label}
+            href={n.href}
             onClick={onClose}
-            aria-label="Close menu"
-            className="grid h-9 w-9 place-items-center rounded-full text-zinc-400 transition hover:bg-white/10 hover:text-white"
+            className={`flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold transition ${
+              active === n.label
+                ? "bg-yellow-400/[0.08] text-yellow-300"
+                : "text-zinc-200 hover:bg-white/[0.05]"
+            }`}
           >
-            <CloseIcon className="h-4 w-4" />
-          </button>
-        </div>
+            {n.icon ? (
+              <Img src={n.icon} alt="" className="h-4 w-4 object-contain" />
+            ) : (
+              <span className="h-4 w-4" />
+            )}
+            {n.label}
+          </Link>
+        ))}
+      </nav>
 
-        <nav className="p-2">
-          {NAV.map((n) => (
-            <Link
-              key={n.label}
-              href={n.href}
-              onClick={onClose}
-              className={`flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold transition ${
-                active === n.label
-                  ? "bg-yellow-400/[0.08] text-yellow-300"
-                  : "text-zinc-200 hover:bg-white/[0.05]"
-              }`}
-            >
-              {n.icon ? (
-                <Img src={n.icon} alt="" className="h-4 w-4 object-contain" />
-              ) : (
-                <span className="h-4 w-4" />
-              )}
-              {n.label}
-            </Link>
-          ))}
-        </nav>
+      {signedIn ? (
+        <>
+          {/* Saldo IDRX with its refresh button. The bar's own pill below `lg` is
+              the compact variant (no refresh), so this is where a phone user can
+              deliberately re-read the balance. */}
+          <div className="border-t border-white/[0.06] p-3">
+            <BalancePill className="inline-flex w-full justify-center" />
+          </div>
 
-        {address ? (
-          <>
-            {/* The bar drops the balance pill below lg, so this is the only place
-                a phone user can read their IDRX balance or copy their address. */}
-            <div className="border-t border-white/[0.06] p-3">
-              <BalancePill className="inline-flex w-full justify-center" />
-            </div>
-
+          {/* Address + SOL/IDRX/USDC. Skipped when the session carries no address
+              to show (a stored user from before walletAddress existed) — the
+              links below still work, which is the part that matters. */}
+          {address && (
             <div className="border-t border-white/[0.06] p-3">
               <WalletIdentityPanel address={address} />
             </div>
+          )}
 
-            <div className="border-t border-white/[0.06] p-2">
-              {ACCOUNT.map((n) => (
-                <DrawerLink key={n.label} {...n} onNavigate={onClose} />
-              ))}
-            </div>
-
-            <div className="border-t border-white/[0.06] p-2">
-              <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
-                My shipments
-              </p>
-              {SHIPMENTS.map((n) => (
-                <DrawerLink key={n.label} {...n} onNavigate={onClose} />
-              ))}
-            </div>
-
-            <div className="mt-auto border-t border-white/[0.06] p-2">
-              <button
-                type="button"
-                onClick={onLogout}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold text-zinc-200 transition hover:bg-white/[0.05]"
+          {/* Notif "kartu terjual" — sama seperti di dropdown desktop. */}
+          {badges.soldNew > 0 && (
+            <div className="border-t border-white/[0.06] px-3 pt-3">
+              <Link
+                href="/vault"
+                onClick={() => {
+                  markSoldSeen();
+                  onClose();
+                }}
+                className="flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/[0.1] px-3 py-2 text-[13px] font-semibold text-emerald-300 transition hover:bg-emerald-400/[0.16]"
               >
-                <LogoutIcon className="h-[18px] w-[18px] text-zinc-400" />
-                Log out
-              </button>
+                🎉 {badges.soldNew} kartu terjual — lihat di Vault →
+              </Link>
             </div>
-          </>
-        ) : (
-          <div className="border-t border-white/[0.06] p-4">
+          )}
+
+          <div className="border-t border-white/[0.06] p-2">
+            <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
+              Balance
+            </p>
+            {BALANCE_NAV.map((n) => (
+              <DrawerLink key={n.label} {...n} onNavigate={onClose} />
+            ))}
+          </div>
+
+          <div className="border-t border-white/[0.06] p-2">
+            <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
+              Account
+            </p>
+            {ACCOUNT_NAV.map((n) => (
+              <DrawerLink
+                key={n.label}
+                {...n}
+                badge={
+                  n.label === "Profile"
+                    ? offersCount
+                    : n.label === "Messages"
+                      ? badges.messageUnread
+                      : 0
+                }
+                onNavigate={onClose}
+              />
+            ))}
+          </div>
+
+          <div className="border-t border-white/[0.06] p-2">
+            <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
+              Physical Cards
+            </p>
+            {CARDS_NAV.map((n) => (
+              <DrawerLink key={n.label} {...n} onNavigate={onClose} />
+            ))}
+          </div>
+
+          <div className="mt-auto border-t border-white/[0.06] p-2">
             <button
               type="button"
-              onClick={() => {
-                onClose();
-                openConnect();
-              }}
-              className="w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105"
-              style={{ backgroundImage: NAV_GRADIENT }}
+              onClick={onLogout}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-semibold text-zinc-200 transition hover:bg-white/[0.05]"
             >
-              Connect Wallet
+              <LogoutIcon className="h-[18px] w-[18px] text-zinc-400" />
+              Log out
             </button>
-            <p className="mt-2 text-center text-[12px] text-zinc-500">
-              Connect to reach your profile, offers and shipments.
-            </p>
           </div>
-        )}
-      </aside>
-    </div>,
-    document.body,
+        </>
+      ) : (
+        <div className="border-t border-white/[0.06] p-4">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              openConnect();
+            }}
+            className="w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105"
+            style={{ backgroundImage: NAV_GRADIENT }}
+          >
+            Sign In
+          </button>
+          {/* That modal offers Phantom AND "Continue with Google", so the copy must
+              not promise a wallet is the only way in. */}
+          <p className="mt-2 text-center text-[12px] text-zinc-500">
+            Connect a wallet or continue with Google to reach your balance, profile
+            and messages.
+          </p>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -358,12 +448,14 @@ function DrawerLink({
   href,
   icon,
   tint,
+  badge = 0,
   onNavigate,
 }: {
   label: string;
   href: string;
   icon: ReactNode;
   tint?: string;
+  badge?: number;
   onNavigate: () => void;
 }) {
   return (
@@ -373,7 +465,12 @@ function DrawerLink({
       className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-medium text-zinc-200 transition hover:bg-white/[0.05]"
     >
       <span className={tint ?? "text-zinc-400"}>{icon}</span>
-      {label}
+      <span className="flex-1">{label}</span>
+      {badge > 0 && (
+        <span className="grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold text-white">
+          {badge > 9 ? "9+" : badge}
+        </span>
+      )}
     </Link>
   );
 }

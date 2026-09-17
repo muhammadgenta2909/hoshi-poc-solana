@@ -121,7 +121,7 @@ type AssetRow =
   | { kind: "pull"; key: string; name: string; series: string | null; at: string; pull: GachaPull };
 
 export default function ProfilePage() {
-  const { token, hydrated, isAuthed, user } = useAuth();
+  const { token, hydrated, isAuthed, user, activeAddress } = useAuth();
   const { publicKey } = useWallet();
   const { open } = useWalletConnect();
 
@@ -174,7 +174,11 @@ export default function ProfilePage() {
   const [pickedListings, setPickedListings] = useState<Set<string>>(new Set());
   const [pickedOffers, setPickedOffers] = useState<Set<string>>(new Set());
 
-  const address = publicKey?.toBase58() ?? null;
+  // SESSION address (adapter key, else the JWT user's wallet) — NOT
+  // useWallet().publicKey: a signed-in Google/Privy user has no adapter key, so
+  // that read left their own profile banner saying "Guest" with no address, and
+  // filed their favourites under the shared "anon" bucket.
+  const address = activeAddress;
 
   // Favorit (maks 3) untuk box "Your Favorite Card" di banner. Id = nftAddress kartu; di-resolve
   // ke kartu hasil pack milik user (nama + art). Di-toggle lewat ♥ di Vault, sinkron via event.
@@ -937,8 +941,10 @@ function ConnectGate({ connected, onConnect }: { connected: boolean; onConnect: 
  *  di LUAR <Link> MarketCard (sibling), jadi klik heart tak ikut membuka detail. Key favorit =
  *  listing.id (di-resolve juga di banner) — heart ada di SEMUA kartu, tak dibeda-bedakan. */
 function FavoritableListing({ listing }: { listing: Listing }) {
-  const { publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() ?? null;
+  // Session address, so a Google/Privy user's hearts land in THEIR bucket — and
+  // in the same one the banner above reads. (Both sides must agree: keying one
+  // on the adapter key and the other on the session would hide the hearts.)
+  const { activeAddress: wallet } = useAuth();
   const { favorites, toggle } = useFavorites(wallet);
   const faved = favorites.includes(listing.id);
   const [maxNote, setMaxNote] = useState(false);
@@ -975,8 +981,8 @@ function FavoritableListing({ listing }: { listing: Listing }) {
 function PullAsset({ pull }: { pull: GachaPull }) {
   const name = pull.ccItemName ?? pull.nftName ?? "Pulled card";
   // Heart favorit — muncul di banner "Your Favorite Card" di atas. Maks 3.
-  const { publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() ?? null;
+  // Session address (see <FavoritableListing>), not the wallet-adapter key.
+  const { activeAddress: wallet } = useAuth();
   const { favorites, toggle } = useFavorites(wallet);
   const faved = !!pull.nftAddress && favorites.includes(pull.nftAddress);
   const [maxNote, setMaxNote] = useState(false);
