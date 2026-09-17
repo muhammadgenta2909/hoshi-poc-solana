@@ -22,6 +22,7 @@ import {
   HistoryIcon,
   LogoutIcon,
 } from "@/components/account/ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 // Admin is intentionally NOT a nav entry: /admin is staff-only and reached by
 // direct URL, gated by app/admin/layout.tsx. Nav is the user-facing surface.
@@ -209,8 +210,7 @@ function MobileMenu({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     // Growing past the breakpoint brings the desktop bar back, which already
     // holds every one of these links — leaving the sheet open would strand a
     // scroll lock behind it.
@@ -219,7 +219,7 @@ function MobileMenu({
     mq.addEventListener("change", onDesktop);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
       mq.removeEventListener("change", onDesktop);
     };
   }, [open, onClose]);

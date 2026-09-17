@@ -809,6 +809,109 @@ export const openPackByMemo = (memo: string, token: string) =>
     headers: { authorization: `Bearer ${token}` },
   });
 
+/* ---------------- bukti undian VRF (PUBLIK — tanpa token) --------------------
+
+   GET /api/gacha/verify/:memo
+     hoshi-backend: @Controller('gacha') + @Get('verify/:memo')  (gacha.controller.ts)
+     + app.setGlobalPrefix('api') di main.ts  →  /api/gacha/verify/:memo
+     → gacha.service.vrfVerify → cc-gacha.client → CC GET /api/vrf/verify?memo=
+
+   Route itu TIDAK punya @UseGuards: undiannya tercatat on-chain dan memang dibuat
+   supaya siapa pun bisa mengauditnya, jadi kita juga TIDAK mengirim Authorization
+   header di sini. (ThrottlerGuard global tetap berlaku — 60 request / 60 detik per
+   IP — jadi jangan dipanggil dalam loop.)
+
+   Fungsi ini sengaja TIDAK ikut konvensi throw-ApiError file ini. Layar bukti wajib
+   membedakan "memo tidak dikenali" dari "verifikatornya sedang tak bisa dihubungi",
+   dan yang kedua BUKAN pertanda undiannya bermasalah — satu Error bertext bebas
+   membuat beda itu gampang hilang. Union di bawah memaksa pemanggil menuliskannya.
+
+   Isi `raw` TIDAK dienumerasi kontrak CC (backend mengetiknya Record<string, unknown>
+   dan meneruskan apa adanya), jadi ia `unknown`: perlakukan sebagai JSON asing yang
+   tidak dipercaya, jangan pernah di-cast ke bentuk yang kita karang sendiri. ------- */
+
+export type VrfProofFailure =
+  /** 404 — verifikator tidak mengenali memo ini. */
+  | "NOT_FOUND"
+  /** Jawaban tidak datang sebelum batas waktu. */
+  | "TIMEOUT"
+  /** Permintaannya tidak sampai sama sekali (jaringan / CORS / backend mati). */
+  | "UNREACHABLE"
+  /** Status 200 tapi badannya bukan JSON yang bisa dibaca. */
+  | "NOT_JSON"
+  /** 5xx atau status lain dari backend kita / CC. */
+  | "SERVER";
+
+/**
+ * Hasil satu pemeriksaan. `reason` untuk UI, `detail` UNTUK LOG SAJA.
+ *
+ * `detail` berisi teks dari HULU — pesan galat backend kita (yang sudah lewat pemeta
+ * pesan ramah milik klien gacha, jadi bisa berbunyi hal seperti "mesin pack ini sedang
+ * tidak tersedia" atau "saldo treasury demo habis (USDC devnet)"), atau potongan badan
+ * balasan yang bukan JSON (yang bisa memuat URL hulu internal dan memo user). Tidak satu
+ * pun dari itu boleh sampai ke layar bukti: di sana kalimat seperti itu bukan cuma salah
+ * konteks, ia berbohong ke pembeli mainnet dan membocorkan jeroan kita. VrfProofPanel
+ * karena itu menulis kalimatnya sendiri per `reason` dan hanya meneruskan `detail` ke
+ * console. Jangan pernah merendernya.
+ */
+export type VrfProofResult =
+  | { ok: true; raw: unknown }
+  | { ok: false; reason: VrfProofFailure; detail?: string };
+
+/** Batas waktu: cukup longgar untuk hop Hoshi→CC, cukup pendek supaya tombolnya
+ *  tidak menggantung tanpa kabar. */
+const VRF_VERIFY_TIMEOUT_MS = 15_000;
+
+/** Ambil bukti VRF satu memo. TIDAK PERNAH throw — setiap kegagalan pulang sebagai
+ *  `{ ok: false, reason }` supaya UI-nya menulis kalimat yang benar untuk tiap sebab. */
+export async function verifyVrf(
+  memo: string,
+  timeoutMs: number = VRF_VERIFY_TIMEOUT_MS,
+): Promise<VrfProofResult> {
+  const trimmed = memo.trim();
+  if (!trimmed) return { ok: false, reason: "NOT_FOUND" };
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/gacha/verify/${encodeURIComponent(trimmed)}`, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    const timedOut =
+      e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+    return { ok: false, reason: timedOut ? "TIMEOUT" : "UNREACHABLE" };
+  }
+
+  // Dibaca sebagai TEKS dulu, baru di-parse sendiri: `res.json()` menggabungkan
+  // "badannya bukan JSON" dengan kegagalan jaringan jadi satu lemparan, padahal
+  // dua-duanya butuh kalimat yang berbeda di layar bukti.
+  const body = await res.text().catch(() => "");
+
+  if (!res.ok) {
+    let detail: string | undefined;
+    try {
+      const parsed = JSON.parse(body) as { message?: string | string[] };
+      if (parsed?.message)
+        detail = Array.isArray(parsed.message) ? parsed.message.join(", ") : String(parsed.message);
+    } catch {
+      /* badan error bukan JSON → status saja yang kita punya */
+    }
+    return {
+      ok: false,
+      reason: res.status === 404 ? "NOT_FOUND" : "SERVER",
+      detail: detail ?? `HTTP ${res.status}`,
+    };
+  }
+
+  try {
+    return { ok: true, raw: JSON.parse(body) as unknown };
+  } catch {
+    return { ok: false, reason: "NOT_JSON", detail: body.slice(0, 200) };
+  }
+}
+
 /* ---------------- buyback (CollectorCrypt's 72-hour window) ------------------
    Two steps, because this is the ONE flow the treasury cannot sign for us:
      1. requestBuyback  -> CC's refund offer + an UNSIGNED transaction

@@ -23,6 +23,7 @@ import {
 import { useAuth } from "@/lib/useAuth";
 import { useSignSerializedTransaction } from "@/lib/useSignSerializedTransaction";
 import { GOLD_GRADIENT } from "./ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 type Stage = "quoting" | "offer" | "signing" | "submitting" | "done" | "error";
 
@@ -105,11 +106,10 @@ export default function BuybackModal({
       if (e.key === "Escape" && stage !== "signing" && stage !== "submitting") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, [onClose, stage]);
 

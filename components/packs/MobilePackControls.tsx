@@ -9,6 +9,7 @@
 import { useEffect, type ReactNode } from "react";
 import { ALL_GROUPS, PACK_GROUPS, type GroupFilter } from "./SelectPackPanel";
 import { Img } from "./ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 const TABS: GroupFilter[] = [ALL_GROUPS, ...PACK_GROUPS];
 
@@ -141,11 +142,10 @@ export function MobileSheet({
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, [open, onClose]);
 

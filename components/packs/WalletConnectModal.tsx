@@ -26,6 +26,7 @@ import { warmBackend } from "@/lib/api";
 import { PRIVY_ENABLED } from "@/app/PrivyProviders";
 import PrivyGoogleButton from "./PrivyGoogleButton";
 import { GOLD_GRADIENT } from "./ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 type Phase = "select" | "connecting" | "signing" | "success" | "error";
 // Which step failed — so "Try again" retries the right thing (a sign failure
@@ -225,11 +226,10 @@ function WalletConnectDialog() {
       if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
+      unlock();
     };
   }, [close]);
 

@@ -39,6 +39,7 @@ import {
   supportComposeHref,
 } from "@/lib/supportLink";
 import { GOLD_GRADIENT, Img } from "./ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 const POLL_MS = 4_000;
 /** Backoff: tiap kegagalan BERUNTUN menggandakan jeda sampai batas ini. Poller yang menghantam
@@ -1060,11 +1061,10 @@ export default function ShippingFlowModal({
       if (e.key === "Escape" && !busy) onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, [onClose, busy]);
 

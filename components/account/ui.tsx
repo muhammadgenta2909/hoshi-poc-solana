@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import { ACCOUNT_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import { Img } from "@/components/packs/ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 export const GOLD = "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)";
 export const PANEL = "rounded-2xl border border-white/[0.07] bg-white/[0.03]";
@@ -534,11 +535,10 @@ export function ModalShell({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, [open, onClose]);
 

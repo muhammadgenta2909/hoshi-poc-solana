@@ -18,7 +18,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OpenResult } from "@/lib/openPack";
 import { packVideoSrc } from "@/lib/packVideo";
+import { lockBodyScroll } from "@/lib/scrollLock";
+import { shortMiddle } from "@/lib/vrfProof";
 import { GOLD_GRADIENT, GradientText, Img } from "./ui";
+import { VrfProofModal } from "./VrfProofPanel";
 
 type Phase = "video" | "waiting" | "reveal" | "error";
 
@@ -93,14 +96,22 @@ export default function RipReveal({
   // loading state (not a black void), and we hide that loader the INSTANT playback
   // begins (onPlaying) — so the loader never lingers over a video that's running.
   const [videoReady, setVideoReady] = useState(false);
+  // Bukti undian. Dibuka MANUAL, tidak pernah otomatis: momen reveal sudah punya
+  // koreografinya sendiri, dan setelah pull yang mengecewakan sebuah panel bukti
+  // yang menyembul sendiri terbaca seperti pembelaan diri. Tombolnya ada, diam,
+  // dan menunggu — yang penting ia ADA di detik user paling ingin bertanya.
+  const [proofOpen, setProofOpen] = useState(false);
 
   // Lock the page scroll while the full-screen takeover is mounted, so the page's
   // own scrollbar doesn't sit next to the reveal's overflow scrollbar (double bar).
+  // Shared counter (lib/scrollLock), NOT a local save/restore: VrfProofModal opens
+  // INSIDE this takeover and locks too. React tears a deleted subtree down parent
+  // first, so the old pattern let this cleanup restore "" before the modal restored
+  // the "hidden" it had captured — leaving the page unscrollable until a reload.
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, []);
 
@@ -203,15 +214,18 @@ export default function RipReveal({
     return () => clearTimeout(t);
   }, [phase, reduced, stage, teasers.length]);
 
-  // Escape leaves the takeover — but only once there's a settled outcome shown.
+  // Escape leaves the takeover — but only once there's a settled outcome shown, and
+  // never while the proof modal is up: there, Escape belongs to the modal (it also
+  // stops the event itself, but not depending on event phases keeps this obvious).
   useEffect(() => {
+    if (proofOpen) return;
     if (!(phase === "error" || (phase === "reveal" && atFinal))) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [phase, atFinal, onClose]);
+  }, [phase, atFinal, onClose, proofOpen]);
 
   return (
     <div
@@ -356,6 +370,31 @@ export default function RipReveal({
               </a>
             )}
 
+            {/* Bukti undian — satu baris tenang, bukan spanduk. Ini detik user paling
+                ingin tahu apakah undiannya jujur (terutama setelah pull yang jelek),
+                jadi pintunya harus ada DI SINI; tapi isinya berat (JSON mentah), jadi
+                ia hidup di modal dan tidak mengganggu koreografi reveal.
+                `real.memo` hanya ada pada pull SUNGGUHAN — kartu demo (openPackLocal)
+                tidak punya `real`, jadi baris ini otomatis tidak pernah muncul di sana
+                dan kartu palsu tidak akan pernah menawarkan "bukti". */}
+            {result.real?.memo && (
+              <div className="mt-1 flex max-w-[min(92vw,28rem)] flex-col items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setProofOpen(true)}
+                  className="rounded-lg border border-white/20 bg-white/[0.06] px-4 py-2 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.12]"
+                >
+                  Lihat bukti undian
+                </button>
+                <p className="text-[11px] leading-relaxed text-white/45">
+                  Hasilnya diundi CollectorCrypt di blockchain, bukan oleh Hoshi · nomor undian{" "}
+                  <span className="font-mono text-white/60">
+                    {shortMiddle(result.real.memo, 6, 6)}
+                  </span>
+                </p>
+              </div>
+            )}
+
             {/* Actions — both Jersey (title + buttons only). */}
             <div className="mt-1 flex items-center justify-center gap-3">
               <button
@@ -382,6 +421,15 @@ export default function RipReveal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Portal ke <body> di z-[130] — di atas takeover ini (z-[110]). */}
+      {proofOpen && result?.real?.memo && (
+        <VrfProofModal
+          memo={result.real.memo}
+          cardName={result.card.name}
+          onClose={() => setProofOpen(false)}
+        />
       )}
     </div>
   );

@@ -33,6 +33,7 @@ import ShippingFlowModal, {
   isResignShipStatus,
   isTrackingShipStatus,
 } from "@/components/packs/ShippingFlowModal";
+import VrfProofPanel from "@/components/packs/VrfProofPanel";
 import { GOLD_GRADIENT, Img } from "@/components/packs/ui";
 import {
   Badge,
@@ -454,6 +455,19 @@ export default function PulledCardPage() {
                   )}
                 </div>
               </div>
+
+              {/* Bukti undian. Halaman ini punya baris pull-nya UTUH (GachaPull dari
+                  GET /gacha/me/packs), jadi `memo` — nomor undian yang dipakai
+                  verifikator CC — ada di tangan tanpa perlu pencarian tambahan.
+                  Ditempel inline, bukan di modal seperti di layar reveal: ke sini
+                  orang datang dengan sengaja untuk memeriksa kartunya, jadi tidak ada
+                  alasan menyembunyikannya di balik satu klik lagi. Tetap TIDAK
+                  auto-fetch: permintaannya baru berangkat ke CC kalau diminta. */}
+              {pull.memo && (
+                <div className="mt-6 rounded-2xl bg-[#181507] p-5 sm:p-6">
+                  <VrfProofPanel memo={pull.memo} />
+                </div>
+              )}
             </div>
           </div>
         )}
