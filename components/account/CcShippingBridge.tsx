@@ -1,14 +1,14 @@
 "use client";
 
-// Publishes the connected wallet's SIWS signer for CollectorCrypt shipping
-// (Track B, see lib/ccShippingAuth.ts). Renders nothing.
+// Publishes the connected wallet-adapter wallet (Phantom etc.) as a CollectorCrypt
+// SIWS signer (see lib/ccShippingAuth). Renders nothing.
 //
 // Unlike <PrivyBridge> this is ALWAYS mounted: it uses wallet-adapter's
 // useWallet(), which is available to every user (no Privy dependency). It stays
 // dormant for Google/Privy users — they have no wallet-adapter publicKey, so
-// nothing is registered and they keep using Track A (the Privy identity token).
-// It only comes alive for raw-wallet users (Phantom etc.), whose SIWS signature
-// mints a CC token when they enter the shipping flow.
+// nothing is registered here and <PrivyBridge> registers their EMBEDDED wallet
+// instead. Either way the signer is the wallet that owns the card, which is the
+// only wallet CC will mint a `cca_…` shipping token for.
 
 import { useEffect, useRef } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -27,12 +27,11 @@ export default function CcShippingBridge() {
   }, [signMessage]);
 
   useEffect(() => {
-    if (!address) {
-      // No wallet-adapter wallet (disconnected, or a Google/Privy user) → nothing
-      // to register, and any cached CC token belongs to a wallet that's gone.
-      clearCcSiwsToken();
-      return;
-    }
+    // No wallet-adapter wallet (disconnected, or a Google/Privy user) → nothing to
+    // register. Deliberately NOT clearing the cached token here: it may belong to
+    // a Google user's embedded wallet, and wiping it would re-prompt them for
+    // nothing. The cleanup below clears only the wallet this bridge registered.
+    if (!address) return;
     const unregister = registerCcWalletSigner({
       address,
       signMessage: async (bytes) => {
@@ -43,9 +42,9 @@ export default function CcShippingBridge() {
     });
     return () => {
       unregister();
-      // Wallet changed/disconnected → drop the previous wallet's CC token so it
-      // can't be attached to a request for a different identity.
-      clearCcSiwsToken();
+      // Wallet changed/disconnected → drop THIS wallet's CC token so it can't be
+      // attached to a request for a different identity.
+      clearCcSiwsToken(address);
     };
   }, [address]);
 

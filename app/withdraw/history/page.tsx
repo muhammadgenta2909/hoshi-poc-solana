@@ -32,7 +32,12 @@ const STATUS_UI: Record<RedemptionStatus, { label: string; cls: string }> = {
   AWAITING_PAYMENT: { label: "Menunggu bayar ongkir", cls: AMBER },
   READY_TO_FUND: { label: "Siap ditandatangani", cls: AMBER },
   FUNDING: { label: "Menyiapkan", cls: SKY },
-  FUNDED: { label: "Menyiapkan", cls: SKY },
+  // FUNDED = ongkirnya SUDAH didanai ke wallet user tapi burn-nya BELUM ditandatangani: kartunya
+  // masih utuh di vault dan yang kurang cuma satu tanda tangan. Jadi BUKAN "Menyiapkan" (yang
+  // terbaca seolah sistem sedang bekerja dan user tinggal menunggu) — labelnya disamakan PERSIS
+  // dengan STATUS_LABEL.FUNDED di ShippingFlowModal, dan warnanya AMBER seperti status lain yang
+  // menunggu aksi user, bukan SKY yang dipakai status "sedang berjalan".
+  FUNDED: { label: "Menunggu tanda tanganmu", cls: AMBER },
   BURN_SUBMITTED: { label: "Diproses", cls: SKY },
   IN_TRANSIT: { label: "Dalam perjalanan", cls: SKY },
   DELIVERED: { label: "Terkirim", cls: EMERALD },
@@ -170,10 +175,13 @@ export default function WithdrawHistoryPage() {
               sub="Coba kata kunci lain."
             />
           ) : (
+            /* Nama menunya DISALIN dari components/account/AccountMenu.tsx ("Ship Card", href
+               /withdraw). Tidak ada item bernama "Withdraw" di menu itu — menyuruh user
+               mencarinya sama saja dengan menyuruh mencari sesuatu yang tidak ada. */
             <EmptyState
               icon={<HistoryIcon className="h-9 w-9" />}
               title={view === "Active" ? "Belum ada pengiriman diproses" : "Belum ada pengiriman selesai"}
-              sub="Minta kirim kartu dari menu Withdraw, statusnya muncul di sini."
+              sub="Minta kirim kartu lewat menu Ship Card, statusnya muncul di sini."
               action={
                 <Link href="/withdraw">
                   <GhostButton>Kirim kartu →</GhostButton>

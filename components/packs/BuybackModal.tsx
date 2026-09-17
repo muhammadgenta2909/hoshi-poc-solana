@@ -14,7 +14,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { requestBuyback, submitBuyback, type BuybackQuote } from "@/lib/api";
+import {
+  requestBuyback,
+  submitBuyback,
+  type BuybackQuote,
+  type BuybackResult,
+} from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { useSignSerializedTransaction } from "@/lib/useSignSerializedTransaction";
 import { GOLD_GRADIENT } from "./ui";
@@ -41,6 +46,14 @@ export default function BuybackModal({
 
   const [stage, setStage] = useState<Stage>("quoting");
   const [quote, setQuote] = useState<BuybackQuote | null>(null);
+  /**
+   * HASIL submit yang SEBENARNYA (BuybackResult), bukan penawaran pra-tanda-tangan. Dulu respons
+   * ini dibuang dan layar "selesai" memakai angka dari `quote` sambil menyatakan uangnya sudah
+   * mendarat — dua hal yang tidak dijamin: nominal yang mengikat adalah yang dibalas server, dan
+   * `confirmationStatus` boleh berisi `submitted` (diterima CC, belum dikonfirmasi jaringan).
+   * Layar akhir sekarang hanya bicara berdasarkan baris ini.
+   */
+  const [settled, setSettled] = useState<BuybackResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Ask for the offer on mount. This only REQUESTS a transaction — nothing moves
@@ -71,7 +84,8 @@ export default function BuybackModal({
     try {
       const signed = await sign(quote.serializedTransaction);
       setStage("submitting");
-      await submitBuyback(quote.packMemo, signed, token);
+      const res = await submitBuyback(quote.packMemo, signed, token);
+      setSettled(res);
       setStage("done");
       onSold();
     } catch (e) {
@@ -102,6 +116,18 @@ export default function BuybackModal({
   // Mid-flight the transaction is already in the user's wallet — closing here
   // would hide the outcome of something that is still happening.
   const busy = stage === "signing" || stage === "submitting";
+
+  /**
+   * Apakah dana buyback-nya BOLEH disebut sudah mendarat.
+   *
+   * `confirmationStatus` dari CC (CcConfirmationStatus) cuma tiga nilai: "confirmed", "finalized",
+   * dan "submitted". Hanya dua yang pertama berarti jaringan sudah menerima transaksinya;
+   * "submitted" berarti CC sudah mengirimnya tapi belum ada konfirmasi. Apa pun nilai yang tidak
+   * dikenal diperlakukan seperti "belum" — layar uang tidak boleh menebak ke arah yang enak.
+   */
+  const landed =
+    settled?.confirmationStatus === "confirmed" || settled?.confirmationStatus === "finalized";
+
 
   return createPortal(
     <div
@@ -194,14 +220,38 @@ export default function BuybackModal({
           </Center>
         )}
 
-        {stage === "done" && quote && (
+        {/* HASIL SEBENARNYA, dari respons submit — bukan dari penawaran pra-tanda-tangan.
+            Versi lama menulis "{usd(quote.refundAmountUsdc)} USDC dikirim ke wallet-mu" sambil
+            MEMBUANG `BuybackResult`, jadi ia mengklaim uangnya sudah mendarat memakai angka yang
+            dibaca SEBELUM transaksinya dikirim, dan tanpa pernah melihat `confirmationStatus`.
+            CC boleh menjawab `submitted` — transaksi diterima, belum dikonfirmasi jaringan — dan
+            di keadaan itu "dikirim ke wallet-mu" adalah fakta yang layar ini belum punya. */}
+        {stage === "done" && settled && (
           <Center>
-            <div className="grid h-14 w-14 place-items-center rounded-full bg-emerald-500/15 text-2xl">
-              ✓
+            <div
+              className={`grid h-14 w-14 place-items-center rounded-full text-2xl ${
+                landed ? "bg-emerald-500/15" : "bg-amber-400/15 text-amber-300"
+              }`}
+            >
+              {landed ? "✓" : "…"}
             </div>
-            <p className="text-base font-semibold text-white">Kartu terjual</p>
-            <p className="max-w-[18rem] text-[13px] text-zinc-400">
-              {usd(quote.refundAmountUsdc)} USDC dikirim ke wallet-mu.
+            <p className="text-base font-semibold text-white">
+              {landed ? "Kartu terjual" : "Transaksi terkirim"}
+            </p>
+            <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+              {landed
+                ? `${usd(settled.refundAmountUsdc)} USDC masuk ke wallet-mu.`
+                : `CollectorCrypt sudah menerima transaksinya, tapi konfirmasi jaringannya belum terbaca. ${usd(
+                    settled.refundAmountUsdc,
+                  )} USDC mestinya masuk ke wallet-mu sebentar lagi — cek saldo wallet-mu beberapa saat lagi. Jangan mengulang penjualannya.`}
+            </p>
+            {/* Bukti transaksinya. Ini rujukan yang dipakai kalau user perlu menanyakannya. */}
+            <p className="w-full text-left text-[11px] leading-relaxed text-zinc-500">
+              Bukti transaksi:
+              <br />
+              <code className="select-all break-all font-mono text-[11px] text-zinc-300">
+                {settled.signature}
+              </code>
             </p>
             <button
               type="button"
@@ -213,6 +263,7 @@ export default function BuybackModal({
             </button>
           </Center>
         )}
+
 
         {stage === "error" && (
           <Center>

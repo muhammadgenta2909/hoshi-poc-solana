@@ -10,7 +10,7 @@
 // calls Privy hooks, which require a <PrivyProvider> ancestor).
 
 import { useEffect, useRef } from "react";
-import { usePrivy, getIdentityToken } from "@privy-io/react-auth";
+import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
   useSignMessage,
@@ -24,7 +24,7 @@ import {
   clearAutoLoginSuppression,
 } from "@/lib/useAuth";
 import { registerPrivySigner } from "@/lib/txSigner";
-import { registerPrivyIdentityToken } from "@/lib/privyIdentity";
+import { registerCcEmbeddedSigner, clearCcSiwsToken } from "@/lib/ccShippingAuth";
 
 export default function PrivyBridge() {
   const { ready, authenticated, logout: privyLogout } = usePrivy();
@@ -35,6 +35,22 @@ export default function PrivyBridge() {
   const { token, loginWith } = useAuth();
   // One run at a time (the effect re-fires as `wallets`/auth settle).
   const busyRef = useRef(false);
+
+  // The embedded wallet CC has to sign with, and its address.
+  const ccWallet = wallets.find((w) => w.standardWallet?.name === "Privy") ?? wallets[0];
+  const ccAddress = ccWallet?.address ?? null;
+
+  // Latest wallet + signMessage via refs so the CC registration effect below can key on the
+  // ADDRESS ALONE (same reason as <CcShippingBridge>): `wallets` and `signMessage` get new
+  // identities on renders where nothing actually changed, and re-running that effect on the
+  // churn would clear the cached `cca_…` token and force the user to sign a fresh SIWS
+  // message every time.
+  const ccWalletRef = useRef(ccWallet);
+  const ccSignMessageRef = useRef(signMessage);
+  useEffect(() => {
+    ccWalletRef.current = ccWallet;
+    ccSignMessageRef.current = signMessage;
+  }, [ccWallet, signMessage]);
 
   // Let our logout() end the Privy session too.
   useEffect(() => registerPrivyLogout(privyLogout), [privyLogout]);
@@ -52,15 +68,34 @@ export default function PrivyBridge() {
     });
   }, [wallets, signTransaction]);
 
-  // Publish Privy's identity-token getter for the CC-shipping API calls: those
-  // endpoints need an X-Privy-Identity-Token header (proving WHICH Google user is
-  // calling) on top of our JWT. Registered only while authenticated, and the
-  // cleanup unregisters it on logout so a stale token can't be attached after
-  // sign-out. `getIdentityToken` reads Privy's freshest stored token each call.
+  // Publish this embedded wallet as a CollectorCrypt SIWS signer. CC accepts ONE
+  // credential for a Solana redemption — a `cca_…` token minted by signing a SIWS
+  // message with the wallet that OWNS the card (their API key is EVM-only, and a
+  // Privy identity token is not a CC credential at all: that was our 401). A
+  // Google user's cards are minted to this embedded wallet, so this is the wallet
+  // that has to sign — and it is the same address our own JWT is issued for,
+  // which is what lib/ccShippingAuth keys the handshake on. Registered only while
+  // authenticated; keyed on the ADDRESS alone (the signer is read through refs), so
+  // the cleanup — and the token wipe it does — only runs when the address actually
+  // changes or the user logs out, never on signMessage/wallets identity churn.
   useEffect(() => {
-    if (!authenticated) return;
-    return registerPrivyIdentityToken(getIdentityToken);
-  }, [authenticated]);
+    if (!authenticated || !ccAddress) return;
+    const unregister = registerCcEmbeddedSigner({
+      address: ccAddress,
+      signMessage: async (message) => {
+        const wallet = ccWalletRef.current;
+        if (!wallet) throw new Error("Dompet Privy belum siap untuk menandatangani.");
+        const { signature } = await ccSignMessageRef.current({ message, wallet });
+        return signature;
+      },
+    });
+    return () => {
+      unregister();
+      // Address changed / logged out → drop THIS wallet's CC token so it can't be
+      // attached to a request for a different identity.
+      clearCcSiwsToken(ccAddress);
+    };
+  }, [authenticated, ccAddress]);
 
   useEffect(() => {
     if (!authenticated) {

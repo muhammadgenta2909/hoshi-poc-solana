@@ -34,6 +34,13 @@ import {
   readPendingPayment,
   clearPendingPayment,
 } from "@/components/packs/PayWithRupiah";
+import ShippingFlowModal, {
+  clearPendingShip,
+  isActionableShipStatus,
+  isResignShipStatus,
+  readPendingShip,
+  STATUS_LABEL,
+} from "@/components/packs/ShippingFlowModal";
 import { formatIdr, GOLD_GRADIENT, GradientText, Img } from "@/components/packs/ui";
 
 // Vault = every card the user owns, from BOTH sources (CC-style single collection):
@@ -51,17 +58,14 @@ const isOwnedPull = (p: GachaPull): boolean => p.status === "OPENED" && !!p.nftA
 
 // Redemption yang membuat kartu SUDAH keluar dari vault: begitu burn tersubmit, NFT tak lagi di
 // wallet (di prod di-burn; di staging disimulasi disembunyikan). SHIPPED = status record-only lama.
+//
+// FUNDED SENGAJA TIDAK di sini: di status itu ongkirnya sudah didanai ke wallet user tapi burn-nya
+// BELUM ditandatangani — kartunya masih utuh di vault.
 const SHIPPED_OUT = new Set<RedemptionStatus>([
   "BURN_SUBMITTED",
   "IN_TRANSIT",
   "DELIVERED",
   "SHIPPED",
-]);
-// Redemption yang butuh AKSI user (bayar ongkir / tanda tangani) — badge diberi warna beda + ajakan.
-const NEEDS_ACTION = new Set<RedemptionStatus>([
-  "REQUESTED",
-  "AWAITING_PAYMENT",
-  "READY_TO_FUND",
 ]);
 
 export default function VaultPage() {
@@ -92,6 +96,12 @@ export default function VaultPage() {
     packType: string;
     listingId: string;
   } | null>(null);
+  // Resume KIRIM KARTU FISIK sepulang dari halaman bayar ongkir. returnUrl ongkir dibangun backend
+  // (hoshi-backend/src/payments/payments.service.ts, createShippingOrder) dan menunjuk ke /vault —
+  // jadi halaman INI yang harus melanjutkan sesinya. Sebelum ini hanya /withdraw yang membaca
+  // readPendingShip(), sehingga user yang baru saja membayar ongkir mendarat di grid tanpa cara
+  // apa pun untuk meneruskan ke tanda tangan. Pola & key-nya sama persis dengan /withdraw.
+  const [shipping, setShipping] = useState<{ redemptionId: string } | null>(null);
   // Saldo in-app penjual (hasil jual P2P). null = belum termuat.
   const [balanceIdrx, setBalanceIdrx] = useState<number | null>(null);
 
@@ -165,6 +175,14 @@ export default function VaultPage() {
         packType: pending.packType,
         listingId: pending.listingId,
       });
+    }
+    // Ongkir kirim fisik punya KEY SENDIRI (hoshi_pending_ship) supaya tak bentrok dengan resume
+    // pack/listing/top-up di atas — jadi keduanya boleh hidup berdampingan dan dicek berurutan.
+    // Modal-nya dibuka dalam mode resume: ia poll status sampai READY_TO_FUND lalu lanjut ke tanda
+    // tangan. Tanpa blok ini, returnUrl ongkir yang menunjuk ke /vault berujung buntu.
+    if (CC_SHIPPING_ENABLED) {
+      const pendingShip = readPendingShip();
+      if (pendingShip) setShipping({ redemptionId: pendingShip.redemptionId });
     }
   }, []);
 
@@ -329,19 +347,28 @@ export default function VaultPage() {
                       }
                     />
                   )}
-                  {shipActive && ship &&
-                    (CC_SHIPPING_ENABLED && NEEDS_ACTION.has(ship) ? (
-                      // Flag ON: status pra-bayar/ttd → ajak user menyelesaikan di /withdraw.
+                  {shipActive &&
+                    ship &&
+                    // Grid ini layar yang paling sering dilihat, jadi ia HARUS memakai helper yang
+                    // sama dengan /withdraw dan /vault/[nft] — bukan daftar status sendiri yang
+                    // bisa (dan pernah) ketinggalan satu status. isResignShipStatus(FUNDED) =
+                    // uang treasury SUDAH keluar, kartunya masih utuh, dan yang kurang cuma satu
+                    // tanda tangan; dulu status itu tidak ada di daftar mana pun sehingga jatuh ke
+                    // badge "Sedang dikirim" yang tidak bisa diklik — salah DAN buntu.
+                    (CC_SHIPPING_ENABLED &&
+                    (isActionableShipStatus(ship) || isResignShipStatus(ship)) ? (
                       <Link
                         href="/withdraw"
                         className="absolute left-2 top-2 z-10 rounded-full border border-yellow-400/50 bg-yellow-500/90 px-2 py-0.5 text-[10px] font-bold text-[#171717] shadow transition hover:brightness-110"
                       >
-                        📦 Selesaikan kirim
+                        {isResignShipStatus(ship) ? "📦 Tanda tangani" : "📦 Selesaikan kirim"}
                       </Link>
                     ) : (
-                      // Flag OFF (record-only) atau status yang sudah berjalan → badge info biasa.
+                      // Flag OFF (record-only) atau status yang sudah berjalan → badge info biasa,
+                      // teksnya diambil dari STATUS_LABEL supaya tidak ada kalimat yang cuma hidup
+                      // di file ini dan bisa bertentangan dengan layar lain.
                       <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full border border-sky-400/40 bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                        📦 Sedang dikirim
+                        📦 {STATUS_LABEL[ship]}
                       </span>
                     ))}
                 </div>
@@ -367,6 +394,22 @@ export default function VaultPage() {
           onClose={() => {
             clearPendingPayment();
             setResumePay(null);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {/* Resume KIRIM FISIK sepulang bayar ongkir (returnUrl backend → /vault). Sama seperti di
+          /withdraw: mode resume, dan saat ditutup pending-nya dibersihkan + koleksi di-reload
+          supaya badge kirimnya (mis. "Tanda tangani") langsung sesuai status terbaru. */}
+      {CC_SHIPPING_ENABLED && shipping && (
+        <ShippingFlowModal
+          redemptionId={shipping.redemptionId}
+          resume
+          onFinished={() => setReloadKey((k) => k + 1)}
+          onClose={() => {
+            clearPendingShip();
+            setShipping(null);
             setReloadKey((k) => k + 1);
           }}
         />

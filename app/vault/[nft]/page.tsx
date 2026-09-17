@@ -30,6 +30,7 @@ import RedeemModal from "@/components/packs/RedeemModal";
 import ShippingFlowModal, {
   STATUS_LABEL,
   isActionableShipStatus,
+  isResignShipStatus,
   isTrackingShipStatus,
 } from "@/components/packs/ShippingFlowModal";
 import { GOLD_GRADIENT, Img } from "@/components/packs/ui";
@@ -71,7 +72,11 @@ export default function PulledCardPage() {
   // Redemption AKTIF untuk kartu ini (kalau ada) → menonaktifkan tombol redeem + menampilkan status.
   const [redemption, setRedemption] = useState<CardRedemption | null>(null);
   // Modal alur kirim REAL (flag ON) untuk melanjutkan/melacak satu redemption.
-  const [shipping, setShipping] = useState<{ redemptionId: string; resume: boolean } | null>(null);
+  // `status` = status yang sudah kita tahu dari daftar redemption; diteruskan ke modal supaya
+  // baris FUNDED (ongkir sudah didanai, TTD belum) membuka layar tanda-tangan-ulang langsung.
+  const [shipping, setShipping] = useState<
+    { redemptionId: string; resume: boolean; status?: CardRedemption["status"] | null } | null
+  >(null);
 
   useEffect(() => {
     if (!token || !nft) return;
@@ -376,18 +381,37 @@ export default function PulledCardPage() {
                             📦 {STATUS_LABEL[redemption.status]}
                           </span>
                           {CC_SHIPPING_ENABLED &&
-                            (isActionableShipStatus(redemption.status) ? (
+                            // FUNDED (isResignShipStatus): ongkir SUDAH didanai ke wallet user tapi
+                            // burn-nya belum ditandatangani. Harus dapat tombol aksi yang sama
+                            // menonjolnya — modal-nya masuk tahap tanda-tangan-ulang (re-prepare),
+                            // bukan mode lacak.
+                            (isActionableShipStatus(redemption.status) ||
+                            isResignShipStatus(redemption.status) ? (
                               <button
                                 type="button"
-                                onClick={() => setShipping({ redemptionId: redemption.id, resume: true })}
+                                onClick={() =>
+                                  setShipping({
+                                    redemptionId: redemption.id,
+                                    resume: true,
+                                    status: redemption.status,
+                                  })
+                                }
                                 className="rounded-lg border border-yellow-400/40 bg-yellow-400/[0.1] px-3 py-1.5 text-[12px] font-semibold text-yellow-200 transition hover:bg-yellow-400/[0.18]"
                               >
-                                Lanjutkan
+                                {isResignShipStatus(redemption.status)
+                                  ? "Tanda tangani"
+                                  : "Lanjutkan"}
                               </button>
                             ) : isTrackingShipStatus(redemption.status) ? (
                               <button
                                 type="button"
-                                onClick={() => setShipping({ redemptionId: redemption.id, resume: true })}
+                                onClick={() =>
+                                  setShipping({
+                                    redemptionId: redemption.id,
+                                    resume: true,
+                                    status: redemption.status,
+                                  })
+                                }
                                 className="rounded-lg border border-white/15 bg-white/[0.05] px-3 py-1.5 text-[12px] font-semibold text-zinc-200 transition hover:bg-white/[0.1]"
                               >
                                 Lacak
@@ -480,6 +504,7 @@ export default function PulledCardPage() {
           redemptionId={shipping.redemptionId}
           card={{ name: pull.ccItemName ?? pull.nftName ?? "kartu", image: pull.nftImage }}
           resume={shipping.resume}
+          initialStatus={shipping.status ?? null}
           onClose={() => setShipping(null)}
         />
       )}

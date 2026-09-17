@@ -4,8 +4,11 @@
 //   step 1 alamat kirim (getMyAddresses + shared AddAddressModal)  ·  step 2 pilih kartu (getMyPacks) ·
 //   step 3 review  ·  step 4 submit → requestRedemption per kartu.
 //
-// Yang bisa dikirim HANYA kartu HASIL PACK (backend memverifikasi kepemilikan lewat ledger
-// ccPackPurchase OPENED — kartu beli-marketplace tidak diterima). RECORD-ONLY di server: mencatat
+// Yang bisa dikirim: kartu HASIL PACK **dan** kartu HASIL BELI di marketplace. Backend
+// memverifikasi kepemilikan lewat DUA ledger (redemption.service.ts): ccPackPurchase berstatus
+// OPENED, atau listing berstatus SOLD dengan buyerId = user. (Komentar lama di sini menulis
+// "kartu beli-marketplace tidak diterima" — itu sudah tidak benar, dan copy empty-state di bawah
+// sempat ikut salah karenanya.) RECORD-ONLY di server: mencatat
 // permintaan + tujuan, TIDAK burn/transfer NFT — jadi aman di staging (mock) maupun prod.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -13,6 +16,7 @@ import Link from "next/link";
 import {
   ApiError,
   CC_SHIPPING_ENABLED,
+  cancelRedemption,
   getMyAddresses,
   getMyPacks,
   getMyPurchases,
@@ -20,6 +24,7 @@ import {
   requestRedemption,
   type CardRedemption,
   type ShippingAddress,
+  type ShippingRefundDebt,
 } from "@/lib/api";
 import type { Listing } from "@/lib/market";
 import type { GachaPull } from "@/lib/gacha";
@@ -39,10 +44,16 @@ import {
 import AddAddressModal from "@/components/account/AddAddressModal";
 import { Img } from "@/components/packs/ui";
 import ShippingFlowModal, {
+  CANCEL_CONFIRM_FREED,
+  CANCEL_CONFIRM_MONEY,
+  ShippingCancelDisclosure,
   readPendingShip,
   clearPendingShip,
   isActionableShipStatus,
+  isResignShipStatus,
   isTrackingShipStatus,
+  isUserCancelableShipStatus,
+  STATUS_LABEL,
 } from "@/components/packs/ShippingFlowModal";
 
 const TOTAL = 4;
@@ -95,10 +106,43 @@ export default function WithdrawPage() {
   // Kirim-fisik REAL (CC_SHIPPING_ENABLED): modal alur estimate→bayar→TTD→lacak untuk 1 redemption.
   // Inert saat flag OFF — di-render hanya di dalam guard CC_SHIPPING_ENABLED.
   const [shipping, setShipping] = useState<
-    { redemptionId: string; card: { name: string; image: string | null } | null; resume: boolean } | null
+    | {
+        redemptionId: string;
+        card: { name: string; image: string | null } | null;
+        resume: boolean;
+        /** Status yang SUDAH diketahui dari /redemptions/me — supaya baris FUNDED langsung membuka
+         *  layar tanda-tangan-ulang, bukan layar "mengonfirmasi pembayaran ongkir". */
+        status?: CardRedemption["status"] | null;
+      }
+    | null
   >(null);
   // Redemption milik user (buat panel "Pengiriman berjalan" + resume). Hanya dipakai saat flag ON.
   const [redemptions, setRedemptions] = useState<CardRedemption[]>([]);
+  /* ---- B1: batal-sendiri dari daftar (POST /redemptions/:id/cancel) ----
+     Ini tempat KEDUA yang user cari selain modalnya: baris yang invoice-nya tidak jadi dibayar
+     mengunci kartunya (permintaan kirim berikutnya ditolak REDEMPTION_ALREADY_ACTIVE), dan daftar
+     inilah satu-satunya tempat baris itu kelihatan. Konfirmasi dua langkah, per baris. */
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<{ id: string; message: string } | null>(null);
+  /**
+   * HASIL pembatalan yang BERHASIL — `warning` + `shippingDebts` dari backend, disimpan supaya
+   * bisa DIBACA dan DISALIN, bukan flash sebaris yang hilang.
+   *
+   * KENAPA. Sesudah pagar backend dipersempit ke [PAID, FULFILLED], pembatalan yang SAH bisa
+   * meninggalkan Rupiah ongkir yang sudah mendarat: tagihan yang macet di FULFILLING diubah jadi
+   * REFUND_DUE (utang tercatat), yang sudah REFUND_DUE dilaporkan apa adanya. Versi lama halaman
+   * ini membuang seluruh respons dan menampilkan satu kalimat tetap ("Permintaan kirim
+   * dibatalkan…"), jadi utang itu lahir di antrean operator tanpa user pernah tahu ia ada — dan
+   * daftar ini, menurut catatan backend sendiri, adalah satu-satunya tempat baris itu terlihat.
+   */
+  const [cancelResult, setCancelResult] = useState<{
+    redemptionId: string;
+    cardName: string;
+    warning: string | null;
+    debts: ShippingRefundDebt[];
+  } | null>(null);
+
 
   // ------- load: alamat + kartu pack + redemption aktif (buat exclude yang lagi dikirim) -------
   const load = useCallback(async () => {
@@ -152,6 +196,46 @@ export default function WithdrawPage() {
     }
     void load();
   }, [token, load]);
+
+  /**
+   * Batalkan satu permintaan kirim dari daftar. Pagarnya ADA DI BACKEND (status, tagihan ongkir
+   * yang pemenuhannya masih hidup, fundingSignature, refundSafe, plus updateMany berpagar supaya
+   * tidak balapan dengan callback pembayaran) — halaman ini hanya mengirim permintaan dan
+   * menampilkan jawabannya apa adanya, termasuk penolakannya.
+   *
+   * RESPONSNYA TIDAK BOLEH DIBUANG. Ia membawa `warning` + `shippingDebts`: pembatalan yang SAH
+   * pun bisa meninggalkan Rupiah ongkir yang sudah mendarat, dan backend baru saja mengubahnya
+   * jadi utang refund yang tercatat di tagihannya sendiri. Kalau di sini kita cuma menulis
+   * "Permintaan kirim dibatalkan", user pergi dengan keyakinan tidak ada uangnya yang tertahan —
+   * dan tidak akan pernah menagih utang yang memang ada. Sukses → simpan hasilnya ke panel yang
+   * menetap, lalu load() ulang (barisnya hilang dari daftar, kartunya bebas diminta kirim lagi).
+   */
+  const cancelOne = useCallback(
+    async (id: string, cardName: string) => {
+      if (!token || cancelingId) return;
+      setCancelingId(id);
+      setCancelError(null);
+      try {
+        const res = await cancelRedemption(id, token);
+        setCancelConfirmId(null);
+        setCancelResult({
+          redemptionId: id,
+          cardName,
+          warning: res.warning ?? null,
+          debts: Array.isArray(res.shippingDebts) ? res.shippingDebts : [],
+        });
+        await load();
+      } catch (e) {
+        setCancelError({
+          id,
+          message: e instanceof Error ? e.message : "Permintaan batal tidak bisa diproses.",
+        });
+      } finally {
+        setCancelingId(null);
+      }
+    },
+    [token, cancelingId, load],
+  );
 
   // A new address came back from the shared AddAddressModal: select it, then
   // re-pull the list (load keeps the current selection if it's still present).
@@ -306,6 +390,41 @@ export default function WithdrawPage() {
         </div>
       )}
 
+      {/* HASIL PEMBATALAN — MENETAP sampai ditutup sendiri, karena isinya bisa berupa uang.
+          Sengaja BUKAN `flash`: flash itu satu kalimat tetap yang dulu berbunyi "Permintaan kirim
+          dibatalkan. Kartunya bisa diminta kirim lagi." dan membuang seluruh respons backend —
+          termasuk `shippingDebts`, satu-satunya tempat user bisa melihat ongkir yang tertahan.
+          Nomor tagihannya harus bisa dibaca dan disalin, jadi panel ini tidak pernah hilang
+          sendiri dan tidak ikut tersapu load(). */}
+      {cancelResult && (
+        <div className="mt-5 rounded-xl border border-white/12 bg-white/[0.03] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-zinc-100">
+                Permintaan kirim {cancelResult.cardName} dibatalkan
+              </p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-400">
+                Kartunya kembali bebas dan bisa diminta kirim lagi kapan saja.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCancelResult(null)}
+              className="shrink-0 rounded-lg border border-white/15 px-2 py-1 text-[11px] font-semibold text-zinc-300 transition hover:bg-white/10"
+            >
+              Tutup
+            </button>
+          </div>
+          <div className="mt-3">
+            <ShippingCancelDisclosure
+              redemptionId={cancelResult.redemptionId}
+              warning={cancelResult.warning}
+              debts={cancelResult.debts}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Pengiriman yang sedang berjalan (flag ON): lanjutkan yang belum lunas/ttd, atau lacak yang
           sudah dikirim. Juga jalur resume kalau localStorage hilang (mode privat / URL balik beda). */}
       {CC_SHIPPING_ENABLED &&
@@ -313,7 +432,12 @@ export default function WithdrawPage() {
           const active = redemptions.filter(
             (r) =>
               r.status !== "CANCELED" &&
-              (isActionableShipStatus(r.status) || isTrackingShipStatus(r.status)),
+              // isResignShipStatus (FUNDED) WAJIB ikut: itu baris yang ongkirnya sudah didanai
+              // treasury tapi belum ditandatangani. Kalau tidak muncul di sini, satu prompt wallet
+              // yang ditolak = uang sudah keluar dan user tidak punya jalan untuk melanjutkan.
+              (isActionableShipStatus(r.status) ||
+                isResignShipStatus(r.status) ||
+                isTrackingShipStatus(r.status)),
           );
           if (active.length === 0) return null;
           return (
@@ -321,12 +445,24 @@ export default function WithdrawPage() {
               <SectionTitle>Pengiriman berjalan</SectionTitle>
               <div className="mt-3 flex flex-col gap-2.5">
                 {active.map((r) => {
-                  const needsAction = isActionableShipStatus(r.status);
+                  // FUNDED = uang sudah berpindah, tanda tangan belum → tombolnya harus MENGAJAK
+                  // menandatangani, bukan "Lacak"; dan barisnya tidak boleh berbunyi "Sedang
+                  // dikirim" karena tidak ada apa pun yang sedang dikirim.
+                  const needsSignature = isResignShipStatus(r.status);
+                  const needsAction = isActionableShipStatus(r.status) || needsSignature;
+                  // Batal-sendiri hanya untuk baris yang NOL uangnya bergerak. Backend tetap yang
+                  // memutuskan (ia juga memagari order ongkir yang sudah mendarat, fundingSignature
+                  // dan refundSafe — hal yang tidak kelihatan dari status saja); ini cuma soal
+                  // menampilkan tombolnya di tempat yang masuk akal.
+                  const cancelable = isUserCancelableShipStatus(r.status);
+                  const confirming = cancelConfirmId === r.id;
+                  const rowError = cancelError?.id === r.id ? cancelError.message : null;
                   return (
                     <div
                       key={r.id}
-                      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-2.5"
+                      className="rounded-xl border border-white/10 bg-white/[0.02] p-2.5"
                     >
+                    <div className="flex items-center gap-3">
                       <Img
                         src={r.cardImage ?? "/card-back.svg"}
                         alt=""
@@ -337,7 +473,19 @@ export default function WithdrawPage() {
                           {r.cardName}
                         </p>
                         <p className="truncate text-[11px] text-zinc-500">
-                          {needsAction ? "Perlu dilanjutkan" : "Sedang dikirim"}
+                          {/* JANGAN menulis "kartumu aman" di sini. Daftar ini di-fetch hanya saat
+                              mount dan saat onFinished, jadi status FUNDED yang dipakainya bisa
+                              sudah berjam-jam umurnya — perangkat lain bisa saja sudah menuntaskan
+                              burn-nya. Yang tersisa di bawah adalah fakta yang MELEKAT pada status
+                              FUNDED itu sendiri (ongkirnya memang sudah lunas untuk sampai ke
+                              situ) plus aksi yang diminta. Klaim soal keadaan kartu hanya boleh
+                              muncul setelah dibaca ulang — lihat layar `resign` di
+                              ShippingFlowModal, yang memverifikasinya sendiri. */}
+                          {needsSignature
+                            ? "Ongkir lunas — tinggal tanda tangan"
+                            : needsAction
+                              ? "Perlu dilanjutkan"
+                              : STATUS_LABEL[r.status]}
                         </p>
                       </div>
                       <button
@@ -347,6 +495,7 @@ export default function WithdrawPage() {
                             redemptionId: r.id,
                             card: { name: r.cardName, image: r.cardImage },
                             resume: true,
+                            status: r.status,
                           })
                         }
                         className={`shrink-0 rounded-xl border px-3 py-2 text-[12px] font-semibold transition ${
@@ -355,8 +504,70 @@ export default function WithdrawPage() {
                             : "border-white/12 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
                         }`}
                       >
-                        {needsAction ? "Lanjutkan" : "Lacak"}
+                        {needsSignature ? "Tanda tangani" : needsAction ? "Lanjutkan" : "Lacak"}
                       </button>
+                    </div>
+
+                    {/* JALAN KELUAR untuk baris yang belum menyentuh uang. Tanpa ini, permintaan
+                        yang invoice-nya tidak jadi dibayar mengunci kartunya: barisnya tetap aktif
+                        dan permintaan kirim berikutnya ditolak REDEMPTION_ALREADY_ACTIVE, sementara
+                        daftar ini satu-satunya tempat baris itu terlihat. */}
+                    {cancelable &&
+                      (confirming ? (
+                        <div className="mt-2.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                          {/* Copy dari SATU sumber bersama dengan modal kirim (CANCEL_CONFIRM_* di
+                              ShippingFlowModal). Versi lama menulis "Belum ada ongkir yang kami
+                              terima untuk permintaan ini, jadi tidak ada yang perlu direfund — dan
+                              kalau pembayaranmu ternyata sudah masuk, pembatalannya otomatis
+                              ditolak." DUA-DUANYA tidak bisa dipegang dari sini: status baris ini
+                              dibaca saat halaman dimuat (bisa berjam-jam basi) dan status
+                              redemption memang tidak memuat posisi tagihan ongkirnya; lagi pula
+                              backend hanya menolak untuk tagihan PAID/FULFILLED — yang macet di
+                              FULFILLING atau sudah REFUND_DUE justru LOLOS, dengan uang yang sudah
+                              mendarat. Jadi layar ini berhenti mengklaim arah mana pun, dan
+                              jawaban sebenarnya ditampilkan sesudah backend menjawab. */}
+                          <p className="text-[12px] leading-relaxed text-zinc-300">
+                            Batalkan permintaan kirim {r.cardName}? {CANCEL_CONFIRM_FREED}
+                          </p>
+                          <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-400">
+                            {CANCEL_CONFIRM_MONEY}
+                          </p>
+                          {rowError && (
+                            <p className="mt-2 text-[12px] leading-relaxed text-amber-200/90">
+                              {rowError}
+                            </p>
+                          )}
+                          <div className="mt-2.5 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void cancelOne(r.id, r.cardName)}
+                              disabled={cancelingId === r.id}
+                              className="flex-1 rounded-lg border border-red-400/30 bg-red-500/[0.10] px-3 py-2 text-[12px] font-semibold text-red-200 transition hover:bg-red-500/[0.18] disabled:opacity-60"
+                            >
+                              {cancelingId === r.id ? "Membatalkan…" : "Ya, batalkan"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCancelConfirmId(null)}
+                              disabled={cancelingId === r.id}
+                              className="flex-1 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[12px] font-semibold text-zinc-200 transition hover:bg-white/[0.10] disabled:opacity-60"
+                            >
+                              Jangan batalkan
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCancelError(null);
+                            setCancelConfirmId(r.id);
+                          }}
+                          className="mt-1.5 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-300"
+                        >
+                          Batalkan permintaan ini
+                        </button>
+                      ))}
                     </div>
                   );
                 })}
@@ -469,7 +680,7 @@ export default function WithdrawPage() {
                     </p>
                     <p className="mt-1 max-w-sm text-[13px] text-zinc-500">
                       {cards.length === 0
-                        ? "Hanya kartu hasil buka pack yang bisa dikirim fisik. Buka pack dulu di Games."
+                        ? "Yang bisa dikirim fisik adalah kartu hasil buka pack atau hasil beli di marketplace. Buka pack dulu di Games, atau beli kartu di Marketplace."
                         : "Coba kata kunci lain."}
                     </p>
                   </div>
@@ -642,6 +853,7 @@ export default function WithdrawPage() {
           redemptionId={shipping.redemptionId}
           card={shipping.card}
           resume={shipping.resume}
+          initialStatus={shipping.status ?? null}
           onFinished={() => void load()}
           onClose={() => {
             clearPendingShip();
