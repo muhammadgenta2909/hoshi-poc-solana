@@ -31,6 +31,7 @@ import {
   DepositIcon,
   WithdrawIcon,
   HistoryIcon,
+  ReceiptIcon,
   BoxIcon,
   LogoutIcon,
 } from "./ui";
@@ -53,9 +54,14 @@ export default function AccountMenu() {
   // DUA grup terpisah biar "tarik DUIT" vs "tarik/kirim KARTU" nggak ketuker.
   // Balance = Rupiah (isi saldo + tarik saldo ke bank/e-wallet). "Cash Out" SELALU tampil (beda dari
   // chip "Tarik →" di panel saldo yang cuma muncul saat saldo>0) supaya WD duit gampang ketemu.
+  // "Payment History" duduk di grup Balance (persis seperti "Shipment History" duduk di grup
+  // Physical Cards): satu-satunya tempat user bisa melihat bukti tiap tagihan rupiah yang pernah
+  // ia bayar — pack, isi saldo, kartu marketplace, DAN ongkir. Tanpa entri ini endpoint
+  // /payments/me/orders tidak pernah dipanggil UI mana pun.
   const BALANCE_NAV: NavItem[] = [
     { label: "Deposit", href: "/deposit", icon: <DepositIcon className={iconCls} />, tint: "text-emerald-400" },
     { label: "Cash Out", href: "/tarik-saldo", icon: <WithdrawIcon className={iconCls} />, tint: "text-[#F2C101]" },
+    { label: "Payment History", href: "/riwayat-pembayaran", icon: <ReceiptIcon className={iconCls} />, tint: "text-zinc-400" },
   ];
   // Physical Cards = kirim/redeem KARTU FISIK ke rumah (bukan duit).
   const CARDS_NAV: NavItem[] = [

@@ -425,7 +425,22 @@ export type RedemptionStatus =
 
 export type CardRedemption = {
   id: string;
+  /**
+   * IDENTITAS kartu. Jalur CC Vault: alamat NFT sungguhan. Jalur DOMESTIK (stok Hoshi):
+   * turunan `hoshi-listing:<listingId>` — kartu itu memang TIDAK punya alamat NFT
+   * (settlement-nya database-only di backend). Pakai `hoshiListingRef()` di bawah untuk
+   * mencocokkannya dari sisi klien; JANGAN parse prefixnya sendiri di banyak tempat.
+   */
   nftAddress: string;
+  /**
+   * NON-NULL = jalur kirim DOMESTIK (stok fisik Hoshi, kurir lokal Indonesia): bayar ongkir
+   * Rupiah, lalu Hoshi mengemas & mengirim. NOL NFT, NOL burn, NOL USDC, NOL tanda tangan
+   * wallet, dan TIDAK digerbang CC_SHIPPING_ENABLED.
+   * NULL = jalur CC Vault (pack / katalog CC / P2P): ongkir → danai USDC → TTD burn → CC kirim.
+   *
+   * INI diskriminator rail-nya. JANGAN pakai `cardSet`/nama/heuristik lain.
+   */
+  listingId?: string | null;
   cardName: string;
   cardImage: string | null;
   cardSet: string | null;
@@ -529,13 +544,138 @@ export const siwsRefresh = (input: { refreshToken: string }, token: string) =>
 /** Minta kirim kartu fisik ke rumah (POST /redemptions). RECORD-ONLY di server: mencatat
  *  permintaan + tujuan, TIDAK burn/transfer NFT — kartu tetap di wallet sampai admin proses. */
 export const requestRedemption = (
-  input: { nftAddress: string; shippingAddressId: string },
+  /**
+   * SEBUTKAN TEPAT SATU. Backend menolak (400 HOSHI_DOMESTIC_TARGET_REQUIRED) kalau keduanya
+   * kosong ATAU keduanya diisi — kedua field ini memilih RAIL PENGIRIMAN, dan rail adalah
+   * keputusan SERVER (ia menentukan apakah ada NFT yang dibakar dan USDC treasury yang
+   * berpindah). Klien tidak boleh bisa memilihnya lewat urutan pembacaan kode backend.
+   *
+   *   nftAddress → jalur CC Vault (kartu hasil pack / pembelian ber-NFT)
+   *   listingId  → jalur DOMESTIK (kartu STOK HOSHI yang kamu beli; kurir lokal)
+   */
+  input:
+    | { nftAddress: string; listingId?: undefined; shippingAddressId: string }
+    | { listingId: string; nftAddress?: undefined; shippingAddressId: string },
   token: string,
 ) =>
   api<CardRedemption>("/redemptions", {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
+  });
+
+/* ─────────── KIRIM DOMESTIK (stok fisik Hoshi, kurir lokal Indonesia) ───────────
+
+   Kartu stok Hoshi disimpan FISIK oleh Hoshi di Indonesia — TIDAK dititipkan di vault
+   CollectorCrypt. Pengirimannya paket domestik biasa:
+
+     NOL NFT · NOL burn · NOL USDC treasury · NOL CollectorCrypt · NOL tanda tangan wallet
+
+   Konsekuensinya untuk frontend, dan ini yang membuat alurnya JAUH lebih pendek dari alur CC:
+     • TIDAK butuh sesi SIWS CC (tidak ada header x-cc-access-token, tidak ada shippingHeaders).
+     • TIDAK digerbang CC_SHIPPING_ENABLED — jalur ini hidup walau flag CC mati, dan ia tidak
+       ikut menunggu kredensial CC.
+     • TIDAK ADA langkah tanda tangan. Sesudah ongkir Rupiah lunas, urusannya selesai dari
+       sisi user: Hoshi mengemas (PACKING) → kirim (SHIPPED) → sampai (DELIVERED).
+     • Satu-satunya uang yang bergerak adalah ongkir Rupiah, dan ongkir itu SELALU aman
+       di-refund kalau ada yang gagal — tidak ada langkah pasca-belanja di jalur ini.
+   ------------------------------------------------------------------------------------ */
+
+/**
+ * Prefix identitas kartu stok Hoshi pada `CardRedemption.nftAddress`. Dipilih supaya TIDAK
+ * MUNGKIN bentrok dengan alamat NFT: alfabet base58 Solana tidak memuat '-' maupun ':'.
+ * Sinkron dengan HOSHI_LISTING_REF_PREFIX di backend (src/common/hoshi-domestic-shipping.ts).
+ */
+export const HOSHI_LISTING_REF_PREFIX = "hoshi-listing:";
+
+/**
+ * Identitas yang dipakai baris redemption DOMESTIK untuk sebuah listing. Dipakai layar-layar
+ * koleksi untuk mencocokkan kartu ↔ status kirimnya dengan kunci yang SAMA dengan kartu
+ * ber-NFT, jadi tidak ada peta status kedua yang bisa ketinggalan satu kasus.
+ */
+export const hoshiListingRef = (listingId: string) =>
+  `${HOSHI_LISTING_REF_PREFIX}${listingId}`;
+
+/**
+ * DISKRIMINATOR RAIL sisi klien: true ⇔ baris redemption ini jalur DOMESTIK (stok Hoshi).
+ *
+ * Dua fakta dibaca, dan urutannya disengaja:
+ *   1. `listingId` — kolom persisten & immutable yang backend pakai sebagai gerbang rail.
+ *   2. prefix `hoshi-listing:` pada `nftAddress` — turunan MURNI dari (1), dipakai sebagai jaring
+ *      kalau respons lama tidak membawa `listingId`. Prefix ini tidak bisa salah-positif: alfabet
+ *      base58 Solana tidak memuat ':' maupun '-'.
+ *
+ * `cardSet`, nama kartu, atau `source` TIDAK BOLEH dipakai. Menebak rail dari label adalah cara
+ * paling mudah untuk menyodorkan prompt tanda tangan wallet kepada orang yang cuma membeli kartu
+ * dari rak Hoshi — atau sebaliknya, menagih ongkir kurir lokal untuk kartu yang fisiknya di
+ * gudang CollectorCrypt.
+ */
+export const isDomesticRedemption = (r: {
+  listingId?: string | null;
+  nftAddress?: string;
+}): boolean =>
+  r.listingId != null ||
+  (typeof r.nftAddress === "string" &&
+    r.nftAddress.startsWith(HOSHI_LISTING_REF_PREFIX));
+
+/**
+ * Ongkir domestik yang dihitung server. READ-ONLY: nol uang, nol order, nol efek samping.
+ *
+ * ONGKIRNYA BERTINGKAT PER WILAYAH (Jawa vs luar Jawa, bisa diperhalus kapan saja tanpa deploy:
+ * tier-nya baris DB, bukan kode). Angkanya SELALU dari server — UI tidak pernah menghitung,
+ * membulatkan, atau menambah apa pun ke `priceIdr`, karena angka yang ditampilkan dan angka yang
+ * ditagihkan HARUS lahir dari satu perhitungan yang sama.
+ */
+export type DomesticShippingQuote = {
+  /** Ongkir Rupiah UTUH yang akan ditagihkan. */
+  priceIdr: number;
+  /** Kunci tier/baris tarif yang menang, mis. "TIER:JAWA" / "STATE:bali" / "*". */
+  scope: string;
+  /** Dari mana angkanya: "DB" (tarif admin) | "ENV" | "DEFAULT_TIER" | "PLACEHOLDER". */
+  source: string;
+  /** Nama manusiawi tier yang menang ("Jawa", "Luar Jawa"). Opsional — baris lama tak punya. */
+  label?: string | null;
+  /** Provinsi tujuan yang dibaca server dari alamat, sudah dinormalkan. */
+  province?: string;
+  /** Cara wilayahnya ketemu: "STATE" | "TIER" | "FALLBACK_TIER" | "NATIONWIDE". */
+  region?: string;
+  /**
+   * true = provinsi tujuan tidak terpetakan ke tier mana pun (atau alamatnya tidak menyebut
+   * provinsi), jadi yang dipakai TARIF PENAMPUNG. Bukan error, dan BUKAN alasan memblokir
+   * pembayaran — tapi UI menyebutkannya supaya user tidak merasa ditipu kalau angkanya terasa
+   * tinggi, dan supaya laporan "ongkir saya kemahalan" datang dengan petunjuk penyebabnya.
+   */
+  regionUnresolved?: boolean;
+};
+
+/**
+ * Taksir ongkir kirim DOMESTIK (GET /redemptions/:id/domestic-quote).
+ *
+ * Sumber angkanya PERSIS sama dengan yang ditagihkan createDomesticShippingOrder, jadi yang
+ * dilihat user dan yang ditagihkan tidak bisa lahir dari dua kalkulasi berbeda. Baris jalur
+ * CollectorCrypt ditolak 400 HOSHI_DOMESTIC_WRONG_RAIL.
+ */
+export const getDomesticShippingQuote = (redemptionId: string, token: string) =>
+  api<DomesticShippingQuote>(
+    `/redemptions/${encodeURIComponent(redemptionId)}/domestic-quote`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+
+/**
+ * Terbitkan tagihan Rupiah ongkir kirim DOMESTIK (POST /payments/shipping/domestic).
+ *
+ * TANPA header CC: rute ini sengaja terpisah dari /payments/shipping justru supaya ia tidak
+ * butuh sesi SIWS CollectorCrypt (rute CC 400 kalau header itu kosong). Nominalnya dihitung
+ * SERVER dari tarif admin — tidak pernah dari body.
+ */
+export const createDomesticShippingOrder = (
+  redemptionId: string,
+  token: string,
+) =>
+  api<PaymentOrder>("/payments/shipping/domestic", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ redemptionId }),
   });
 
 /** Riwayat permintaan kirim kartu fisik milik user (GET /redemptions/me). */

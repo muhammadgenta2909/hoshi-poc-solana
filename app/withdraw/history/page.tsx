@@ -5,7 +5,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getMyRedemptions, type CardRedemption, type RedemptionStatus } from "@/lib/api";
+import {
+  getMyRedemptions,
+  isDomesticRedemption,
+  type CardRedemption,
+  type RedemptionStatus,
+} from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
 import {
@@ -205,9 +210,35 @@ export default function WithdrawHistoryPage() {
                   <p className="truncate text-[14px] font-semibold text-white" title={r.cardName}>
                     {r.cardName}
                   </p>
-                  <p className="mt-0.5 truncate text-[12px] text-zinc-500">
-                    ke {r.city}, {r.country} · {dt(r.createdAt)}
-                  </p>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                    {/* RAIL. Riwayat ini mencampur dua alur yang sangat berbeda — satu selesai
+                        begitu ongkirnya lunas, satu masih meminta tanda tangan wallet dan
+                        membakar NFT — dan status saja tidak membedakannya (REQUESTED /
+                        AWAITING_PAYMENT / DELIVERED dipakai KEDUANYA). Dibaca dari fakta
+                        persisten `listingId`, bukan dari nama/label. */}
+                    <span
+                      title={
+                        isDomesticRedemption(r)
+                          ? "Kartu stok Hoshi: dikirim kurir domestik. Kamu cuma membayar ongkir — tanpa NFT yang dibakar dan tanpa tanda tangan wallet."
+                          : "Kartu vault CollectorCrypt: sesudah ongkirnya lunas kamu perlu menandatangani transaksi burn di wallet-mu."
+                      }
+                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                        isDomesticRedemption(r)
+                          ? "border-[#F2C101]/45 bg-[#F2C101]/[0.12] text-[#F2C101]"
+                          : "border-sky-400/40 bg-sky-400/[0.12] text-sky-300"
+                      }`}
+                    >
+                      {isDomesticRedemption(r) ? "Kurir domestik" : "Vault CollectorCrypt"}
+                    </span>
+                    <span className="truncate text-[12px] text-zinc-500">
+                      ke {r.city}, {r.country} · {dt(r.createdAt)}
+                    </span>
+                  </div>
+                  {(r.trackingIds?.length ?? 0) > 0 && (
+                    <p className="mt-0.5 truncate font-mono text-[11px] text-emerald-300/80">
+                      Resi: {r.trackingIds?.join(", ")}
+                    </p>
+                  )}
                 </div>
                 <span
                   className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_UI[r.status].cls}`}

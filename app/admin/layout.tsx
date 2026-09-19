@@ -19,6 +19,12 @@ const ADMIN_NAV: AdminLink[] = [
   { label: "Transaksi", href: "/admin/transactions", icon: "💸" },
   { label: "Penarikan", href: "/admin/withdrawals", icon: "🏧" },
   { label: "Kirim Kartu", href: "/admin/redemptions", icon: "📦" },
+  // Tarif ongkir kirim DOMESTIK (stok Hoshi, kurir lokal). Sampai layar ini ada, resolusi tarif
+  // jatuh ke TIER PENAMPUNG di kode — angka yang belum diputuskan pemilik produk, yang SEDANG
+  // ditagihkan ke pembeli sungguhan. Ia harus bisa ditemukan tanpa curl.
+  { label: "Ongkir Kirim", href: "/admin/ongkir", icon: "🚚" },
+  // Stok Hoshi yang tertahan `sellable=false` (kartu terpajang, nol Rupiah bisa masuk).
+  { label: "Stok Hoshi", href: "/admin/stok-hoshi", icon: "🏷️" },
   { label: "Listings", href: "/admin/listings", icon: "📋" },
   { label: "Users", href: "/admin/users", icon: "👥" },
   // Cards page (katalog master-data) disembunyikan dari nav — marketplace = Listings,

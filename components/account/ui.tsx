@@ -809,3 +809,11 @@ export const InboxIcon = (p: IP) => (
     <path d="M5 5h14l2 8v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4L5 5z" />
   </S>
 );
+// Struk/tagihan — dipakai "Payment History". Sengaja BUKAN HistoryIcon: ikon itu sudah dipakai
+// "Shipment History" di menu yang sama, dan dua baris berikon identik bikin user salah klik.
+export const ReceiptIcon = (p: IP) => (
+  <S {...p}>
+    <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z" />
+    <path d="M9 8h6M9 12h6" />
+  </S>
+);

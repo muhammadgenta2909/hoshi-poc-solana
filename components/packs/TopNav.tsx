@@ -20,6 +20,7 @@ import {
   DepositIcon,
   WithdrawIcon,
   HistoryIcon,
+  ReceiptIcon,
   BoxIcon,
   LogoutIcon,
 } from "@/components/account/ui";
@@ -270,6 +271,10 @@ function MobileMenuSheet({ onClose, active }: { onClose: () => void; active?: Na
   const BALANCE_NAV = [
     { label: "Deposit", href: "/deposit", icon: <DepositIcon className={iconCls} />, tint: "text-emerald-400" },
     { label: "Cash Out", href: "/tarik-saldo", icon: <WithdrawIcon className={iconCls} />, tint: "text-[#F2C101]" },
+    // Riwayat pembayaran. WAJIB ada di sini, bukan cuma di dropdown desktop: di bawah `lg`
+    // <AccountMenu> ber-`hidden`, jadi drawer ini adalah SATU-SATUNYA menu yang didapat HP —
+    // entri yang cuma ditambahkan ke dropdown akan tidak terjangkau dari ponsel.
+    { label: "Payment History", href: "/riwayat-pembayaran", icon: <ReceiptIcon className={iconCls} />, tint: "text-zinc-400" },
   ];
   const ACCOUNT_NAV = [
     { label: "Profile", href: "/account", icon: <UserIcon className={iconCls} /> },

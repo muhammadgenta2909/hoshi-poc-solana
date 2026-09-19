@@ -4,6 +4,15 @@
 //
 // RECORD-ONLY: server cuma MENCATAT permintaan (tidak burn/transfer NFT). Kartu tetap di wallet
 // sampai admin memproses pengiriman — modal menyampaikan ini dengan jujur ke user.
+//
+// ┌──── RAIL: CC VAULT SAJA. ───────────────────────────────────────────────────────────────────┐
+// │ Modal ini berporos pada `nftAddress` — prop-nya wajib, dan body requestRedemption-nya selalu │
+// │ berbentuk `{ nftAddress }`, yang di backend berarti "jalur CollectorCrypt". Kartu STOK HOSHI │
+// │ TIDAK punya alamat NFT sama sekali (settlement-nya database-only) dan HARUS diminta lewat    │
+// │ `{ listingId }` → DomesticShipModal. Jangan menambahkan cabang domestik di sini: satu-satunya│
+// │ pemakainya adalah /vault/[nft], halaman yang route-nya SENDIRI berkunci alamat NFT, jadi     │
+// │ kartu domestik memang tidak akan pernah sampai ke sini.                                      │
+// └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";

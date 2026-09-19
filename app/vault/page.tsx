@@ -16,6 +16,7 @@ import {
   getMyPacks,
   getMyPurchases,
   getMyRedemptions,
+  hoshiListingRef,
   relistListing,
   type CardRedemption,
   type RedemptionStatus,
@@ -41,6 +42,7 @@ import ShippingFlowModal, {
   readPendingShip,
   STATUS_LABEL,
 } from "@/components/packs/ShippingFlowModal";
+import { isDomesticActionableStatus } from "@/components/packs/DomesticShipModal";
 import { formatIdr, GOLD_GRADIENT, GradientText, Img } from "@/components/packs/ui";
 
 // Vault = every card the user owns, from BOTH sources (CC-style single collection):
@@ -55,6 +57,25 @@ function shortAsset(address: string): string {
 
 /** A successfully-opened pull with a minted card address is a real owned card. */
 const isOwnedPull = (p: GachaPull): boolean => p.status === "OPENED" && !!p.nftAddress;
+
+/**
+ * KUNCI untuk mencocokkan satu listing yang dimiliki user dengan baris permintaan kirimnya.
+ *
+ * Backend menulis identitas kartu ke kolom `CardRedemption.nftAddress` untuk KEDUA rail: alamat
+ * NFT untuk kartu vault CollectorCrypt, turunan `hoshi-listing:<id>` untuk kartu STOK HOSHI
+ * (yang memang tidak punya alamat NFT — settlement-nya database-only). Fungsi ini menghasilkan
+ * kunci yang SAMA dari sisi klien, jadi satu peta status melayani kedua rail.
+ *
+ * `hoshiStock` DIPERIKSA DULU, dan urutan itu wajib: sebuah baris stok Hoshi bisa (dari jalur
+ * demo/warisan) punya alamat NFT, dan backend MENORMALKAN baris seperti itu ke identitas
+ * domestik. Memeriksa alamat NFT lebih dulu akan mencari dengan kunci yang tidak pernah ditulis →
+ * status kirimnya tidak pernah ketemu, badge-nya hilang, dan kartu yang sedang dikirim tetap
+ * terlihat seperti kartu yang bebas.
+ */
+const shipKeyForListing = (l: Listing): string | null =>
+  l.hoshiStock === true
+    ? hoshiListingRef(l.id)
+    : (l.nft?.assetAddress ?? l.ccNftAddress ?? null);
 
 // Redemption yang membuat kartu SUDAH keluar dari vault: begitu burn tersubmit, NFT tak lagi di
 // wallet (di prod di-burn; di staging disimulasi disembunyikan). SHIPPED = status record-only lama.
@@ -240,9 +261,7 @@ export default function VaultPage() {
     return rows
       .filter((r) => {
         const nft =
-          r.kind === "pull"
-            ? r.pull.nftAddress
-            : (r.listing.nft?.assetAddress ?? r.listing.ccNftAddress);
+          r.kind === "pull" ? r.pull.nftAddress : shipKeyForListing(r.listing);
         const st = nft ? redemptionByNft.get(nft) : undefined;
         return !(st && SHIPPED_OUT.has(st));
       })
@@ -321,12 +340,27 @@ export default function VaultPage() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {collection.map((e) => {
               const nft =
-                e.kind === "pull"
-                  ? e.pull.nftAddress
-                  : (e.listing.nft?.assetAddress ?? e.listing.ccNftAddress);
+                e.kind === "pull" ? e.pull.nftAddress : shipKeyForListing(e.listing);
               // Status pra-burn → badge (kartu keluar-vault sudah difilter keluar di atas).
               const ship = nft ? redemptionByNft.get(nft) : undefined;
               const shipActive = !!ship && !SHIPPED_OUT.has(ship);
+              // RAIL DOMESTIK (stok Hoshi, kurir lokal). Dibaca dari `hoshiStock` — flag yang
+              // DITURUNKAN SERVER — bukan ditebak dari "tidak punya alamat NFT", karena tebakan
+              // itu ikut menyapu baris seed/placeholder.
+              const domesticRow = e.kind === "bought" && e.listing.hoshiStock === true;
+              /* Bisa dilanjutkan sendiri oleh user?
+                 • rail DOMESTIK → ya selama ongkirnya belum lunas, dan SENGAJA TIDAK digerbang
+                   CC_SHIPPING_ENABLED: rail ini tidak menyentuh CollectorCrypt sama sekali.
+                 • rail CC       → hanya saat flag ON. isResignShipStatus(FUNDED) WAJIB ikut: uang
+                   treasury sudah keluar, kartunya masih utuh, dan yang kurang cuma satu tanda
+                   tangan; dulu status itu tidak ada di daftar mana pun sehingga jatuh ke badge
+                   "Sedang dikirim" yang tidak bisa diklik — salah DAN buntu. */
+              const canContinue =
+                !!ship &&
+                (domesticRow
+                  ? isDomesticActionableStatus(ship)
+                  : CC_SHIPPING_ENABLED &&
+                    (isActionableShipStatus(ship) || isResignShipStatus(ship)));
               const key = e.kind === "pull" ? `pull-${e.pull.memo}` : `bought-${e.listing.id}`;
               return (
                 <div key={key} className="relative">
@@ -345,23 +379,28 @@ export default function VaultPage() {
                           e.listing.ccNftAddress ?? e.listing.nft?.assetAddress ?? "",
                         ) ?? null
                       }
+                      // Jalan masuk ke permintaan kirim untuk kartu STOK HOSHI yang belum punya
+                      // permintaan aktif. Tanpa ini pembeli yang baru saja membayar mendarat di
+                      // /vault dan tidak punya satu pun tombol yang meminta kartunya — persis
+                      // keadaan yang membuat pekerjaan ini ada.
+                      canShipDomestic={domesticRow && !shipActive}
                     />
                   )}
                   {shipActive &&
                     ship &&
                     // Grid ini layar yang paling sering dilihat, jadi ia HARUS memakai helper yang
                     // sama dengan /withdraw dan /vault/[nft] — bukan daftar status sendiri yang
-                    // bisa (dan pernah) ketinggalan satu status. isResignShipStatus(FUNDED) =
-                    // uang treasury SUDAH keluar, kartunya masih utuh, dan yang kurang cuma satu
-                    // tanda tangan; dulu status itu tidak ada di daftar mana pun sehingga jatuh ke
-                    // badge "Sedang dikirim" yang tidak bisa diklik — salah DAN buntu.
-                    (CC_SHIPPING_ENABLED &&
-                    (isActionableShipStatus(ship) || isResignShipStatus(ship)) ? (
+                    // bisa (dan pernah) ketinggalan satu status.
+                    (canContinue ? (
                       <Link
                         href="/withdraw"
                         className="absolute left-2 top-2 z-10 rounded-full border border-yellow-400/50 bg-yellow-500/90 px-2 py-0.5 text-[10px] font-bold text-[#171717] shadow transition hover:brightness-110"
                       >
-                        {isResignShipStatus(ship) ? "📦 Tanda tangani" : "📦 Selesaikan kirim"}
+                        {domesticRow
+                          ? "📦 Bayar ongkir"
+                          : isResignShipStatus(ship)
+                            ? "📦 Tanda tangani"
+                            : "📦 Selesaikan kirim"}
                       </Link>
                     ) : (
                       // Flag OFF (record-only) atau status yang sudah berjalan → badge info biasa,
@@ -591,10 +630,18 @@ function PullCard({
 function BoughtCard({
   listing,
   initialListedId,
+  canShipDomestic = false,
 }: {
   listing: Listing;
   /** listingId kalau kartu ini SUDAH dipajang lagi (dari server saat load). */
   initialListedId: string | null;
+  /**
+   * true = kartu STOK HOSHI milik user yang BELUM punya permintaan kirim aktif → tawarkan jalan
+   * masuk ke /withdraw. Diputuskan parent (ia yang memegang peta status kirim), bukan disimpulkan
+   * di sini dari `hoshiStock` saja — kalau tidak, kartu yang ongkirnya sedang dibayar akan
+   * menampilkan ajakan "minta dikirim" untuk kedua kalinya.
+   */
+  canShipDomestic?: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [listedId, setListedId] = useState<string | null>(null);
@@ -635,6 +682,25 @@ function BoughtCard({
         </span>
       )}
       <MarketCard listing={listing} currency="IDR" showStatus />
+
+      {/* ─── MINTA DIKIRIM (kartu STOK HOSHI) ───────────────────────────────────────────────
+          Jalan masuk yang sebelumnya TIDAK ADA di seluruh aplikasi. Kartu stok Hoshi settle
+          database-only (tak punya alamat NFT), jadi ia tidak pernah lolos saringan pemilih kartu
+          di /withdraw dan tidak pernah punya halaman detail vault — pembeli bisa membayar penuh
+          lalu tidak punya satu pun tombol yang meminta kartunya.
+
+          Ditaruh SEBELUM "List for Sale" dengan sengaja: pembeli kartu fisik biasanya ingin
+          kartunya, bukan menjualnya lagi. Aksen EMAS = rail kurir domestik, warna yang sama
+          dipakai lencana rail di /withdraw dan di dashboard admin. */}
+      {canShipDomestic && (
+        <Link
+          href="/withdraw"
+          className="rounded-xl border border-[#F2C101]/45 bg-[#F2C101]/[0.12] px-3 py-2 text-center text-xs font-semibold text-[#F2C101] transition hover:bg-[#F2C101]/[0.2]"
+          title="Kartu ini ada di gudang Hoshi di Indonesia — kamu cuma membayar ongkir kurir. Tidak ada NFT yang dibakar dan tidak ada tanda tangan wallet."
+        >
+          📦 Kirim ke rumah — bayar ongkir
+        </Link>
+      )}
 
       {effectiveListedId && !pendingEscrow ? (
         <Link

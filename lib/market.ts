@@ -270,6 +270,21 @@ export type Listing = {
   ccNftAddress?: string | null;
   /** NFT minted to the buyer after marketplace purchase. Null while still ACTIVE. */
   nft?: ListingNft | null;
+  /**
+   * true = kartu ini STOK FISIK HOSHI yang ditandai dijual: fisiknya disimpan Hoshi di
+   * Indonesia, BUKAN di vault CollectorCrypt. Kalau kamu sudah membelinya, permintaan
+   * kirimnya lewat jalur DOMESTIK (kurir lokal): POST /redemptions { listingId } → ongkir
+   * Rupiah → Hoshi kemas & kirim. NOL NFT, NOL burn, NOL USDC, NOL tanda tangan wallet.
+   *
+   * DITURUNKAN SERVER (marketplace.serialize.ts → src/common/hoshi-stock.ts), dan HARUS
+   * dipakai apa adanya. Menebaknya di UI dari `source === "HOSHI"` + tidak punya alamat NFT
+   * akan ikut menyapu baris seed/placeholder (predikat sebenarnya juga menuntut
+   * `sellable === true` dan `sellerId === null`, dan kedua kolom itu tidak ada di DTO ini)
+   * — lalu menawarkan tombol kirim untuk kartu yang tidak ada.
+   *
+   * Opsional supaya baris dari respons backend lama tetap terbaca.
+   */
+  hoshiStock?: boolean;
 };
 
 /** Listing status (mirrors the backend ListingStatus enum). */

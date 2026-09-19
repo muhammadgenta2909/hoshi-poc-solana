@@ -679,10 +679,20 @@ export default function SettingsPage() {
             </div>
           </Panel>
         ) : (
+          /* Tab ini dulu berbunyi "No activity yet — your account activity will appear here",
+             sebuah janji yang tidak pernah ditepati: tak ada satu pun sumber data yang
+             mengisinya. Aktivitas uang yang NYATA sudah ada (GET /payments/me/orders), dan
+             halamannya sekarang ada di /riwayat-pembayaran — jadi tab ini menunjuk ke sana
+             alih-alih terus menyatakan user tidak punya aktivitas apa pun. */
           <EmptyState
             icon={<InboxIcon className="h-9 w-9" />}
-            title="No activity yet"
-            sub="Your account activity will appear here."
+            title="Riwayat pembayaranmu ada di halaman sendiri"
+            sub="Semua tagihan rupiah — pack, isi saldo, kartu marketplace, dan ongkir kirim kartu — beserta statusnya."
+            action={
+              <Link href="/riwayat-pembayaran">
+                <GhostButton>Buka Riwayat Pembayaran →</GhostButton>
+              </Link>
+            }
           />
         )}
       </div>
