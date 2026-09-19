@@ -64,7 +64,13 @@ export default function AccountMenu() {
     { label: "Payment History", href: "/riwayat-pembayaran", icon: <ReceiptIcon className={iconCls} />, tint: "text-zinc-400" },
   ];
   // Physical Cards = kirim/redeem KARTU FISIK ke rumah (bukan duit).
+  //
+  // "Titipan Saya" duduk di grup ini dan HARUS bisa ditemukan tanpa dicari: isinya barang milik
+  // user yang fisiknya sedang dipegang Hoshi. Di situ pula satu-satunya jalan untuk memintanya
+  // kembali. Penyimpan barang yang tombol "ambil kembali"-nya terkubur adalah persis alasan orang
+  // ragu menitipkan kartu mahal.
   const CARDS_NAV: NavItem[] = [
+    { label: "Titipan Saya", href: "/titipan", icon: <BoxIcon className={iconCls} />, tint: "text-sky-400" },
     { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
     { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];

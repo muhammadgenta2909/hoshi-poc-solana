@@ -1,3 +1,5 @@
+import type { ConsignmentBase, ConsignmentListingRef } from "./consignment";
+
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
@@ -1000,3 +1002,369 @@ export const getAdminActivity = (token: string, params?: {
     headers: { authorization: `Bearer ${token}` },
   });
 };
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   TITIPAN (consignment) — sisi OPERATOR.
+
+   Layar yang memakainya berdiri di depan pemilik kartu, biasanya sambil memegang ponsel. Satu
+   aturan dipegang di seluruh bagian ini: apa pun yang menyangkut "Hoshi sudah memegang kartunya"
+   ditulis lewat SATU rute (`acceptConsignmentCustody`), satu kali, dan tidak ada rute mana pun di
+   sini yang bisa membatalkan fakta itu. Berakhirnya custody adalah fakta KEDUA (release / lost),
+   bukan penghapusan fakta pertama; koreksi catatan pun ditulis sebagai baris audit BARU, bukan
+   sebagai kolom yang diam-diam berubah isinya.
+
+   ⚠️ Kartu titipan BUKAN stok Hoshi. Tidak ada rute di bagian ini yang menyentuh `sellable`,
+   treasury, escrow, USDC atau SOL — nol aset kripto bergerak dari layar operator.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Relasi user ringkas yang disertakan rute titipan (`select` di server). */
+export type ConsignmentUserRef = {
+  id: string;
+  displayName: string | null;
+  walletAddress: string;
+};
+
+/**
+ * Satu baris titipan di konsol admin.
+ *
+ * Kolom mentahnya ada di `ConsignmentBase` (dipakai bersama layar pemilik). Yang ditambahkan di
+ * sini hanyalah relasi yang MEMANG dikirim rute admin. Ketiganya opsional karena dua rute admin
+ * mengirim kelengkapan berbeda:
+ *   • `GET /admin/consignments`      → consignor + photos ringkas + listing ringkas (tanpa events)
+ *   • `GET /admin/consignments/:id`  → + receivedBy + events + baris listing utuh
+ */
+export type AdminConsignment = ConsignmentBase & {
+  consignor?: ConsignmentUserRef;
+  receivedBy?: ConsignmentUserRef | null;
+  listing?: ConsignmentListingRef | null;
+};
+
+/** Satu baris "perlu tindakan" — DIHITUNG SERVER, dikirim terpisah dari barisnya. */
+export type AdminConsignmentTodo = {
+  id: string;
+  cardName: string;
+  /** Kalimat siap-tampil. Jangan ditulis ulang di klien. */
+  reasons: string[];
+};
+
+/**
+ * Jawaban `GET /admin/consignments`.
+ *
+ * `actionRequired` adalah inti layarnya, dan ia DIHITUNG SERVER: titipan yang menggantung
+ * (disepakati tapi kartunya tak pernah datang), permintaan kembali yang belum diserahkan, dan
+ * kartu terjual yang masih di rak. Klien TIDAK menurunkan daftar keduanya sendiri — barang orang
+ * lain yang tergeletak tanpa ada yang melihat adalah cara paling umum sebuah janji custody
+ * diingkari tanpa siapa pun berniat begitu, dan dua salinan aturan berarti yang satu akan diam.
+ */
+export type AdminConsignmentList = {
+  total: number;
+  rows: AdminConsignment[];
+  actionRequired: AdminConsignmentTodo[];
+};
+
+/** Aksi operator pada satu baris titipan. Satu nama = satu rute = satu tombol. */
+export type ConsignmentAction =
+  | "PHOTO"
+  | "ACCEPT"
+  | "LIST"
+  | "PRICE"
+  | "RETURN"
+  | "RELEASE"
+  | "LOST"
+  | "COMPENSATE"
+  | "CORRECTION";
+
+/**
+ * Aksi yang MASUK AKAL untuk satu baris, diturunkan dari status.
+ *
+ * Ini cermin tabel transisi yang ditegakkan `ConsignmentService`, dan ia ada supaya operator
+ * tidak ditawari tombol yang pasti dijawab 409. Server tetap yang memutuskan; kalau keduanya
+ * pernah berbeda, YANG BENAR ADALAH SERVER.
+ *
+ * FAIL-CLOSED: status yang tidak dikenal hanya menyisakan aksi yang tidak mengubah keadaan
+ * (tambah foto, tulis koreksi) — bukan semuanya.
+ */
+export const consignmentAllowedActions = (c: AdminConsignment): ConsignmentAction[] => {
+  switch (c.status) {
+    // Kartunya belum berpindah tangan: bukti boleh bertambah, harga masih bisa disepakati ulang,
+    // lalu terima — atau batalkan (RETURN pada INTAKE = membatalkan kesepakatan).
+    case "INTAKE":
+      return ["PHOTO", "ACCEPT", "PRICE", "RETURN", "CORRECTION"];
+    case "IN_CUSTODY":
+      return ["PHOTO", "LIST", "PRICE", "RETURN", "RELEASE", "LOST", "CORRECTION"];
+    // RELEASE tidak ada di sini dengan sengaja: dari LISTED, server menuntut listing-nya
+    // diturunkan lebih dulu (lewat RETURN), baru kartunya boleh dicatat keluar.
+    case "LISTED":
+      return ["PHOTO", "PRICE", "RETURN", "LOST", "CORRECTION"];
+    // Kartu sudah milik pembeli: pemilik lama tidak bisa menariknya. Tinggal keluar, atau hilang.
+    case "SOLD":
+      return ["PHOTO", "RELEASE", "LOST", "CORRECTION"];
+    // Hilang di tangan kita: satu-satunya langkah yang tersisa adalah ganti rugi ke pemiliknya.
+    case "LOST":
+      return ["PHOTO", "COMPENSATE", "CORRECTION"];
+    default:
+      return ["PHOTO", "CORRECTION"];
+  }
+};
+
+/**
+ * Alasan pelepasan yang SAH untuk sebuah baris — diturunkan dari statusnya, bukan dipilih bebas.
+ *
+ * Server hanya menerima WITHDRAWN dari IN_CUSTODY dan SHIPPED_TO_BUYER dari SOLD. Menyodorkan
+ * dropdown berisi keduanya hanya menambah satu cara untuk mendapat 409; yang benar adalah
+ * memberi tahu operator apa yang sedang ia catat.
+ */
+export const consignmentReleaseReason = (
+  c: AdminConsignment,
+): { value: "WITHDRAWN" | "SHIPPED_TO_BUYER"; label: string } | null => {
+  if (c.status === "IN_CUSTODY")
+    return { value: "WITHDRAWN", label: "Dikembalikan ke pemiliknya" };
+  if (c.status === "SOLD")
+    return { value: "SHIPPED_TO_BUYER", label: "Diserahkan / dikirim ke pembeli" };
+  return null;
+};
+
+export const getAdminConsignments = (token: string, status?: string) => {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return api<AdminConsignmentList>(`/admin/consignments${qs}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+};
+
+export const getAdminConsignment = (id: string, token: string) =>
+  api<AdminConsignment>(`/admin/consignments/${id}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+/** Satu foto yang dikirim ke server. `url` sudah berupa hasil unggah (`POST /admin/upload`). */
+export type ConsignmentPhotoInput = {
+  url: string;
+  kind: string;
+  note?: string;
+};
+
+/**
+ * Catatan kesepakatan awal — baris `INTAKE`.
+ *
+ * Membuat baris ini TIDAK berarti Hoshi memegang kartunya. Sampai `acceptConsignmentCustody`
+ * dipanggil, baris ini tidak bisa dipajang oleh apa pun — dan justru urutan itulah yang menutup
+ * risiko "kartunya ternyata sudah dijual sendiri ke orang lain".
+ */
+export type CreateConsignmentInput = {
+  /** User Hoshi yang memiliki kartu. WAJIB user sungguhan: dia yang nanti dibayar. */
+  consignorId: string;
+  consignorNameAtIntake: string;
+  consignorPhoneAtIntake: string;
+  /** "KTP" | "SIM" | "PASPOR" — opsional. */
+  consignorIdKind?: string;
+  /** TEPAT empat digit terakhir. Jangan pernah kirim nomor identitas lengkap. */
+  consignorIdLast4?: string;
+  receivedAtPlace: string;
+
+  cardName: string;
+  cardSet?: string;
+  cardNumber?: string;
+  language?: string;
+  tcg?: string;
+  /** "PSA" | "CGC" | "BGS". Kosong = kartu mentah (boleh dititipkan, belum boleh dipajang). */
+  grader?: string;
+  certNumber?: string;
+  gradeLabel?: string;
+  gradeScore?: number;
+  /** WAJIB, minimal 10 karakter — kalimat yang jadi tumpuan kalau ada sengketa. */
+  conditionNote: string;
+  rawCondition?: string;
+
+  askPriceIdr: number;
+  reservePriceIdr?: number;
+  /** Komisi yang DISEPAKATI hari itu (500 = 5%). Dibekukan di baris titipan. */
+  commissionBps?: number;
+  agreementRef?: string;
+  intakeReceiptRef?: string;
+  /** Foto boleh ikut sekarang atau menyusul sebelum serah terima dicatat. */
+  photos?: ConsignmentPhotoInput[];
+};
+
+export const createAdminConsignment = (input: CreateConsignmentInput, token: string) =>
+  api<AdminConsignment>("/admin/consignments", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Tambah foto bukti. APPEND-ONLY: tidak ada rute ubah/hapus, dan itu disengaja — bukti yang bisa
+ * direvisi diam-diam bukan bukti, baik untuk pemilik kartu maupun untuk Hoshi.
+ *
+ * Mengembalikan BARIS TITIPAN yang sudah diperbarui (bukan barisan foto), jadi pemanggil
+ * memakainya apa adanya sebagai state terbaru.
+ */
+export const addAdminConsignmentPhotos = (
+  id: string,
+  photos: ConsignmentPhotoInput[],
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/photos`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ photos }),
+  });
+
+/**
+ * ══ FAKTA YANG MENENTUKAN SEGALANYA ══
+ * "Kartunya ADA DI TANGAN SAYA sekarang."
+ *
+ * Ditulis SEKALI, oleh orang yang benar-benar menerimanya (server mencatat pemanggilnya sebagai
+ * penerima), dan TIDAK PERNAH dihapus oleh rute mana pun. Sesudah ini kartu boleh dipajang;
+ * sebelum ini tidak ada apa pun yang boleh dipajang.
+ *
+ * Catatan kondisi TIDAK dikirim di sini: ia ditulis saat intake dan tidak bisa ditimpa. Kalau ada
+ * yang perlu diluruskan, jalannya `addAdminConsignmentCorrection` — supaya koreksi terlihat
+ * sebagai koreksi.
+ */
+export const acceptConsignmentCustody = (
+  id: string,
+  input: {
+    storageLocation: string;
+    intakeReceiptRef?: string;
+    photos?: ConsignmentPhotoInput[];
+    note?: string;
+  },
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/accept-custody`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Terbitkan listing untuk kartu yang SUDAH di tangan Hoshi.
+ *
+ * Server membuat baris `Listing` dan menulis `consignmentId`-nya di dalam transaksi yang sama
+ * dengan klaim IN_CUSTODY→LISTED — jadi listing titipan tidak bisa lahir sebelum custody tercatat.
+ *
+ * BATAS SLICE 1: kartu MENTAH (tanpa grader) ditolak, karena kolom grader pada listing hanya
+ * mengenal PSA/CGC/BGS dan mengisinya berarti memberi label palsu pada kartu orang lain.
+ */
+export const listAdminConsignment = (
+  id: string,
+  input: {
+    image: string;
+    imageBack?: string;
+    priceIdrx?: number;
+    expectedValueIdrx?: number;
+    rarity?: string;
+    era?: string;
+    element?: string;
+    category?: string;
+  },
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/listing`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Ubah harga pajang.
+ *
+ * Lewat rute KHUSUS (bukan PATCH listing biasa) karena harga adalah bagian dari perjanjian yang
+ * ditandatangani pemilik kartu: server menulis `askPriceIdr` di baris titipan DAN `priceIdrx` di
+ * listing-nya dalam satu transaksi, dan ALASANNYA disimpan permanen sebagai baris audit.
+ */
+export const setAdminConsignmentPrice = (
+  id: string,
+  input: { askPriceIdr: number; note: string },
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/price`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Pemilik minta kartunya kembali (disampaikan langsung ke operator).
+ *
+ * Rute yang SAMA dengan tombol pemilik di /titipan. Efeknya tergantung status: dari INTAKE ia
+ * membatalkan kesepakatan; dari IN_CUSTODY ia mencatat permintaannya; dari LISTED ia menurunkan
+ * listing (`ACTIVE → CANCELLED`) dalam satu klaim atomik. Kalau kartunya TERJUAL lebih dulu,
+ * klaim itu kalah dan server menolak — tidak ada jalan di mana pembeli dan pemilik lama sama-sama
+ * menang. GRATIS: nol Rupiah bergerak di jalur ini.
+ */
+export const requestAdminConsignmentReturn = (id: string, token: string, note?: string) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/withdraw`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(note ? { note } : {}),
+  });
+
+/**
+ * Kartu FISIK keluar dari Hoshi — kembali ke pemiliknya (WITHDRAWN, dari IN_CUSTODY) atau ke
+ * pembeli (SHIPPED_TO_BUYER, dari SOLD).
+ *
+ * Ini fakta kedua (`custodyReleasedAt`), bukan pembatalan fakta pertama. Sesudah ini baris
+ * titipan tidak bisa dipajang, dijual, atau dikirim oleh apa pun. Kartu HILANG punya rutenya
+ * sendiri, supaya "hilang" tidak pernah bisa tercatat diam-diam sebagai pengembalian biasa.
+ */
+export const releaseAdminConsignment = (
+  id: string,
+  input: { releaseReason: "WITHDRAWN" | "SHIPPED_TO_BUYER"; note: string; releaseReceiptRef?: string },
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/release`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Kartu HILANG atau RUSAK saat ada di penyimpanan Hoshi.
+ *
+ * Jalan keluar yang jujur, dan ia harus ada: tanpa rute ini satu-satunya cara "menyelesaikan"
+ * baris seperti itu adalah berpura-pura kartunya masih ada. Server menurunkan listing-nya juga
+ * dalam transaksi yang sama, jadi kartu yang hilang tidak bisa terus dijual.
+ *
+ * GANTI RUGI TIDAK OTOMATIS: rute ini tidak memindahkan uang sepeser pun.
+ */
+export const markAdminConsignmentLost = (id: string, note: string, token: string) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/lost`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });
+
+/**
+ * Ganti rugi ke pemilik kartu yang HILANG di tangan Hoshi — lewat ledger saldo yang sudah ada.
+ *
+ * IDEMPOTEN per titipan di server: klik dua kali tidak bisa membayar dua kali, dan jawabannya
+ * membawa `credited` (false = memang sudah pernah dibayar, bukan error).
+ *
+ * Ini MEMINDAHKAN UANG ke saldo pemilik. Nominalnya keputusan manusia, bukan rumus.
+ */
+export const compensateAdminConsignment = (
+  id: string,
+  input: { amountIdr: number; note: string },
+  token: string,
+) =>
+  api<AdminConsignment & { credited: boolean }>(`/admin/consignments/${id}/compensate`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Koreksi catatan intake.
+ *
+ * TIDAK menimpa kolom apa pun — ditulis sebagai baris audit BARU, supaya koreksi TERLIHAT sebagai
+ * koreksi. Catatan kondisi yang bisa diubah diam-diam sesudah sengketa dimulai tidak ada harganya
+ * sebagai bukti, bagi kedua pihak.
+ */
+export const addAdminConsignmentCorrection = (id: string, note: string, token: string) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/correction`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });

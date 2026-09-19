@@ -321,7 +321,11 @@ export function ActiveListingsTable({
   onCancel: (l: Listing) => void;
   busyId: string | null;
 }) {
-  const allOn = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  // Baris TITIPAN tidak bisa dibatalkan dari sini (lihat catatan di badan tabel), jadi "pilih
+  // semua" hanya mencakup yang memang bisa — kalau tidak, kotaknya tak pernah bisa tercentang
+  // penuh dan aksi massalnya menyeret baris yang pasti ditolak server.
+  const selectable = rows.filter((r) => r.consigned !== true);
+  const allOn = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
   return (
     <TableShell
       head={
@@ -336,47 +340,80 @@ export function ActiveListingsTable({
         </>
       }
     >
-      {rows.map((l) => (
-        <Row key={l.id}>
-          <Td>
-            <Checkbox
-              checked={selected.has(l.id)}
-              onChange={() => onToggle(l.id)}
-              label={`Select ${l.name}`}
-            />
-          </Td>
-          <Td>
-            <ItemCell name={l.name} image={l.image} id={l.id} href={`/marketplace/${l.id}`} />
-          </Td>
-          <Td>
-            <Amount value={l.price} />
-          </Td>
-          <Td className="whitespace-nowrap text-[12px] text-zinc-400">
-            {formatActivityDate(l.listedAt)}
-          </Td>
-          <Td>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => onEdit(l)}
-                disabled={busyId === l.id}
-                className="rounded-lg px-5 py-1.5 text-[13px] font-semibold text-[#171717] transition hover:brightness-105 disabled:opacity-50"
-                style={{ backgroundImage: GOLD }}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={() => onCancel(l)}
-                disabled={busyId === l.id}
-                className="rounded-lg border border-white/12 bg-white/[0.05] px-4 py-1.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.09] disabled:opacity-50"
-              >
-                {busyId === l.id ? "…" : "Cancel"}
-              </button>
-            </div>
-          </Td>
-        </Row>
-      ))}
+      {rows.map((l) => {
+        /* KARTU TITIPAN: penjualnya memang user ini, jadi barisnya muncul di sini — tapi Edit dan
+           Cancel dua-duanya ditolak server. Harga bagian dari perjanjian (diubah lewat tim Hoshi),
+           dan penarikan harus memindahkan listing DAN catatan custody dalam satu transaksi, jadi
+           jalannya lewat halaman Titipan. Menyodorkan tombol yang pasti gagal lebih buruk daripada
+           tidak menyodorkannya. Kotak pilihnya juga dimatikan supaya "Cancel N" massal tidak bisa
+           menyeret baris titipan ke dalam aksi yang sama. */
+        const consigned = l.consigned === true;
+        return (
+          <Row key={l.id}>
+            <Td>
+              {consigned ? (
+                <span
+                  aria-hidden
+                  title="Kartu titipan — dikelola di halaman Titipan"
+                  className="block h-4 w-4 shrink-0 rounded-full border border-white/10"
+                />
+              ) : (
+                <Checkbox
+                  checked={selected.has(l.id)}
+                  onChange={() => onToggle(l.id)}
+                  label={`Select ${l.name}`}
+                />
+              )}
+            </Td>
+            <Td>
+              <ItemCell name={l.name} image={l.image} id={l.id} href={`/marketplace/${l.id}`} />
+            </Td>
+            <Td>
+              <Amount value={l.price} />
+            </Td>
+            <Td className="whitespace-nowrap text-[12px] text-zinc-400">
+              {formatActivityDate(l.listedAt)}
+            </Td>
+            <Td>
+              <div className="flex items-center justify-end gap-2">
+                {consigned ? (
+                  <>
+                    <span className="rounded-md border border-sky-400/35 bg-sky-400/10 px-2 py-0.5 text-[11px] font-semibold text-sky-200">
+                      Titipan
+                    </span>
+                    <Link
+                      href="/titipan"
+                      className="rounded-lg border border-white/12 bg-white/[0.05] px-4 py-1.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.09]"
+                    >
+                      Kelola
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onEdit(l)}
+                      disabled={busyId === l.id}
+                      className="rounded-lg px-5 py-1.5 text-[13px] font-semibold text-[#171717] transition hover:brightness-105 disabled:opacity-50"
+                      style={{ backgroundImage: GOLD }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onCancel(l)}
+                      disabled={busyId === l.id}
+                      className="rounded-lg border border-white/12 bg-white/[0.05] px-4 py-1.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.09] disabled:opacity-50"
+                    >
+                      {busyId === l.id ? "…" : "Cancel"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </Td>
+          </Row>
+        );
+      })}
     </TableShell>
   );
 }

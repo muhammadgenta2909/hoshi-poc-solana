@@ -445,6 +445,77 @@ function OwnerPanel({
   );
 }
 
+/** Lencana "Titipan".
+ *
+ *  Kalimat pada `title` dipilih hati-hati: kartu ini BUKAN milik Hoshi. Hoshi menyimpannya dan
+ *  menjualkannya untuk pemiliknya. Menyebutnya "stok Hoshi" (atau membiarkannya tampak begitu)
+ *  adalah klaim kepemilikan atas barang orang lain. */
+function ConsignedBadge() {
+  return (
+    <span
+      title="Kartu milik penggunanya sendiri — fisiknya disimpan Hoshi di Indonesia dan dijualkan atas namanya."
+      className="inline-flex items-center rounded-md border border-sky-400/40 bg-sky-400/[0.12] px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-sky-200"
+      style={JERSEY}
+    >
+      Titipan
+    </span>
+  );
+}
+
+/** Panel pemilik untuk kartu TITIPAN — menggantikan <OwnerPanel> sepenuhnya, bukan menambahinya.
+ *
+ *  Dua tombol <OwnerPanel> tidak berlaku di sini, dan keduanya akan ditolak server:
+ *   • "Cancel Listing" — menurunkan listing titipan harus memindahkan listing DAN baris custody
+ *     dalam satu transaksi, jadi jalannya lewat permintaan kembali di /titipan, bukan tombol ini.
+ *   • "List for Sale"  — memajang ulang kartu titipan berarti titipan BARU (kartunya sudah di
+ *     tangan Hoshi atau tidak sama sekali); tidak ada yang bisa dipajang dari halaman ini.
+ *
+ *  Yang ditawarkan justru hak yang paling berarti buat pemiliknya: memintanya kembali, gratis. */
+function ConsignedOwnerPanel({ listing }: { listing: Listing }) {
+  const sold = listing.status === "SOLD";
+  return (
+    <div className="mt-5 rounded-2xl border border-sky-400/25 bg-sky-400/[0.06] p-4">
+      <Label>Kartu titipanmu</Label>
+      {sold ? (
+        <>
+          <p className="mt-2 text-[14px] leading-relaxed text-zinc-200">
+            Kartu ini sudah terjual. Hasilnya sudah masuk ke saldomu; kartunya menunggu dikirim ke
+            pembeli.
+          </p>
+          <Link
+            href="/titipan"
+            className="mt-4 block w-full rounded-xl bg-white/[0.06] px-4 py-3 text-center text-[15px] font-semibold text-zinc-100 transition hover:bg-white/[0.12]"
+          >
+            Lihat rincian titipan →
+          </Link>
+        </>
+      ) : (
+        <>
+          <div className="mt-2 flex items-center gap-2.5">
+            <span className="text-sm text-zinc-400">
+              {listing.status === "ACTIVE" ? "Dipajang" : "Harga"}
+            </span>
+            <IdrxCoin size={26} />
+            <span className="text-2xl leading-none text-white" style={JERSEY}>
+              {formatIdr(listing.price)}
+            </span>
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-zinc-400">
+            Kartunya tetap milikmu — Hoshi hanya menyimpan dan menjualkannya. Kamu bisa memintanya
+            kembali kapan saja selama belum terjual, tanpa biaya.
+          </p>
+          <Link
+            href="/titipan"
+            className="mt-4 block w-full rounded-xl border border-yellow-400/35 bg-yellow-400/10 px-4 py-3 text-center text-[15px] font-semibold text-yellow-200 transition hover:bg-yellow-400/20"
+          >
+            Minta kartu saya kembali
+          </Link>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Props kolom kanan — DIBAGI oleh layout mobile (`RightColumn`) dan desktop
  *  (`RightColumnDesktop`) supaya keduanya menerima data + handler beli yang PERSIS sama
  *  (satu sumber → tak ada risiko jalur beli desktop menyimpang dari mobile). */
@@ -466,6 +537,17 @@ type RightColumnProps = {
   /** true = kartu INVENTARIS HOSHI (milik Hoshi sendiri, upload admin) — buyable via Rupiah
    *  tanpa flag P2P; Hoshi = penjual, seluruh harga masuk kas Hoshi. */
   isHoshiInventory: boolean;
+  /**
+   * true = kartu TITIPAN: milik seorang user, fisiknya dipegang Hoshi di Indonesia.
+   *
+   * Ia punya penjual user (jadi `sellerConsigned` true) TAPI tidak punya NFT di escrow, sehingga
+   * setiap cabang yang bertanya "ada penjualnya?" akan menyangkanya listing P2P. Karena itu flag
+   * ini dibaca DULU di setiap percabangan, dan konsekuensinya:
+   *   • boleh dibeli via Rupiah TANPA flag P2P (jalur ini tidak menyentuh escrow sama sekali);
+   *   • tawar-menawar & keranjang DIMATIKAN (slice 1 — server menolaknya);
+   *   • panel pemilik menawarkan "minta kartu saya kembali", bukan "cancel listing".
+   */
+  isConsigned: boolean;
   buyMsg: string | null;
   onRelist: (input: RelistInput) => void;
   onCancel: () => void;
@@ -495,6 +577,7 @@ function RightColumn({
   ownedNow,
   isCatalogCc,
   isHoshiInventory,
+  isConsigned,
   buyMsg,
   onRelist,
   onCancel,
@@ -528,12 +611,22 @@ function RightColumn({
   // Aksi kartu (offer / message / cart) — SATU sumber modal, dipakai tombol "Message Seller"
   // (atas), bilah beli fixed (mobile), dan tombol inline (desktop).
   const actions = useCardActions(listing, onOffer);
-  // Jalur beli STANDAR (bukan pemilik, bukan katalog CC) = Hoshi-inventory / P2P. Hanya jalur ini
-  // yang memakai bilah beli fixed (mobile) + tombol inline (desktop).
+  // Jalur beli STANDAR (bukan pemilik, bukan katalog CC) = Hoshi-inventory / titipan / P2P. Hanya
+  // jalur ini yang memakai bilah beli fixed (mobile) + tombol inline (desktop).
   const standardBuyable = !owned && !isCatalogCc;
-  const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory);
-  // Inventaris Hoshi tak punya penjual eksternal → tak bisa ditawar / dichat.
-  const showMakeOffer = standardBuyable && !isHoshiInventory;
+  // Titipan ikut di sini TANPA flag P2P: jalurnya Rupiah → saldo penjual, nol escrow, nol USDC.
+  const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory || isConsigned);
+  // Inventaris Hoshi tak punya penjual eksternal → tak bisa dichat/ditawar. Titipan PUNYA penjual
+  // (pemilik kartunya), jadi chat tetap masuk akal…
+  const showMessageSeller = standardBuyable && !isHoshiInventory;
+  // …tapi tawar-menawar & keranjang dimatikan untuk titipan: server menolak offer pada listing
+  // titipan di slice ini, dan tombol yang pasti gagal lebih buruk daripada tombol yang tak ada.
+  const showMakeOffer = showMessageSeller && !isConsigned;
+  /* Kartu titipan TIDAK punya jalur beli cadangan. Tombol "Buy Card" memanggil jalur demo
+     instant-mint yang menandai kartu terjual TANPA membayar pemiliknya sepeser pun — untuk kartu
+     orang lain itu bukan mode demo, itu mengambil kartunya. Server menolaknya; di sini tombolnya
+     memang tidak ditawarkan. */
+  const buyBlocked = isConsigned && !canRupiah;
   return (
     <div className="flex flex-col">
       {/* badges — lewati tag kosong. `tags` = [grade, language, era]; CollectorCrypt kadang tak
@@ -544,6 +637,7 @@ function RightColumn({
           .map((t) => (
             <Badge key={t}>{t}</Badge>
           ))}
+        {isConsigned && <ConsignedBadge />}
       </div>
 
       {/* title */}
@@ -633,8 +727,9 @@ function RightColumn({
       </div>
 
       {/* Message Seller — tombol berdiri sendiri, SETELAH "Dijual oleh" & SEBELUM Vault Verified
-          (Figma). Hanya untuk listing P2P (ada penjual user). */}
-      {showMakeOffer && (
+          (Figma). Untuk listing yang punya penjual user — termasuk TITIPAN (yang tawar-menawarnya
+          mati, tapi pemiliknya tetap orang sungguhan yang bisa ditanya). */}
+      {showMessageSeller && (
         <button
           type="button"
           onClick={actions.openMessage}
@@ -663,14 +758,20 @@ function RightColumn({
       {owned ? (
         <div className="mt-6">
           {buyMsg && <p className="text-center text-sm text-[#3DDC84]">{buyMsg}</p>}
-          <OwnerPanel
-            listing={listing}
-            listedByMe={listedByMe}
-            busy={ownerBusy}
-            msg={ownerMsg}
-            onRelist={onRelist}
-            onCancel={onCancel}
-          />
+          {/* TITIPAN dulu, baru panel pemilik biasa: kartu titipan lolos cek kepemilikan yang sama
+              (penjualnya user sungguhan), tapi relist/cancel-nya ditolak server. */}
+          {isConsigned ? (
+            <ConsignedOwnerPanel listing={listing} />
+          ) : (
+            <OwnerPanel
+              listing={listing}
+              listedByMe={listedByMe}
+              busy={ownerBusy}
+              msg={ownerMsg}
+              onRelist={onRelist}
+              onCancel={onCancel}
+            />
+          )}
         </div>
       ) : isCatalogCc ? (
         // Kartu KATALOG CollectorCrypt (belum pernah dimiliki user Hoshi). Pembelian
@@ -785,8 +886,17 @@ function RightColumn({
           )}
         </div>
       ) : (
-        // Jalur STANDAR (Hoshi-inventory / P2P): tombol beli inline HANYA di desktop. Di mobile
-        // dipindah ke bilah beli fixed di bawah layar (lihat akhir kolom).
+        buyBlocked ? (
+          // TITIPAN tanpa rail Rupiah: tak ada jalur beli yang membayar pemiliknya, jadi tak ada
+          // tombol beli sama sekali. Tampil di SEMUA ukuran (bukan `hidden lg:block`) karena
+          // bilah beli fixed mobile pun disembunyikan untuk keadaan ini.
+          <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-[13px] leading-relaxed text-zinc-400">
+            Kartu titipan hanya bisa dibeli lewat pembayaran Rupiah, dan pembayaran Rupiah sedang
+            tidak aktif. Kartunya tetap milik penjualnya dan tetap aman di penyimpanan Hoshi.
+          </div>
+        ) : (
+        // Jalur STANDAR (Hoshi-inventory / titipan / P2P): tombol beli inline HANYA di desktop. Di
+        // mobile dipindah ke bilah beli fixed di bawah layar (lihat akhir kolom).
         <div className="mt-6 hidden lg:block">
           {canRupiah ? (
             <>
@@ -805,9 +915,11 @@ function RightColumn({
                 </span>
               </button>
               <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
-                {isHoshiInventory
-                  ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
-                  : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
+                {isConsigned
+                  ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS / e-wallet / VA), lalu minta dikirim lewat kurir lokal."
+                  : isHoshiInventory
+                    ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
+                    : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
               </p>
             </>
           ) : (
@@ -837,6 +949,7 @@ function RightColumn({
             </div>
           )}
         </div>
+        )
       )}
 
       {/* Card Details — accordion (Figma) */}
@@ -868,8 +981,10 @@ function RightColumn({
       </div>
 
       {/* Bilah beli FIXED (mobile) — HANYA jalur standar. Baris atas: harga + keranjang; baris
-          bawah: Make Offer + (Beli via Rupiah / Buy Card). Desktop: disembunyikan (pakai inline). */}
-      {standardBuyable && (
+          bawah: Make Offer + (Beli via Rupiah / Buy Card). Desktop: disembunyikan (pakai inline).
+          `!buyBlocked`: kartu titipan tanpa rail Rupiah tidak punya tombol beli yang sah, jadi
+          bilahnya pun tidak muncul — penjelasannya sudah tampil di badan kolom. */}
+      {standardBuyable && !buyBlocked && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#141414]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-3 backdrop-blur lg:hidden">
           <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
@@ -956,6 +1071,7 @@ function RightColumnDesktop({
   owned,
   isCatalogCc,
   isHoshiInventory,
+  isConsigned,
   buyMsg,
   onRelist,
   onCancel,
@@ -989,8 +1105,11 @@ function RightColumnDesktop({
   // Logika beli SAMA PERSIS dengan RightColumn (mobile) — jangan menyimpang: jalur uang harus identik.
   const actions = useCardActions(listing, onOffer);
   const standardBuyable = !owned && !isCatalogCc;
-  const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory);
-  const showMakeOffer = standardBuyable && !isHoshiInventory;
+  const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory || isConsigned);
+  const showMessageSeller = standardBuyable && !isHoshiInventory;
+  const showMakeOffer = showMessageSeller && !isConsigned;
+  // Lihat catatan di RightColumn: kartu titipan tak punya jalur beli cadangan.
+  const buyBlocked = isConsigned && !canRupiah;
   return (
     <div className="flex flex-col">
       {/* badges — lewati tag kosong. Views TIDAK di sini (sudah pindah ke bilah atas halaman,
@@ -1001,6 +1120,7 @@ function RightColumnDesktop({
           .map((t) => (
             <Badge key={t}>{t}</Badge>
           ))}
+        {isConsigned && <ConsignedBadge />}
       </div>
 
       {/* title */}
@@ -1064,14 +1184,19 @@ function RightColumnDesktop({
         {owned ? (
           <>
             {buyMsg && <p className="mt-5 text-center text-sm text-[#3DDC84]">{buyMsg}</p>}
-            <OwnerPanel
-              listing={listing}
-              listedByMe={listedByMe}
-              busy={ownerBusy}
-              msg={ownerMsg}
-              onRelist={onRelist}
-              onCancel={onCancel}
-            />
+            {/* Sama persis dengan cabang mobile — titipan diperiksa DULU. */}
+            {isConsigned ? (
+              <ConsignedOwnerPanel listing={listing} />
+            ) : (
+              <OwnerPanel
+                listing={listing}
+                listedByMe={listedByMe}
+                busy={ownerBusy}
+                msg={ownerMsg}
+                onRelist={onRelist}
+                onCancel={onCancel}
+              />
+            )}
           </>
         ) : isCatalogCc ? (
           // Kartu KATALOG CollectorCrypt — SAMA PERSIS dengan cabang isCatalogCc di RightColumn (mobile).
@@ -1177,9 +1302,18 @@ function RightColumnDesktop({
             )}
           </div>
         ) : (
-          // Jalur STANDAR (Hoshi-inventory / P2P) — tombol beli inline (desktop selalu inline).
+          // Jalur STANDAR (Hoshi-inventory / titipan / P2P) — tombol beli inline.
           <>
-            {canRupiah ? (
+            {buyBlocked && (
+              // Sama dengan cabang mobile: tak ada jalur beli yang membayar pemilik kartu titipan
+              // kalau rail Rupiah mati, jadi tak ada tombol beli — hanya penjelasannya.
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-[13px] leading-relaxed text-zinc-400">
+                Kartu titipan hanya bisa dibeli lewat pembayaran Rupiah, dan pembayaran Rupiah
+                sedang tidak aktif. Kartunya tetap milik penjualnya dan tetap aman di penyimpanan
+                Hoshi.
+              </div>
+            )}
+            {buyBlocked ? null : canRupiah ? (
               <>
                 <button
                   type="button"
@@ -1196,9 +1330,11 @@ function RightColumnDesktop({
                   </span>
                 </button>
                 <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
-                  {isHoshiInventory
-                    ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
-                    : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
+                  {isConsigned
+                    ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS / e-wallet / VA), lalu minta dikirim lewat kurir lokal."
+                    : isHoshiInventory
+                      ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
+                      : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
                 </p>
               </>
             ) : (
@@ -1219,8 +1355,9 @@ function RightColumnDesktop({
 
             {/* Make Offer / Message Seller / Add to Cart — susunan CardActions LAMA (Make Offer
                 penuh, lalu Message Seller + Add to Cart 2-kolom), memakai useCardActions SEKARANG.
-                Hanya untuk listing P2P (ada penjual) — Hoshi-inventory tak bisa ditawar/dichat. */}
-            {showMakeOffer && (
+                Hanya untuk listing P2P (ada penjual) — Hoshi-inventory tak bisa ditawar/dichat.
+                TITIPAN: chat ke pemiliknya tetap ada, tawar & keranjang tidak (server menolaknya). */}
+            {showMakeOffer ? (
               <>
                 <div className="mt-3">
                   <DarkPill onClick={actions.openOffer}>Make Offer</DarkPill>
@@ -1232,6 +1369,12 @@ function RightColumnDesktop({
                   </DarkPill>
                 </div>
               </>
+            ) : (
+              showMessageSeller && (
+                <div className="mt-3">
+                  <DarkPill onClick={actions.openMessage}>Message Seller</DarkPill>
+                </div>
+              )
             )}
           </>
         )}
@@ -1387,11 +1530,23 @@ export default function CardDetailPage() {
     detail.listing.source === "COLLECTORCRYPT" &&
     detail.consignedBy === "collectorcrypt";
 
+  // KARTU TITIPAN: milik seorang user, fisiknya dipegang Hoshi. Dibaca dari SATU field turunan
+  // server (`Listing.consignmentId`), BUKAN ditebak dari bentuk baris — bentuknya identik dengan
+  // listing P2P (`sellerConsigned` true) padahal settlement-nya sama sekali berbeda dan tidak
+  // punya NFT di escrow. Karena itu ia diperiksa DULU di setiap percabangan di bawah.
+  const isConsigned = !!detail && detail.consigned === true;
+
   // INVENTARIS HOSHI: kartu milik Hoshi sendiri (di-upload admin) — TANPA penjual user, BUKAN
   // katalog CC, DAN ditandai `sellable` (baris seed/placeholder = false → tak ditawarkan beli).
   // Buyable via Rupiah tanpa perlu flag P2P (bukan jual-beli antar user).
+  //
+  // `!isConsigned` bersifat sabuk-pengaman: kartu titipan sudah gagal di DUA syarat lain
+  // (`sellerConsigned` true, `sellable` dipatok false oleh constraint DB), jadi cabang ini memang
+  // tak pernah tercapai — tapi kalau salah satunya pernah longgar, kartu orang lain akan dijual
+  // lewat jalur "stok Hoshi", yaitu jalur yang seluruh uangnya masuk kas Hoshi dan pemiliknya
+  // tidak dibayar sepeser pun. Harganya satu baris; kerugiannya tidak.
   const isHoshiInventory =
-    !!detail && detail.sellable && !detail.sellerConsigned && !isCatalogCc;
+    !!detail && detail.sellable && !detail.sellerConsigned && !isCatalogCc && !isConsigned;
 
   const handleBuy = useCallback(async () => {
     if (!detail || unavailable) return;
@@ -1654,6 +1809,7 @@ export default function CardDetailPage() {
               ownedNow={detail.listing.status === "SOLD" ? owned : consignedByMe}
               isCatalogCc={isCatalogCc}
               isHoshiInventory={isHoshiInventory}
+              isConsigned={isConsigned}
               buyMsg={buyMsg}
               onRelist={handleRelist}
               onCancel={handleCancel}
@@ -1696,13 +1852,14 @@ export default function CardDetailPage() {
       {/* Bayar Rupiah (IDRX) untuk beli kartu katalog CC — reuse modal alur gacha, tapi mode
           listing (createListingOrder). Setelah bayar+redirect, resume + status muncul di
           /open-packs (returnUrl IDRX); untuk order listing tampil "kartu dikirim, cek Vault". */}
-      {payOpen && PAYMENTS_ENABLED && (CC_RESELL_ENABLED || P2P_ENABLED || isHoshiInventory) && (
-        <PayModal
-          listingId={id}
-          packType="MARKETPLACE"
-          onClose={() => setPayOpen(false)}
-        />
-      )}
+      {/* `isConsigned` ikut membuka gerbang ini: pembelian kartu titipan TIDAK menyentuh escrow
+          maupun treasury, jadi ia tidak boleh ikut mati saat flag P2P mati — kalau tidak, pembeli
+          melihat tombol "Beli via Rupiah" yang tidak membuka apa pun. */}
+      {payOpen &&
+        PAYMENTS_ENABLED &&
+        (CC_RESELL_ENABLED || P2P_ENABLED || isHoshiInventory || isConsigned) && (
+          <PayModal listingId={id} packType="MARKETPLACE" onClose={() => setPayOpen(false)} />
+        )}
     </div>
   );
 }

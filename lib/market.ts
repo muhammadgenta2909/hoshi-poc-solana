@@ -285,7 +285,46 @@ export type Listing = {
    * Opsional supaya baris dari respons backend lama tetap terbaca.
    */
   hoshiStock?: boolean;
+  /**
+   * true = kartu TITIPAN (consignment): milik SEORANG USER, fisiknya dipegang Hoshi di Indonesia
+   * atas dasar perjanjian titip-jual. Hoshi memotong komisi; sisanya milik penjual.
+   *
+   * KENAPA FIELD SENDIRI, dan kenapa ia tidak boleh ditebak dari bentuk baris: kartu titipan
+   * punya `sellerId != null` — persis seperti listing P2P — TAPI tidak punya NFT di escrow.
+   * Kode apa pun yang bertanya "ada penjualnya?" akan menyangka ini listing P2P dan mengirimnya
+   * ke jalur settlement escrow, yang gagal SETELAH pembeli membayar. Backend menurunkan field ini
+   * dari kolom `Listing.consignmentId` (satu-satunya diskriminator yang tidak bisa dipalsukan
+   * bentuk), jadi pakai APA ADANYA.
+   *
+   * Konsekuensi yang dipakai UI:
+   *  • boleh dibeli via Rupiah TANPA flag P2P — jalur ini tidak menyentuh escrow/USDC sama sekali;
+   *  • pengirimannya ke pembeli lewat rail DOMESTIK (kurir lokal), sama seperti stok Hoshi
+   *    (lihat `isDomesticShippableListing`);
+   *  • pemiliknya TIDAK membatalkan listing lewat tombol cancel biasa — ia "minta kartunya
+   *    kembali" lewat /titipan, supaya listing dan baris custody turun dalam satu transaksi.
+   *
+   * Opsional supaya baris dari respons backend lama (tanpa field ini) tetap terbaca sebagai
+   * bukan-titipan — fail-closed ke perilaku hari ini.
+   */
+  consigned?: boolean;
 };
+
+/**
+ * "Kartu ini fisiknya dipegang Hoshi di Indonesia, jadi dikirim ke pembeli lewat KURIR LOKAL."
+ *
+ * Kembaran klien dari `isDomesticShippableStock` di backend. LEBIH LUAS dari `hoshiStock` dan
+ * itu memang maksudnya: stok Hoshi DAN kartu titipan sama-sama ada di rak yang sama di Indonesia,
+ * jadi keduanya memakai rail domestik (`POST /redemptions { listingId }`) — nol NFT, nol burn,
+ * nol USDC, nol tanda tangan wallet.
+ *
+ * ⚠️ JANGAN PERNAH dipakai sebagai gerbang BELI atau sebagai "ini stok Hoshi". Dua jenis kartu
+ * di dalamnya settle dengan cara yang sama sekali berbeda: stok Hoshi → seluruh harga masuk kas
+ * Hoshi; titipan → 95% milik penjual. Menyamakan keduanya di jalur beli berarti menjual kartu
+ * orang lain dan tidak membayar pemiliknya.
+ */
+export const isDomesticShippableListing = (
+  l: Pick<Listing, "hoshiStock" | "consigned">,
+): boolean => l.hoshiStock === true || l.consigned === true;
 
 /** Listing status (mirrors the backend ListingStatus enum). */
 export type ListingStatus =

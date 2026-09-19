@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletConnect } from "@/lib/useWalletConnect";
-import type { Listing } from "@/lib/market";
+import { isDomesticShippableListing, type Listing } from "@/lib/market";
 import type { LiveCard } from "@/lib/packs";
 import {
   ApiError,
@@ -66,14 +66,21 @@ const isOwnedPull = (p: GachaPull): boolean => p.status === "OPENED" && !!p.nftA
  * (yang memang tidak punya alamat NFT — settlement-nya database-only). Fungsi ini menghasilkan
  * kunci yang SAMA dari sisi klien, jadi satu peta status melayani kedua rail.
  *
- * `hoshiStock` DIPERIKSA DULU, dan urutan itu wajib: sebuah baris stok Hoshi bisa (dari jalur
+ * RAIL DOMESTIK DIPERIKSA DULU, dan urutan itu wajib: sebuah baris stok Hoshi bisa (dari jalur
  * demo/warisan) punya alamat NFT, dan backend MENORMALKAN baris seperti itu ke identitas
  * domestik. Memeriksa alamat NFT lebih dulu akan mencari dengan kunci yang tidak pernah ditulis →
  * status kirimnya tidak pernah ketemu, badge-nya hilang, dan kartu yang sedang dikirim tetap
  * terlihat seperti kartu yang bebas.
+ *
+ * KARTU TITIPAN IKUT DI SINI. Fisiknya ada di rak yang sama di Indonesia, jadi ia dikirim lewat
+ * kurir lokal persis seperti stok Hoshi — tapi `hoshiStock` untuknya SELALU false (predikat itu
+ * menuntut tidak ada penjual, dan kartu titipan punya penjual: pemiliknya). Membaca `hoshiStock`
+ * saja di sini berarti pembeli kartu titipan membayar penuh lalu tidak punya satu pun tombol
+ * untuk meminta kartunya. `isDomesticShippableListing` adalah predikat yang lebih luas itu, satu
+ * salinan, dipakai di sini dan di /withdraw.
  */
 const shipKeyForListing = (l: Listing): string | null =>
-  l.hoshiStock === true
+  isDomesticShippableListing(l)
     ? hoshiListingRef(l.id)
     : (l.nft?.assetAddress ?? l.ccNftAddress ?? null);
 
@@ -344,10 +351,11 @@ export default function VaultPage() {
               // Status pra-burn → badge (kartu keluar-vault sudah difilter keluar di atas).
               const ship = nft ? redemptionByNft.get(nft) : undefined;
               const shipActive = !!ship && !SHIPPED_OUT.has(ship);
-              // RAIL DOMESTIK (stok Hoshi, kurir lokal). Dibaca dari `hoshiStock` — flag yang
-              // DITURUNKAN SERVER — bukan ditebak dari "tidak punya alamat NFT", karena tebakan
-              // itu ikut menyapu baris seed/placeholder.
-              const domesticRow = e.kind === "bought" && e.listing.hoshiStock === true;
+              // RAIL DOMESTIK (kurir lokal): stok Hoshi ATAU kartu TITIPAN — dua-duanya fisiknya
+              // ada di rak Hoshi di Indonesia. Dibaca dari flag yang DITURUNKAN SERVER, bukan
+              // ditebak dari "tidak punya alamat NFT", karena tebakan itu ikut menyapu baris
+              // seed/placeholder.
+              const domesticRow = e.kind === "bought" && isDomesticShippableListing(e.listing);
               /* Bisa dilanjutkan sendiri oleh user?
                  • rail DOMESTIK → ya selama ongkirnya belum lunas, dan SENGAJA TIDAK digerbang
                    CC_SHIPPING_ENABLED: rail ini tidak menyentuh CollectorCrypt sama sekali.
@@ -683,11 +691,11 @@ function BoughtCard({
       )}
       <MarketCard listing={listing} currency="IDR" showStatus />
 
-      {/* ─── MINTA DIKIRIM (kartu STOK HOSHI) ───────────────────────────────────────────────
-          Jalan masuk yang sebelumnya TIDAK ADA di seluruh aplikasi. Kartu stok Hoshi settle
-          database-only (tak punya alamat NFT), jadi ia tidak pernah lolos saringan pemilih kartu
-          di /withdraw dan tidak pernah punya halaman detail vault — pembeli bisa membayar penuh
-          lalu tidak punya satu pun tombol yang meminta kartunya.
+      {/* ─── MINTA DIKIRIM (kartu yang fisiknya di rak Hoshi: STOK HOSHI atau TITIPAN) ───────
+          Jalan masuk yang sebelumnya TIDAK ADA di seluruh aplikasi. Kedua jenis kartu ini settle
+          database-only (tak punya alamat NFT), jadi tanpa jalan masuk ini ia tidak pernah lolos
+          saringan pemilih kartu di /withdraw dan tidak pernah punya halaman detail vault —
+          pembeli bisa membayar penuh lalu tidak punya satu pun tombol yang meminta kartunya.
 
           Ditaruh SEBELUM "List for Sale" dengan sengaja: pembeli kartu fisik biasanya ingin
           kartunya, bukan menjualnya lagi. Aksen EMAS = rail kurir domestik, warna yang sama
@@ -717,6 +725,14 @@ function BoughtCard({
         >
           Selesaikan escrow ke marketplace
         </button>
+      ) : listing.consigned === true ? (
+        /* KARTU TITIPAN yang sudah kamu beli. Menjualnya ulang dari sini akan menghidupkan lagi
+           baris listing yang masih terikat ke catatan titipan penjual sebelumnya — server
+           menolaknya, dan itu benar. Jadi tombolnya tidak ditawarkan, dan alasannya dikatakan. */
+        <p className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-center text-[11px] leading-relaxed text-zinc-400">
+          Kartu titipan belum bisa dijual ulang dari sini. Minta dikirim dulu, atau hubungi tim
+          Hoshi untuk menitipkannya lagi.
+        </p>
       ) : (
         <button
           type="button"

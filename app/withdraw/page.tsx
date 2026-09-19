@@ -45,7 +45,7 @@ import {
   type ShippingAddress,
   type ShippingRefundDebt,
 } from "@/lib/api";
-import type { Listing } from "@/lib/market";
+import { isDomesticShippableListing, type Listing } from "@/lib/market";
 import type { GachaPull } from "@/lib/gacha";
 import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
@@ -126,19 +126,25 @@ const toPickCard = (p: GachaPull): PickCard => ({
 /**
  * Kartu HASIL-BELI (Listing SOLD milik user) → PickCard, dengan RAIL-nya.
  *
- * URUTAN PEMERIKSAANNYA PENTING dan harus tetap begini: `hoshiStock` DULU, baru alamat NFT.
+ * URUTAN PEMERIKSAANNYA PENTING dan harus tetap begini: RAIL DOMESTIK DULU, baru alamat NFT.
  * Sebuah baris stok Hoshi bisa (dari jalur demo/warisan) punya alamat NFT, dan backend
  * MENORMALKAN baris seperti itu ke identitas domestik apa pun kunci yang kita kirim — jadi kalau
  * di sini ia dibaca sebagai kartu CC, kita akan membuka modal tanda-tangan-wallet untuk baris
  * yang sebenarnya lahir sebagai kiriman kurir. Membalik urutannya = dua identitas untuk satu
  * kartu fisik.
  *
- * `hoshiStock` DITURUNKAN SERVER (marketplace.serialize.ts → isHoshiSellableStock) dan dipakai
- * APA ADANYA. Menebaknya di sini dari `source === "HOSHI"` + tidak punya NFT akan ikut menyapu
- * baris seed/placeholder — lalu menawarkan tombol kirim untuk kartu yang tidak ada di rak.
+ * Predikatnya DITURUNKAN SERVER dan dipakai APA ADANYA. Menebaknya di sini dari
+ * `source === "HOSHI"` + tidak punya NFT akan ikut menyapu baris seed/placeholder — lalu
+ * menawarkan tombol kirim untuk kartu yang tidak ada di rak.
+ *
+ * KARTU TITIPAN IKUT RAIL DOMESTIK, dan itu bukan detail kecil: `hoshiStock` untuknya SELALU
+ * false (predikat itu menuntut listing tanpa penjual, sedangkan kartu titipan punya penjual —
+ * pemiliknya), padahal fisiknya ada di rak yang sama di Indonesia. Kalau hanya `hoshiStock` yang
+ * dibaca, kartu titipan tidak pernah muncul di pemilih ini sama sekali: pembelinya sudah membayar
+ * penuh dan tidak punya satu pun cara meminta kartunya dikirim.
  */
 const boughtToPickCard = (l: Listing): PickCard | null => {
-  if (l.hoshiStock === true) {
+  if (isDomesticShippableListing(l)) {
     return {
       key: hoshiListingRef(l.id),
       rail: "DOMESTIC",
@@ -175,8 +181,9 @@ const RAIL_BADGE: Record<
   DOMESTIC: {
     label: "Kurir domestik",
     title:
-      "Kartu stok Hoshi: fisiknya di gudang Hoshi, Indonesia. Kamu cuma membayar ongkir — tidak " +
-      "ada NFT yang dibakar dan tidak ada tanda tangan wallet.",
+      "Kartu yang fisiknya ada di gudang Hoshi, Indonesia (stok Hoshi atau kartu titipan yang " +
+      "kamu beli). Kamu cuma membayar ongkir — tidak ada NFT yang dibakar dan tidak ada tanda " +
+      "tangan wallet.",
     cls: "border-[#F2C101]/45 bg-[#F2C101]/[0.12] text-[#F2C101]",
   },
   CC: {
@@ -306,8 +313,8 @@ export default function WithdrawPage() {
       const busy = new Set(
         reds.filter((r) => r.status !== "CANCELED").map((r) => r.nftAddress),
       );
-      // Gabung kartu HASIL-PACK (selalu rail CC) + HASIL-BELI (rail-nya ditentukan `hoshiStock`),
-      // dedupe by key, buang yang sedang diproses kirim.
+      // Gabung kartu HASIL-PACK (selalu rail CC) + HASIL-BELI (rail-nya ditentukan predikat
+      // domestik: stok Hoshi ATAU titipan), dedupe by key, buang yang sedang diproses kirim.
       const pickList = [
         ...packs.filter((p) => p.status === "OPENED" && !!p.nftAddress).map(toPickCard),
         ...bought.map(boughtToPickCard).filter((c): c is PickCard => c !== null),

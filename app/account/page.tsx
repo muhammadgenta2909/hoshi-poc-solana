@@ -624,7 +624,14 @@ export default function ProfilePage() {
                 selected={pickedListings}
                 onToggle={toggle(pickedListings, setPickedListings)}
                 onToggleAll={(on) =>
-                  setPickedListings(on ? new Set(slice.map((l) => l.id)) : new Set())
+                  // Kartu TITIPAN sengaja tak ikut: pembatalannya harus lewat halaman Titipan
+                  // (listing + catatan custody turun dalam satu transaksi), jadi ia tidak boleh
+                  // bisa terseret ke aksi massal "Cancel".
+                  setPickedListings(
+                    on
+                      ? new Set(slice.filter((l) => l.consigned !== true).map((l) => l.id))
+                      : new Set(),
+                  )
                 }
                 onEdit={setEditing}
                 onCancel={onCancelListing}
