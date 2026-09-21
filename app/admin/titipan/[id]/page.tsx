@@ -33,6 +33,8 @@ import {
   consignmentAllowedActions,
   consignmentReleaseReason,
   getAdminConsignment,
+  issueAdminConsignmentClaimCode,
+  linkAdminConsignor,
   listAdminConsignment,
   markAdminConsignmentLost,
   releaseAdminConsignment,
@@ -40,17 +42,33 @@ import {
   setAdminConsignmentPrice,
   type AdminConsignment,
   type ConsignmentAction,
+  type ConsignorCandidate,
 } from "@/lib/admin-api";
 import {
   certLookupUrl,
   commissionPct,
+  consignorLinkMethodLabel,
   estimatedPayout,
   eventTitle,
+  isAwaitingClaim,
   isInHoshiCustody,
+  isReturnAddressFormComplete,
+  reserveWarning,
+  requiredPhotoKinds,
+  returnAddressLine,
+  returnMethodLabel,
+  returnPayerLabel,
   statusUi,
+  PHOTO_KIND_BLOCKER_LABEL,
   type ConsignmentPhotoKind,
+  type ConsignmentReturnMethod,
+  type ConsignmentReturnPayer,
+  type ConsignmentReturnPlan,
 } from "@/lib/consignment";
 import ConsignmentPhotos from "@/components/admin/ConsignmentPhotos";
+import ClaimCodeHandover from "@/components/admin/ClaimCodeHandover";
+import HandoverReceiptButton, { receiptDataFrom } from "@/components/admin/HandoverReceipt";
+import ConsignorPicker, { PickedConsignor } from "@/components/admin/ConsignorPicker";
 import { ConfirmDialog } from "@/components/account/ui";
 
 const INPUT =
@@ -114,6 +132,31 @@ export default function AdminTitipanDetailPage() {
   const [returnNote, setReturnNote] = useState("");
   const [releaseReceipt, setReleaseReceipt] = useState("");
   const [releaseNote, setReleaseNote] = useState("");
+
+  /* ── KE MANA KARTUNYA PULANG ──────────────────────────────────────────────────────────────
+     Ditanyakan di layar penarikan, bukan di layar pelepasan custody, karena momen paling murah
+     untuk menanyakan alamat adalah momen pemiliknya masih bicara dengan operator. Sesudah
+     teleponnya ditutup, melengkapinya berarti menelepon kembali — dan begitulah sebuah kartu
+     berakhir tercatat "ditarik" berminggu-minggu tanpa pernah dikirim ke mana pun. */
+  const [retMethod, setRetMethod] = useState<ConsignmentReturnMethod>("COURIER");
+  const [retName, setRetName] = useState("");
+  const [retPhone, setRetPhone] = useState("");
+  const [retStreet, setRetStreet] = useState("");
+  const [retApt, setRetApt] = useState("");
+  const [retCity, setRetCity] = useState("");
+  const [retState, setRetState] = useState("");
+  const [retZip, setRetZip] = useState("");
+  /** Kosong = belum diputuskan. Sengaja BUKAN default "HOSHI": menebaknya berarti menyembunyikan
+      pertanyaannya, dan ongkos yang tidak pernah ditanyakan adalah ongkos yang tidak pernah
+      terlihat di laporan mana pun. */
+  const [retPayer, setRetPayer] = useState<ConsignmentReturnPayer | "">("");
+  /** Kosong = biarkan server menaksir dari tarif wilayah yang sudah dipakai kirim domestik. */
+  const [retFee, setRetFee] = useState("");
+
+  /* ── BUKTI SERAH TERIMA PENGEMBALIAN: resi, atau nama yang mengambil ── */
+  const [retCourier, setRetCourier] = useState("");
+  const [retTracking, setRetTracking] = useState("");
+  const [retPickedUpBy, setRetPickedUpBy] = useState("");
   const [lostNote, setLostNote] = useState("");
   const [compAmount, setCompAmount] = useState("");
   const [compNote, setCompNote] = useState("");
@@ -121,6 +164,20 @@ export default function AdminTitipanDetailPage() {
   const [confirm, setConfirm] = useState<
     null | { kind: "ACCEPT" } | { kind: "RETURN" } | { kind: "RELEASE" } | { kind: "LOST" } | { kind: "COMPENSATE" }
   >(null);
+
+  /**
+   * Kode klaim yang baru saja terbit dan belum berpindah tangan.
+   *
+   * Hidup di state halaman dan TIDAK PERNAH di URL: ia rahasia sekali-pakai, dan query string
+   * tertinggal di riwayat browser ponsel operator. Server pun tidak bisa menampilkannya lagi —
+   * yang disimpan di sana hanya sidiknya.
+   */
+  const [handover, setHandover] = useState<{ code: string; expiresAt: string | null } | null>(null);
+  const [claimNote, setClaimNote] = useState("");
+  /* Penautan langsung oleh admin (Path A yang datang terlambat). */
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkPick, setLinkPick] = useState<ConsignorCandidate | null>(null);
+  const [linkNote, setLinkNote] = useState("");
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -138,6 +195,29 @@ export default function AdminTitipanDetailPage() {
           row.photos?.[0]?.url ??
           "",
       );
+      /* Rencana pengembalian yang SUDAH tersimpan mengisi formulirnya kembali — supaya
+         memperbaiki satu kode pos tidak berarti mengetik ulang seluruh alamat, dan supaya
+         operator melihat apa yang sebenarnya tercatat alih-alih formulir kosong yang membuatnya
+         mengira belum ada apa-apa. */
+      if (row.returnMethod === "PICKUP" || row.returnMethod === "COURIER") {
+        setRetMethod(row.returnMethod);
+      }
+      setRetName(row.returnRecipientName ?? "");
+      setRetPhone(row.returnPhoneNumber ?? "");
+      setRetStreet(row.returnStreet ?? "");
+      setRetApt(row.returnApt ?? "");
+      setRetCity(row.returnCity ?? "");
+      setRetState(row.returnState ?? "");
+      setRetZip(row.returnZip ?? "");
+      setRetPayer(
+        row.returnShippingPayer === "OWNER" || row.returnShippingPayer === "HOSHI"
+          ? row.returnShippingPayer
+          : "",
+      );
+      setRetFee(row.returnShippingFeeIdr == null ? "" : String(row.returnShippingFeeIdr));
+      setRetCourier(row.returnCourier ?? "");
+      setRetTracking(row.returnTrackingNo ?? "");
+      setRetPickedUpBy(row.returnPickedUpBy ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal memuat titipan.");
     } finally {
@@ -152,9 +232,12 @@ export default function AdminTitipanDetailPage() {
 
   const photos = useMemo(() => c?.photos ?? [], [c]);
 
-  /** Bukti yang WAJIB sebelum kartu boleh dinyatakan diterima — cermin gerbang di server. */
+  /**
+   * Bukti yang WAJIB sebelum kartu boleh dinyatakan diterima — cermin gerbang di server, dan
+   * daftarnya hidup di SATU tempat (`lib/consignment.ts`) supaya kedua sisi tidak bisa melenceng.
+   */
   const requiredKinds = useMemo<ConsignmentPhotoKind[]>(
-    () => (c?.certNumber ? ["FRONT", "BACK", "CERT"] : ["FRONT", "BACK"]),
+    () => requiredPhotoKinds(c?.certNumber),
     [c?.certNumber],
   );
 
@@ -162,8 +245,7 @@ export default function AdminTitipanDetailPage() {
   const acceptBlockers = useMemo(() => {
     const m: string[] = [];
     for (const k of requiredKinds) {
-      if (!photos.some((p) => p.kind === k))
-        m.push(k === "FRONT" ? "foto depan" : k === "BACK" ? "foto belakang" : "foto sertifikat");
+      if (!photos.some((p) => p.kind === k)) m.push(PHOTO_KIND_BLOCKER_LABEL[k]);
     }
     if (!storageLocation.trim()) m.push("lokasi penyimpanan");
     return m;
@@ -172,15 +254,57 @@ export default function AdminTitipanDetailPage() {
   const allowed: ConsignmentAction[] = c ? consignmentAllowedActions(c) : [];
   const can = (a: ConsignmentAction) => allowed.includes(a);
 
-  /** Satu pembungkus untuk semua aksi. Semua rute menjawab dengan baris terbaru. */
-  const run = async (fn: () => Promise<AdminConsignment>, okMsg: string) => {
+  /**
+   * Formulir rencana pengembalian → body `returnPlan`, atau `undefined` kalau belum ada yang
+   * layak dikirim.
+   *
+   * ALAMAT SETENGAH JADI SENGAJA TIDAK DIKIRIM. Server akan menolaknya — dan itu benar — tapi
+   * penolakan itu membatalkan SELURUH permintaan, termasuk bagian yang sebenarnya berhasil:
+   * "pemiliknya minta kartunya kembali". Permintaan itu tidak boleh bisa gagal karena sebuah
+   * kode pos. Jadi yang dikirim hanya rencana yang utuh; yang setengah jadi ditahan di layar,
+   * dengan kalimat yang menjelaskan apa akibatnya.
+   */
+  const returnPlanPayload = (): ConsignmentReturnPlan | undefined => {
+    const feeRaw = retFee.trim();
+    const fee = feeRaw === "" ? null : Number(feeRaw);
+    const extras = {
+      ...(retPayer ? { returnShippingPayer: retPayer } : {}),
+      ...(fee != null && Number.isFinite(fee) ? { returnShippingFeeIdr: fee } : {}),
+    };
+    if (retMethod === "PICKUP") return { returnMethod: "PICKUP", ...extras };
+    const address = {
+      recipientName: retName.trim(),
+      phoneNumber: retPhone.trim(),
+      street: retStreet.trim(),
+      ...(retApt.trim() ? { apt: retApt.trim() } : {}),
+      city: retCity.trim(),
+      state: retState.trim(),
+      zip: retZip.trim(),
+    };
+    if (!isReturnAddressFormComplete(address)) return undefined;
+    return { returnMethod: "COURIER", returnAddress: address, ...extras };
+  };
+
+  /**
+   * Satu pembungkus untuk semua aksi. Semua rute menjawab dengan baris terbaru.
+   *
+   * Dua rute penetap harga menambahkan `belowReserveWarning`: kalimat SERVER yang menyebut kedua
+   * angkanya, dan yang PERSIS SAMA sudah ditulis ke baris audit. Ia DIBAWA ke pesan berhasil apa
+   * adanya — aksinya memang berhasil (ini peringatan, bukan penolakan), tapi "harga ini di bawah
+   * yang dijanjikan ke pemiliknya" tidak boleh lenyap di balik kata "Harga diperbarui."
+   */
+  const run = async (
+    fn: () => Promise<AdminConsignment & { belowReserveWarning?: string | null }>,
+    okMsg: string,
+  ) => {
     if (!token || busy) return;
     setBusy(true);
     setError(null);
     setOk(null);
     try {
-      setC(await fn());
-      setOk(okMsg);
+      const row = await fn();
+      setC(row);
+      setOk(row.belowReserveWarning ? `${okMsg} ${row.belowReserveWarning}` : okMsg);
     } catch (e) {
       // Pesan server dipakai APA ADANYA: ia sudah menjelaskan posisi kartu dan uangnya lebih baik
       // daripada terjemahan mana pun yang bisa ditulis di sini.
@@ -188,6 +312,49 @@ export default function AdminTitipanDetailPage() {
     } finally {
       setBusy(false);
       setConfirm(null);
+    }
+  };
+
+  /**
+   * Terbitkan kode klaim BARU untuk titipan yang belum punya akun pemilik.
+   *
+   * "Baru", bukan "lihat lagi": server menyimpan sidik kodenya, jadi kode yang sudah diberikan
+   * memang tidak bisa dibaca ulang oleh siapa pun — termasuk oleh Hoshi. Itu sekaligus yang
+   * membuat rute ini aman dipakai sebagai tegur berkala: setiap penerbitan mematikan yang
+   * sebelumnya, jadi kertas lama yang beredar entah di mana berhenti berlaku.
+   *
+   * Tidak memakai `run()` karena jawabannya membawa sesuatu yang harus ditangkap SEKARANG dan
+   * tidak ikut tersimpan di state baris: kodenya sendiri.
+   *
+   * `note` WAJIB (min 10 karakter) dan disimpan permanen sebagai baris audit. Itu bukan
+   * formalitas: penerbitan MEMATIKAN kode yang mungkin sedang dipegang seseorang, jadi "kenapa"
+   * harus selalu punya jawaban tertulis.
+   */
+  const issueClaimCode = async () => {
+    if (!token || busy || !c || claimNote.trim().length < NOTE_MIN) return;
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await issueAdminConsignmentClaimCode(c.id, claimNote.trim(), token);
+      // Kodenya DIPISAHKAN dari baris sebelum barisnya disimpan ke state: teks kode hidup di satu
+      // tempat saja (`handover`), yang sengaja dibersihkan begitu operator selesai memberikannya.
+      // Menyimpannya juga di dalam `c` berarti ia ikut hidup selama halaman ini terbuka, tanpa satu
+      // pun pembaca yang membutuhkannya.
+      const { claimCode, ...row } = res;
+      setC(row);
+      setClaimNote("");
+      if (claimCode) {
+        setHandover({ code: claimCode, expiresAt: res.claimCodeExpiresAt ?? null });
+      } else {
+        setError(
+          "Server tidak mengirimkan kode baru untuk titipan ini — kemungkinan besar sudah ada akun yang mengklaimnya.",
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gagal menerbitkan kode klaim.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -209,6 +376,41 @@ export default function AdminTitipanDetailPage() {
   const inCustody = isInHoshiCustody(c);
   const certUrl = certLookupUrl(c.grader, c.certNumber);
   const release = consignmentReleaseReason(c);
+
+  /* ── PENGEMBALIAN: APA YANG SUDAH TERCATAT, DAN APA YANG MASIH KURANG ─────────────────────
+     Jawaban "sudah lengkap?" untuk data yang SUDAH TERSIMPAN datang dari server
+     (`returnPlanReady` / `returnAddressComplete`). Layar ini hanya menilai apa yang SEDANG
+     DIKETIK — dua pertanyaan yang berbeda, dan menggabungkannya berarti menaruh salinan ketiga
+     aturan "alamat lengkap" di klien, yang cepat atau lambat akan berbeda pendapat dengan
+     gerbangnya. */
+  const typedPlan = returnPlanPayload();
+  /** Cara pengembalian yang BERLAKU untuk pelepasan ini: yang sedang diketik, kalau ada; kalau
+      tidak, yang sudah tersimpan di baris. */
+  const effectiveReturnMethod: string | null = typedPlan?.returnMethod ?? c.returnMethod;
+  /** Alamat pengembalian yang sudah TERSIMPAN, satu baris — null berarti memang belum ada. */
+  const storedReturnAddress = returnAddressLine(c);
+  /** Kartunya sudah diminta kembali, dan ia MASIH di rak kita. */
+  const returnPending = c.returnPending ?? (c.withdrawRequestedAt != null && !c.custodyReleasedAt);
+
+  /**
+   * Apa yang masih kurang sebelum kartu boleh dinyatakan KELUAR sebagai pengembalian.
+   * Ditampilkan, bukan disembunyikan — sama seperti `acceptBlockers`. Gerbang sebenarnya tetap
+   * di server; daftar ini ada supaya operator tahu SEBELUM menekan, bukan sesudah ditolak.
+   */
+  const returnReleaseBlockers: string[] = [];
+  if (release?.value === "WITHDRAWN") {
+    if (!effectiveReturnMethod) {
+      returnReleaseBlockers.push("cara pengembalian (diambil sendiri / dikirim kurir)");
+    } else if (effectiveReturnMethod === "COURIER") {
+      if (!typedPlan && c.returnAddressComplete !== true) {
+        returnReleaseBlockers.push("alamat tujuan yang lengkap");
+      }
+      if (!retCourier.trim()) returnReleaseBlockers.push("nama kurir");
+      if (!retTracking.trim()) returnReleaseBlockers.push("nomor resi");
+    } else if (effectiveReturnMethod === "PICKUP" && !retPickedUpBy.trim()) {
+      returnReleaseBlockers.push("nama orang yang mengambil");
+    }
+  }
   /**
    * Siapa yang MENERIMA kartunya.
    *
@@ -225,6 +427,57 @@ export default function AdminTitipanDetailPage() {
     : null;
   /** Kartu MENTAH belum bisa dipajang di fase ini (kolom grader listing hanya kenal PSA/CGC/BGS). */
   const rawUnlistable = c.grader == null;
+  /** SUMBU KEDUA, berdiri sendiri dari custody: sudah ada akun yang akan menerima uangnya? */
+  const awaitingClaim = isAwaitingClaim(c);
+
+  /* ── Layar serah-terima kode: MENGGANTI halaman, bukan modal ──────────────────────────────
+     Kodenya hanya hidup di memori halaman ini. Modal yang tertutup karena jari menyenggol latar
+     akan membuangnya, dan operator harus menerbitkan kode ketiga di depan pemilik kartu. */
+  if (handover) {
+    return (
+      <div className="space-y-5 pb-10">
+        <header>
+          <h1 className="text-[22px] font-bold text-zinc-100">Kode klaim diterbitkan</h1>
+          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
+            Untuk “{c.cardName}”, atas nama {c.consignorNameAtIntake}.
+          </p>
+        </header>
+        <ClaimCodeHandover
+          code={handover.code}
+          cardName={c.cardName}
+          ownerName={c.consignorNameAtIntake}
+          ownerPhone={c.consignorPhoneAtIntake}
+          place={c.receivedAtPlace}
+          expiresAt={handover.expiresAt}
+          reissued
+          doneLabel="Kembali ke titipan ini"
+          onDone={() => {
+            setHandover(null);
+            void load();
+          }}
+        />
+
+        {/* ── STRUK LENGKAP DENGAN KODENYA ─────────────────────────────────────────────────
+            Ditawarkan DI SINI karena di sinilah satu-satunya tempat kodenya masih terbaca.
+            Begitu layar ini ditutup, struk yang dicetak dari halaman titipan tidak akan pernah
+            memuat kode lagi — bukan karena disembunyikan, melainkan karena server memang hanya
+            menyimpan sidiknya. Kalau pemiliknya butuh kertas, ini kesempatannya. */}
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+          <p className="text-[13px] font-semibold text-zinc-200">
+            Sekalian cetak struk serah terimanya?
+          </p>
+          <div className="mt-3">
+            <HandoverReceiptButton
+              data={receiptDataFrom(c, handover.code)}
+              tone="biasa"
+              label="Cetak struk + kode klaim (2 lembar)"
+              hint="Dua lembar identik, keduanya memuat kode di atas. Lembar pemilik dibawa pulang bersama kodenya; lembar Hoshi disimpan setelah ditandatangani."
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 pb-10">
@@ -301,11 +554,196 @@ export default function AdminTitipanDetailPage() {
         )}
       </div>
 
-      {c.withdrawRequestedAt && !c.custodyReleasedAt && (
+      {/* ── SUMBU KEDUA: SIAPA PEMILIK AKUNNYA ──────────────────────────────────────────────
+          Panel TERPISAH dari panel custody di atasnya, dan itu disengaja. Keduanya menjawab
+          pertanyaan yang berbeda ("kartunya di mana" vs "uangnya nanti ke siapa"), keduanya bisa
+          benar sekaligus, dan menggabungkannya jadi satu kalimat akan membuat salah satu dari dua
+          kenyataan itu hilang dari layar. Warnanya pun sengaja lain dari biru custody. */}
+      {awaitingClaim && (
+        <div className="rounded-2xl border border-violet-400/30 bg-violet-400/[0.08] px-4 py-3.5 text-[13px] leading-relaxed text-violet-100">
+          <strong>Belum ada akun yang mengklaim kartu ini.</strong> Pemiliknya —{" "}
+          {c.consignorNameAtIntake} ({c.consignorPhoneAtIntake}) — belum memakai kode klaimnya.
+          {c.custodyAcceptedAt && !c.custodyReleasedAt
+            ? " Kartunya sendiri sudah ada di rak Hoshi; yang belum ada adalah akun tujuan hasil penjualannya."
+            : ""}{" "}
+          Selama itu belum terjadi, kartu ini belum bisa dipajang — bukan karena custody, melainkan
+          karena tidak ada siapa pun yang bisa dibayar kalau ia terjual.
+          <div className="mt-3">
+            {/* Alasannya diminta SEBELUM kodenya terbit, bukan sesudah. Penerbitan mematikan kode
+                yang mungkin sedang dipegang seseorang; "kenapa" harus sudah tertulis pada saat itu
+                terjadi, bukan diingat-ingat nanti. */}
+            <textarea
+              value={claimNote}
+              onChange={(e) => setClaimNote(e.target.value)}
+              rows={2}
+              placeholder="Kenapa kodenya diterbitkan sekarang — mis. “tanda terima hilang, dikonfirmasi lewat telepon ke nomor saat serah terima”."
+              className={`${INPUT} resize-y leading-relaxed`}
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void issueClaimCode()}
+                disabled={busy || claimNote.trim().length < NOTE_MIN}
+                className="rounded-xl border border-violet-300/40 bg-violet-400/10 px-4 py-2 text-[13px] font-semibold text-violet-100 transition hover:bg-violet-400/20 disabled:opacity-50"
+              >
+                {busy ? "Memproses…" : "Terbitkan kode klaim baru"}
+              </button>
+              <p className="text-[11.5px] leading-relaxed text-violet-200/70">
+                Kode lama langsung berhenti berlaku, dan alasan di atas tersimpan permanen. Pakai
+                ini kalau pemiliknya kehilangan kodenya, kodenya kedaluwarsa, atau ia perlu ditegur
+                lagi.
+              </p>
+            </div>
+          </div>
+
+          {/* ── JALAN KEDUA: tautkan akunnya langsung ──────────────────────────────────────
+              Untuk keadaan yang benar-benar terjadi: pemiliknya akhirnya membuat akun, tapi
+              kertas kodenya sudah hilang — atau ia datang ke kantor membawa tanda terima
+              bertanda tangannya. Tanpa jalan ini, satu-satunya pilihan operator adalah terus
+              menerbitkan kode untuk orang yang sudah ada di depannya.
+
+              Yang membuatnya bukan pintu belakang adalah `note`-nya: ia menjawab "DARI MANA KAMU
+              TAHU INI ORANGNYA", disimpan permanen, dan itulah satu-satunya hal yang tersisa
+              kalau penautan ini dipersoalkan berbulan-bulan kemudian. */}
+          <div className="mt-4 border-t border-violet-300/20 pt-4">
+            {!linkOpen ? (
+              <button
+                type="button"
+                onClick={() => setLinkOpen(true)}
+                className="text-[12.5px] font-semibold text-violet-200 underline-offset-2 hover:underline"
+              >
+                Pemiliknya sudah punya akun dan ada di depanmu? Tautkan langsung →
+              </button>
+            ) : (
+              <div>
+                <p className="text-[12.5px] font-semibold text-violet-100">
+                  Tautkan akun pemilik ke titipan ini
+                </p>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-violet-200/75">
+                  Lakukan ini HANYA kalau kamu sudah memastikan orangnya — cocokkan alamat
+                  wallet di layarnya, atau tanda terima bertanda tangan yang ia bawa. Sesudah
+                  tertaut, hasil penjualan kartu ini masuk ke akun tersebut.
+                </p>
+
+                <div className="mt-3">
+                  {linkPick ? (
+                    <PickedConsignor
+                      user={linkPick}
+                      onClear={() => setLinkPick(null)}
+                      lead="Kartu ini akan tertaut ke akun"
+                    />
+                  ) : (
+                    <ConsignorPicker token={token} onPick={setLinkPick} autoFocus />
+                  )}
+                </div>
+
+                <textarea
+                  value={linkNote}
+                  onChange={(e) => setLinkNote(e.target.value)}
+                  rows={2}
+                  placeholder="Bagaimana identitasnya kamu pastikan — mis. “pemilik datang ke kantor membawa tanda terima bertanda tangan; wallet dicocokkan di layarnya”."
+                  className={`${INPUT} mt-3 resize-y leading-relaxed`}
+                />
+
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void run(async () => {
+                        const row = await linkAdminConsignor(
+                          c.id,
+                          { consignorId: linkPick!.id, note: linkNote.trim() },
+                          token ?? "",
+                        );
+                        setLinkOpen(false);
+                        setLinkPick(null);
+                        setLinkNote("");
+                        return row;
+                      }, "Akun pemilik tertaut. Kartu ini sekarang punya tujuan pembayaran.")
+                    }
+                    disabled={busy || !linkPick || linkNote.trim().length < NOTE_MIN}
+                    className="rounded-xl border border-violet-300/40 bg-violet-400/10 px-4 py-2 text-[13px] font-semibold text-violet-100 transition hover:bg-violet-400/20 disabled:opacity-50"
+                  >
+                    {busy ? "Memproses…" : "Tautkan akun ini"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLinkOpen(false);
+                      setLinkPick(null);
+                      setLinkNote("");
+                    }}
+                    className="px-2 py-2 text-[12.5px] text-violet-200/70 transition hover:text-violet-100"
+                  >
+                    Batal
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── PENGEMBALIAN YANG SEDANG BERJALAN ────────────────────────────────────────────────
+          Kalimat pertamanya menyebut fakta yang paling mudah hilang dari kepala orang:
+          kartunya MASIH DI RAK KITA. "Ditarik" bukan "sudah pulang" — selama ia ada di sini, ia
+          masih tanggung jawab Hoshi, masih bisa hilang, dan masih harus terhitung di stok opname. */}
+      {returnPending && (
         <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3.5 text-[13px] leading-relaxed text-amber-100">
-          <strong>Pemilik minta kartunya kembali</strong> ({dt(c.withdrawRequestedAt)}). Atur serah
-          terimanya, lalu catat di bagian “Kartu keluar dari Hoshi”. Permintaan kembali tidak
-          dipungut biaya apa pun.
+          <strong>Pemilik minta kartunya kembali</strong> ({dt(c.withdrawRequestedAt)}) — dan
+          kartunya <strong>masih di rak Hoshi</strong> sampai serah terimanya dicatat.
+          {c.returnMethod == null ? (
+            <>
+              {" "}
+              Ke mana kartunya dikembalikan <strong>belum ditentukan</strong>: tanyakan ke
+              pemiliknya — diambil sendiri, atau dikirim kurir? Catat di bagian “Kartu keluar dari
+              Hoshi” di bawah.
+            </>
+          ) : c.returnPlanReady === false ? (
+            <>
+              {" "}
+              Alamat pengembaliannya <strong>belum lengkap</strong>, jadi kartu ini belum bisa
+              ditandai terkirim. Lengkapi dulu di bawah.
+            </>
+          ) : (
+            <>
+              {" "}
+              Tujuannya sudah tercatat: <strong>{returnMethodLabel(c.returnMethod)}</strong>
+              {storedReturnAddress ? ` — ${storedReturnAddress}` : ""}
+              {c.returnShippingFeeIdr != null
+                ? `. Ongkir balik ${rp(c.returnShippingFeeIdr)}${
+                    c.returnShippingPayer ? ` (${returnPayerLabel(c.returnShippingPayer)})` : ""
+                  }`
+                : ""}
+              .
+            </>
+          )}{" "}
+          Permintaan kembali tidak dipungut biaya apa pun dari pemiliknya.
+        </div>
+      )}
+
+      {/* Sudah pulang: resi/penerimanya ditampilkan supaya pertanyaan "benar sampai?" punya
+          jawaban yang bisa diperiksa pemiliknya sendiri, bukan sekadar "kata Hoshi". */}
+      {c.custodyReleasedAt && c.releaseReason === "WITHDRAWN" && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3.5 text-[13px] leading-relaxed text-zinc-300">
+          <strong>Kartu sudah dikembalikan ke pemiliknya</strong> pada {dt(c.custodyReleasedAt)} —{" "}
+          {returnMethodLabel(c.returnMethod) ?? "cara pengembalian tidak tercatat"}.
+          {c.returnTrackingNo && (
+            <>
+              {" "}
+              Resi <strong className="text-zinc-100">{c.returnTrackingNo}</strong>
+              {c.returnCourier ? ` (${c.returnCourier})` : ""}.
+            </>
+          )}
+          {c.returnPickedUpBy && <> Diambil oleh {c.returnPickedUpBy}.</>}
+          {storedReturnAddress && <> Tujuan: {storedReturnAddress}.</>}
+          {c.returnShippingFeeIdr != null && (
+            <>
+              {" "}
+              Ongkir balik {rp(c.returnShippingFeeIdr)}
+              {c.returnShippingPayer ? ` — ${returnPayerLabel(c.returnShippingPayer)}` : ""}.
+            </>
+          )}
         </div>
       )}
 
@@ -319,6 +757,36 @@ export default function AdminTitipanDetailPage() {
           {error}
         </p>
       )}
+
+      {/* ── STRUK SERAH TERIMA ─────────────────────────────────────────────────────────────
+          Diletakkan SEBELUM kartu "Bukti", karena itu urutan yang benar di lapangan: cetak →
+          tanda tangani di depan pemiliknya → baru difoto sebagai bukti "Struk serah terima".
+          Layar yang menaruh tombol cetaknya sesudah kamera akan membuat operator memotret
+          sesuatu yang belum ada.
+
+          TETAP ADA sesudah custody diterima, dan itu disengaja: pemilik yang kehilangan
+          lembarnya berhak minta salinan, dan struk yang dicetak ulang memakai TANGGAL SERAH
+          TERIMA yang asli (`custodyAcceptedAt`), bukan tanggal cetaknya — kalau tidak, kertas
+          yang sama akan berbunyi dua hal yang berbeda. */}
+      <Card
+        title="Struk serah terima"
+        sub="Dua lembar identik: satu untuk pemilik kartu, satu untuk Hoshi. Ditandatangani kedua pihak di tempat. Inilah satu-satunya bukti yang isinya tidak bisa Hoshi ubah sendiri — salinan pemiliknya ada di tangan dia."
+      >
+        <HandoverReceiptButton
+          data={receiptDataFrom(c)}
+          tone={c.custodyAcceptedAt ? "biasa" : "utama"}
+          label={
+            c.custodyAcceptedAt
+              ? "Cetak ulang struk (2 lembar)"
+              : "Cetak struk serah terima (2 lembar)"
+          }
+          hint={
+            c.custodyAcceptedAt
+              ? `Salinan dengan tanggal serah terima aslinya (${dt(c.custodyAcceptedAt)}). Kode klaim tidak ikut tercetak — ia hanya bisa ditampilkan sekali, saat diterbitkan.`
+              : "Setelah ditandatangani kedua pihak, foto lembarnya sebagai bukti “Struk serah terima” di bawah. Tanpa foto itu, kartu ini belum bisa dinyatakan diterima."
+          }
+        />
+      </Card>
 
       {/* ── BUKTI ── */}
       <Card
@@ -414,14 +882,31 @@ export default function AdminTitipanDetailPage() {
           title="Pajang di marketplace"
           sub="Baru mungkin karena kartunya sudah ada di Hoshi. Listing-nya terikat ke titipan ini, jadi tidak bisa ada listing tanpa kartunya."
         >
-          {rawUnlistable ? (
-            <p className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[13px] leading-relaxed text-amber-100">
+          {/* Dua penghalang yang BERBEDA, dan keduanya ditampilkan kalau keduanya berlaku — bukan
+              yang satu menutupi yang lain. Operator yang memperbaiki satu hal lalu menemukan
+              penghalang berikutnya muncul dari balik layar akan mengira layar ini mengulur. */}
+          {awaitingClaim && (
+            <p className="rounded-xl border border-violet-400/30 bg-violet-400/10 px-4 py-3 text-[13px] leading-relaxed text-violet-100">
+              Kartu ini belum diklaim pemiliknya, jadi belum ada akun yang akan menerima hasil
+              penjualannya — memajangnya sekarang berarti menawarkan kartu yang uangnya tidak punya
+              tujuan. Kirim ulang kode klaimnya lewat panel di atas, lalu pajang setelah ia
+              mengklaimnya. Custody-nya sendiri tidak terpengaruh: kartunya tetap tercatat ada di
+              Hoshi dan tetap bisa ditarik kembali kapan saja.
+            </p>
+          )}
+          {rawUnlistable && (
+            <p
+              className={`rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[13px] leading-relaxed text-amber-100 ${
+                awaitingClaim ? "mt-3" : ""
+              }`}
+            >
               Kartu ini tidak punya grading, dan kartu tanpa grading belum bisa dipajang di fase
               ini: kolom grader pada listing hanya mengenal PSA/CGC/BGS, dan mengisinya berarti
               memberi label palsu pada kartu orang lain. Titipannya tetap tercatat dan tetap bisa
               ditarik kembali kapan saja.
             </p>
-          ) : (
+          )}
+          {!awaitingClaim && !rawUnlistable && (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block">
@@ -437,7 +922,21 @@ export default function AdminTitipanDetailPage() {
                   <span className="mt-1 block text-[11px] text-zinc-500">
                     Pemilik menerima ± {rp(estimatedPayout(Number(listPrice) || 0, c.commissionBps))}{" "}
                     setelah komisi {commissionPct(c.commissionBps)}%.
+                    {c.reservePriceIdr != null && c.reservePriceIdr > 0 && (
+                      <>
+                        {" "}
+                        Harga terendah yang disepakati: {rp(c.reservePriceIdr)}.
+                      </>
+                    )}
                   </span>
+                  {/* Lantai harga dipasang DI SINI, di detik harga pajang pertama ditentukan —
+                      bukan hanya di layar ubah harga. Melanggarnya untuk pertama kali sama
+                      mudahnya pada saat memajang seperti pada saat menurunkan. */}
+                  {reserveWarning(Number(listPrice) || 0, c.reservePriceIdr) && (
+                    <span className="mt-1.5 block rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber-100">
+                      {reserveWarning(Number(listPrice) || 0, c.reservePriceIdr)}
+                    </span>
+                  )}
                 </label>
                 <div>
                   <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
@@ -521,6 +1020,31 @@ export default function AdminTitipanDetailPage() {
             <Row label="Harga yang disepakati" value={rp(c.askPriceIdr)} />
           )}
 
+          {/* Lantai harga yang disepakati di depan pemiliknya. Ditampilkan sebagai FAKTA di kartu
+              harga — bukan hanya sebagai peringatan yang muncul saat sudah dilanggar — supaya
+              operator membacanya sebelum mengetik angka, bukan sesudah. */}
+          {c.reservePriceIdr != null && c.reservePriceIdr > 0 && (
+            <Row
+              label="Harga terendah yang disepakati"
+              value={<span className="text-amber-200">{rp(c.reservePriceIdr)}</span>}
+            />
+          )}
+
+          {/* Keadaan SEKARANG, dijawab server (`belowReserve` di `custodyFlags`) dan bukan
+              dihitung ulang di sini: server membaca harga listing yang benar-benar tayang, yaitu
+              angka yang dilihat pembeli. Ini bukan peringatan tentang sesuatu yang akan terjadi —
+              ini pemberitahuan bahwa kartu orang SEDANG dipajang di bawah lantai yang dijanjikan
+              kepadanya. */}
+          {c.belowReserve && (
+            <p className="mt-3 rounded-xl border border-amber-400/35 bg-amber-400/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-100">
+              Harga yang berlaku sekarang{" "}
+              {c.effectivePriceIdr != null ? `(${rp(c.effectivePriceIdr)}) ` : ""}ada DI BAWAH
+              harga terendah yang disepakati dengan pemiliknya
+              {c.reservePriceIdr != null ? ` (${rp(c.reservePriceIdr)})` : ""}. Pastikan dia memang
+              menyetujuinya — kalau belum, naikkan lagi atau hubungi dia hari ini.
+            </p>
+          )}
+
           {can("PRICE") && (
             <div className="mt-4 grid gap-3 sm:grid-cols-[200px_1fr_auto] sm:items-end">
               <label className="block">
@@ -563,6 +1087,11 @@ export default function AdminTitipanDetailPage() {
               >
                 Simpan harga
               </button>
+              {reserveWarning(Number(newPrice) || 0, c.reservePriceIdr) && (
+                <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-100 sm:col-span-3">
+                  {reserveWarning(Number(newPrice) || 0, c.reservePriceIdr)}
+                </p>
+              )}
               <p className="text-[11px] text-zinc-500 sm:col-span-3">
                 Harga adalah bagian dari perjanjian yang ditandatangani pemilik kartu — beri tahu
                 dia sebelum mengubahnya. Alasannya disimpan permanen.
@@ -574,9 +1103,23 @@ export default function AdminTitipanDetailPage() {
 
       {/* ── FAKTA ── */}
       <Card title="Catatan serah terima">
+        {/* Baris ini tidak boleh berbunyi "—" untuk kartu yang belum diklaim: tanda hubung
+            terbaca seperti data yang lupa diisi, padahal ini keadaan yang punya nama, punya
+            sebab, dan punya jalan keluarnya sendiri. */}
         <Row
           label="Pemilik (akun)"
-          value={`${c.consignor?.displayName ?? "—"} · ${c.consignor?.walletAddress ?? c.consignorId}`}
+          value={
+            c.consignorId ? (
+              `${c.consignor?.displayName ?? "—"} · ${c.consignor?.walletAddress ?? c.consignorId}`
+            ) : (
+              <span className="text-violet-200">
+                Belum diklaim — kartu ini belum tersambung ke akun Hoshi mana pun
+                {c.claimCodeExpiresAt
+                  ? `. Kode klaim berlaku sampai ${dt(c.claimCodeExpiresAt)}`
+                  : ""}
+              </span>
+            )
+          }
         />
         <Row label="Nama di tanda terima" value={c.consignorNameAtIntake} />
         <Row label="HP" value={c.consignorPhoneAtIntake} />
@@ -615,6 +1158,22 @@ export default function AdminTitipanDetailPage() {
         <Row label="Perjanjian" value={c.agreementRef ?? "—"} />
         <Row label="Dicatat" value={dt(c.createdAt)} />
         <Row label="Diterima" value={dt(c.custodyAcceptedAt)} />
+        {/* KAPAN dan LEWAT MANA pemiliknya tertaut. Ditampilkan hanya kalau memang sudah terjadi:
+            baris "—" di sini akan terbaca seolah ada langkah yang terlewat, padahal titipan yang
+            sejak awal dicatat atas sebuah akun tidak pernah melewati penukaran kode.
+
+            "Lewat mana" ikut ditampilkan karena itulah yang menjawab "dari mana kalian tahu ini
+            orangnya" berbulan-bulan kemudian — dan jawabannya berbeda untuk tiap cara. */}
+        {c.consignorLinkedAt && (
+          <Row
+            label="Pemilik tertaut"
+            value={`${dt(c.consignorLinkedAt)}${
+              consignorLinkMethodLabel(c.consignorLinkMethod)
+                ? ` · ${consignorLinkMethodLabel(c.consignorLinkMethod)}`
+                : ""
+            }`}
+          />
+        )}
         <Row label="Keluar" value={dt(c.custodyReleasedAt)} />
         {c.soldOrderId && <Row label="Order penjualan" value={c.soldOrderId} />}
         {c.payoutIdrx != null && <Row label="Dibayar ke pemilik" value={rp(c.payoutIdrx)} />}
@@ -712,13 +1271,165 @@ export default function AdminTitipanDetailPage() {
                   placeholder="Catatan (opsional) — mis. “diminta langsung saat kunjungan”"
                   className={`${INPUT} mt-3`}
                 />
+
+                {/* ── KE MANA KARTUNYA PULANG ─────────────────────────────────────────────────
+                    TIDAK ditampilkan untuk baris INTAKE: di sana kartunya tidak pernah berpindah
+                    tangan, jadi tidak ada yang perlu dikembalikan — dan server memang menolak
+                    alamat untuk baris seperti itu, alih-alih menyimpannya diam-diam. */}
+                {c.status !== "INTAKE" && (
+                  <div className="mt-4 rounded-xl border border-white/[0.07] bg-black/20 p-3.5">
+                    <p className="text-[12.5px] font-semibold text-zinc-200">
+                      Ke mana kartunya dikembalikan?
+                    </p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
+                      Tanyakan <strong>sekarang</strong>, selagi pemiliknya masih bicara dengan
+                      Anda. Nanti berarti menelepon lagi — dan begitulah kartu berakhir tercatat
+                      “ditarik” berminggu-minggu tanpa pernah dikirim ke mana pun. Boleh dilewati
+                      sekarang dan dilengkapi nanti lewat tombol yang sama, tapi kartunya tidak
+                      akan bisa ditandai keluar sebelum ini terisi.
+                    </p>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(["COURIER", "PICKUP"] as ConsignmentReturnMethod[]).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setRetMethod(m)}
+                          className={`rounded-xl border px-3.5 py-2 text-[12.5px] font-semibold transition ${
+                            retMethod === m
+                              ? "border-yellow-400/40 bg-yellow-400/10 text-yellow-100"
+                              : "border-white/10 bg-white/[0.03] text-zinc-400 hover:text-zinc-200"
+                          }`}
+                        >
+                          {m === "COURIER" ? "Dikirim kurir" : "Diambil sendiri"}
+                        </button>
+                      ))}
+                    </div>
+
+                    {retMethod === "COURIER" ? (
+                      <>
+                        <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                          <input
+                            value={retName}
+                            onChange={(e) => setRetName(e.target.value)}
+                            placeholder="Nama penerima"
+                            className={INPUT}
+                          />
+                          <input
+                            value={retPhone}
+                            onChange={(e) => setRetPhone(e.target.value)}
+                            placeholder="Nomor telepon penerima"
+                            className={INPUT}
+                          />
+                          <input
+                            value={retStreet}
+                            onChange={(e) => setRetStreet(e.target.value)}
+                            placeholder="Alamat jalan lengkap"
+                            className={`${INPUT} sm:col-span-2`}
+                          />
+                          <input
+                            value={retApt}
+                            onChange={(e) => setRetApt(e.target.value)}
+                            placeholder="Unit / blok / patokan (opsional)"
+                            className={`${INPUT} sm:col-span-2`}
+                          />
+                          <input
+                            value={retCity}
+                            onChange={(e) => setRetCity(e.target.value)}
+                            placeholder="Kota / kabupaten"
+                            className={INPUT}
+                          />
+                          <input
+                            value={retState}
+                            onChange={(e) => setRetState(e.target.value)}
+                            placeholder="Provinsi"
+                            className={INPUT}
+                          />
+                          <input
+                            value={retZip}
+                            onChange={(e) => setRetZip(e.target.value.replace(/[^\d]/g, ""))}
+                            inputMode="numeric"
+                            placeholder="Kode pos"
+                            className={INPUT}
+                          />
+                        </div>
+                        <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-600">
+                          Provinsi menentukan tarif ongkir balik — tarif yang sama yang dipakai
+                          pengiriman kartu biasa. Provinsi yang tidak dikenali jatuh ke tarif
+                          penampung yang lebih mahal, tidak pernah gratis.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="mt-3 rounded-lg bg-black/25 px-3 py-2 text-[12px] leading-relaxed text-zinc-400">
+                        Diambil sendiri tidak butuh alamat. Yang dicatat nanti, saat kartunya
+                        benar-benar diserahkan, adalah <strong>siapa</strong> yang datang
+                        mengambil — dan itu ditanyakan di panel “Kartu fisik sudah keluar”.
+                      </p>
+                    )}
+
+                    {/* ── SIAPA YANG MENANGGUNG ONGKIR BALIK ──────────────────────────────────
+                        DICATAT, BUKAN DITAGIHKAN. Tidak ada tagihan yang terbit dari sini dan
+                        tidak ada saldo yang dipotong: menarik kartu tetap gratis bagi pemiliknya.
+                        Yang ditutup kolom ini adalah kebocoran diam-diam — ongkos yang ditanggung
+                        Hoshi yang tidak pernah muncul di laporan mana pun. */}
+                    <div className="mt-4 border-t border-white/[0.06] pt-3.5">
+                      <p className="text-[12.5px] font-semibold text-zinc-200">
+                        Siapa yang menanggung ongkir baliknya?
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(["OWNER", "HOSHI"] as ConsignmentReturnPayer[]).map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setRetPayer(retPayer === p ? "" : p)}
+                            className={`rounded-xl border px-3.5 py-2 text-[12.5px] font-semibold transition ${
+                              retPayer === p
+                                ? "border-sky-400/40 bg-sky-400/10 text-sky-100"
+                                : "border-white/10 bg-white/[0.03] text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            {p === "OWNER" ? "Pemilik kartu" : "Hoshi"}
+                          </button>
+                        ))}
+                        <input
+                          value={retFee}
+                          onChange={(e) => setRetFee(e.target.value.replace(/[^\d]/g, ""))}
+                          inputMode="numeric"
+                          placeholder="Ongkir (Rp) — kosongkan untuk ditaksir"
+                          className={`${INPUT} sm:max-w-[16rem]`}
+                        />
+                      </div>
+                      <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-600">
+                        Ini <strong>catatan</strong>, bukan tagihan: tidak ada uang yang berpindah
+                        dari sini, dan pemilik kartu tidak ditagih apa pun. Dicatat supaya ongkos
+                        yang ditanggung Hoshi punya angka yang bisa dibaca di laporan — kalau
+                        dikosongkan, server menaksirnya dari tarif wilayah, dan taksirannya boleh
+                        Anda timpa dengan angka di struk kurir.
+                      </p>
+                    </div>
+
+                    {retMethod === "COURIER" && !typedPlan && (
+                      <p className="mt-3 rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber-100">
+                        Alamatnya belum lengkap, jadi <strong>alamat tidak akan ikut tersimpan</strong>{" "}
+                        — permintaan kembalinya tetap dicatat (dan itu yang penting sekarang).
+                        Lengkapi nanti lewat tombol yang sama; kartunya tidak bisa ditandai terkirim
+                        sebelum itu.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setConfirm({ kind: "RETURN" })}
                   disabled={busy}
                   className="mt-3 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-50"
                 >
-                  {c.status === "INTAKE" ? "Batalkan kesepakatan" : "Catat permintaan kembali"}
+                  {c.status === "INTAKE"
+                    ? "Batalkan kesepakatan"
+                    : c.withdrawRequestedAt
+                      ? "Perbarui tujuan pengembalian"
+                      : "Catat permintaan kembali"}
                 </button>
               </div>
             )}
@@ -733,7 +1444,73 @@ export default function AdminTitipanDetailPage() {
                 </p>
                 <p className="mt-2 rounded-lg bg-black/25 px-3 py-2 text-[12px] text-zinc-300">
                   Yang akan dicatat: <strong>{release.label}</strong>
+                  {release.value === "WITHDRAWN" && effectiveReturnMethod && (
+                    <> · {returnMethodLabel(effectiveReturnMethod)}</>
+                  )}
                 </p>
+
+                {/* ── BUKTI SERAH TERIMA PENGEMBALIAN ─────────────────────────────────────────
+                    Hanya untuk pengembalian ke PEMILIK. Pengiriman ke pembeli punya jalurnya
+                    sendiri (layar “Kirim Kartu”), dan menaruh resinya juga di sini akan membuat
+                    satu kiriman punya dua nomor resi yang bisa berbeda. */}
+                {release.value === "WITHDRAWN" && (
+                  <div className="mt-3 rounded-xl border border-white/[0.07] bg-black/20 p-3.5">
+                    {effectiveReturnMethod == null ? (
+                      <p className="text-[12px] leading-relaxed text-amber-100">
+                        Tujuan pengembaliannya belum dicatat, jadi kartu ini belum bisa dinyatakan
+                        keluar. Isi dulu <strong>“Ke mana kartunya dikembalikan?”</strong> di panel
+                        di atas — server menolak selama itu kosong, dan itu memang yang benar:
+                        kartu yang masih di rak tidak boleh bisa tercatat selesai.
+                      </p>
+                    ) : effectiveReturnMethod === "COURIER" ? (
+                      <>
+                        <p className="text-[12.5px] font-semibold text-zinc-200">Nomor resi</p>
+                        <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
+                          Tanpa resi, “sudah dikirim” adalah pernyataan yang tidak bisa diperiksa
+                          oleh pemilik kartunya sendiri — padahal dialah satu-satunya orang yang
+                          berhak memeriksanya.
+                          {storedReturnAddress && (
+                            <>
+                              {" "}
+                              Tujuan tercatat: <span className="text-zinc-300">{storedReturnAddress}</span>.
+                            </>
+                          )}
+                        </p>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <input
+                            value={retCourier}
+                            onChange={(e) => setRetCourier(e.target.value)}
+                            placeholder="Kurir — mis. “JNE REG”"
+                            className={INPUT}
+                          />
+                          <input
+                            value={retTracking}
+                            onChange={(e) => setRetTracking(e.target.value)}
+                            placeholder="Nomor resi"
+                            className={INPUT}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[12.5px] font-semibold text-zinc-200">
+                          Siapa yang mengambil kartunya?
+                        </p>
+                        <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
+                          Nama orang yang benar-benar berdiri di depan Anda, dan dasar Anda yakin ia
+                          berhak menerimanya. Yang datang mengambil sering bukan pemegang akunnya.
+                        </p>
+                        <input
+                          value={retPickedUpBy}
+                          onChange={(e) => setRetPickedUpBy(e.target.value)}
+                          placeholder="mis. “Budi Santoso (pemilik), KTP dicocokkan dengan catatan intake”"
+                          className={`${INPUT} mt-3`}
+                        />
+                      </>
+                    )}
+                  </div>
+                )}
+
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <input
                     value={releaseReceipt}
@@ -748,10 +1525,24 @@ export default function AdminTitipanDetailPage() {
                     className={INPUT}
                   />
                 </div>
+
+                {/* Apa yang masih kurang — DITAMPILKAN, bukan disembunyikan di balik tombol mati.
+                    Gerbang sebenarnya tetap di server; daftar ini supaya operator tahu SEBELUM
+                    menekan, bukan sesudah ditolak sambil pemiliknya menunggu di depan meja. */}
+                {returnReleaseBlockers.length > 0 && (
+                  <p className="mt-3 text-[12px] leading-relaxed text-amber-200/90">
+                    Belum bisa dicatat keluar — kurang: {returnReleaseBlockers.join(", ")}.
+                  </p>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setConfirm({ kind: "RELEASE" })}
-                  disabled={busy || releaseNote.trim().length < NOTE_MIN}
+                  disabled={
+                    busy ||
+                    releaseNote.trim().length < NOTE_MIN ||
+                    returnReleaseBlockers.length > 0
+                  }
                   className="mt-3 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   Catat kartu keluar
@@ -863,10 +1654,20 @@ export default function AdminTitipanDetailPage() {
         confirmLabel="Catat"
         onConfirm={() =>
           void run(
-            () => requestAdminConsignmentReturn(c.id, token ?? "", returnNote.trim() || undefined),
+            () =>
+              requestAdminConsignmentReturn(
+                c.id,
+                token ?? "",
+                returnNote.trim() || undefined,
+                // Rencana pengembalian TIDAK ikut untuk baris INTAKE: kartunya tidak pernah
+                // berpindah tangan, dan server menolaknya (bukan mengabaikannya diam-diam).
+                c.status === "INTAKE" ? undefined : typedPlan,
+              ),
             c.status === "INTAKE"
               ? "Kesepakatan dibatalkan."
-              : "Permintaan kembali tercatat. Atur serah terimanya.",
+              : typedPlan
+                ? "Permintaan kembali tercatat berikut tujuannya. Kartunya MASIH di rak Hoshi sampai serah terimanya dicatat."
+                : "Permintaan kembali tercatat. Tujuannya belum ada — lengkapi sebelum kartunya bisa ditandai keluar.",
           )
         }
         onCancel={() => setConfirm(null)}
@@ -875,7 +1676,18 @@ export default function AdminTitipanDetailPage() {
       <ConfirmDialog
         open={confirm?.kind === "RELEASE"}
         title="Kartu fisik sudah keluar?"
-        message="Sesudah ini kartu tidak bisa dipajang, dijual, atau dikirim lewat sistem lagi."
+        message={
+          release?.value === "WITHDRAWN" ? (
+            <>
+              Ini menyatakan kartunya <strong>sudah berpindah tangan</strong> — bukan sekadar
+              diminta kembali. Tekan hanya kalau paketnya benar-benar sudah diserahkan ke kurir
+              (atau kartunya sudah di tangan orang yang mengambil). Sesudah ini kartu tidak bisa
+              dipajang, dijual, atau dikirim lewat sistem lagi.
+            </>
+          ) : (
+            "Sesudah ini kartu tidak bisa dipajang, dijual, atau dikirim lewat sistem lagi."
+          )
+        }
         confirmLabel="Catat keluar"
         onConfirm={() =>
           void run(
@@ -886,6 +1698,21 @@ export default function AdminTitipanDetailPage() {
                   releaseReason: release?.value ?? "WITHDRAWN",
                   note: releaseNote.trim(),
                   ...(releaseReceipt.trim() ? { releaseReceiptRef: releaseReceipt.trim() } : {}),
+                  // Bukti serah terima PENGEMBALIAN — hanya untuk kartu yang pulang ke pemiliknya.
+                  // Pengiriman ke pembeli menyimpan resinya di jalur kirim fisik, bukan di sini.
+                  ...(release?.value === "WITHDRAWN"
+                    ? {
+                        // Rencana yang sedang diketik ikut dikirim: pemiliknya bisa saja datang
+                        // tanpa pemberitahuan, jadi alamat dan serah terimanya tercatat pada detik
+                        // yang sama. Server menuliskannya lebih dulu, di transaksi yang sama.
+                        ...(typedPlan ? { returnPlan: typedPlan } : {}),
+                        ...(retCourier.trim() ? { returnCourier: retCourier.trim() } : {}),
+                        ...(retTracking.trim() ? { returnTrackingNo: retTracking.trim() } : {}),
+                        ...(retPickedUpBy.trim()
+                          ? { returnPickedUpBy: retPickedUpBy.trim() }
+                          : {}),
+                      }
+                    : {}),
                 },
                 token ?? "",
               ),

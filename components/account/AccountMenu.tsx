@@ -69,8 +69,15 @@ export default function AccountMenu() {
   // user yang fisiknya sedang dipegang Hoshi. Di situ pula satu-satunya jalan untuk memintanya
   // kembali. Penyimpan barang yang tombol "ambil kembali"-nya terkubur adalah persis alasan orang
   // ragu menitipkan kartu mahal.
+  //
+  // "Klaim Kode Titipan" berdiri sendiri di sebelahnya, dan bukan hanya tombol di dalam halaman
+  // Titipan: orang yang dititipi kode sering belum punya satu pun titipan yang terlihat, jadi ia
+  // tidak punya alasan membuka halaman yang (dari luar) terlihat kosong. Kartunya sudah ada di rak
+  // Hoshi dan tidak bisa dipajang sampai kodenya dipakai — jalan masuknya harus kelihatan dari
+  // tempat pertama yang orang buka setelah login.
   const CARDS_NAV: NavItem[] = [
     { label: "Titipan Saya", href: "/titipan", icon: <BoxIcon className={iconCls} />, tint: "text-sky-400" },
+    { label: "Klaim Kode Titipan", href: "/titipan/klaim", icon: <BoxIcon className={iconCls} />, tint: "text-violet-400" },
     { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
     { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];

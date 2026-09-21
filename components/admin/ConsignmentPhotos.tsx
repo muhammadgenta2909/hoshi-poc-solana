@@ -9,9 +9,15 @@
 
      • APPEND-ONLY. Tidak ada tombol hapus, tidak ada tombol ganti. Backend pun tidak punya
        rutenya. Bukti yang bisa direvisi diam-diam oleh pihak yang menyimpan barang bukan bukti.
-     • Foto DEPAN + BELAKANG wajib sebelum kartu boleh dinyatakan diterima; SERTIFIKAT wajib
-       kalau nomor sertifikatnya diisi. Gerbangnya ada di server — di sini kekurangannya
-       DITAMPILKAN supaya operator tahu sebelum menekan tombol, bukan sesudah ditolak.
+     • Foto DEPAN + BELAKANG + STRUK SERAH TERIMA wajib sebelum kartu boleh dinyatakan diterima;
+       SERTIFIKAT wajib kalau nomor sertifikatnya diisi. Gerbangnya ada di server — di sini
+       kekurangannya DITAMPILKAN supaya operator tahu sebelum menekan tombol, bukan sesudah
+       ditolak. (Daftar wajibnya hidup di satu tempat: `requiredPhotoKinds` di lib/consignment.)
+     • STRUK SERAH TERIMA adalah jenis bukti yang BERBEDA dari tiga yang lain, dan itu bukan
+       urusan penamaan. Foto kartu membuktikan KEADAAN BARANGNYA; foto struk bertanda tangan
+       membuktikan ADANYA KESEPAKATAN — bahwa orangnya memang setuju menitipkan kartu itu, dengan
+       harga dan komisi itu, pada hari itu. Slab difoto sebagus apa pun tidak menjawab itu.
+       Struknya dicetak dari kartu "Struk serah terima" di halaman yang sama.
      • Tombolnya memanggil KAMERA (capture="environment") di ponsel, karena itu memang alat yang
        ada di tangan operator saat serah terima.
    ══════════════════════════════════════════════════════════════════════════════════════════════ */
@@ -43,7 +49,8 @@ export function PhotoGrid({ photos }: { photos: ConsignmentPhoto[] }) {
   if (photos.length === 0)
     return (
       <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-6 text-center text-[13px] text-zinc-500">
-        Belum ada foto. Kartu tidak boleh dinyatakan diterima tanpa foto depan &amp; belakang.
+        Belum ada foto. Kartu tidak boleh dinyatakan diterima tanpa foto depan, belakang, dan
+        struk serah terima yang sudah ditandatangani.
       </p>
     );
   return (

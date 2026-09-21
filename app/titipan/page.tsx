@@ -33,6 +33,7 @@ import {
   estimatedPayout,
   eventTitle,
   getMyConsignments,
+  ownerReturnLine,
   ownerStatusLine,
   requestConsignmentReturn,
   returnBlockedReason,
@@ -44,6 +45,12 @@ import {
 import TopNav from "@/components/packs/TopNav";
 import { ACCOUNT_BG } from "@/lib/theme";
 import { ConfirmDialog, EmptyState, GhostButton, PrimaryButton } from "@/components/account/ui";
+import {
+  consignmentLostSupportDraft,
+  consignmentMissingSupportDraft,
+  consignmentSupportDraft,
+  supportComposeHref,
+} from "@/lib/supportLink";
 
 const rp = (n: number | null | undefined) =>
   n == null ? "—" : `Rp ${Math.round(n).toLocaleString("id-ID")}`;
@@ -101,6 +108,35 @@ function ConsignmentCard({
           </div>
 
           <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-300">{ownerStatusLine(c)}</p>
+
+          {/* ── DI MANA KARTUKU SEKARANG, DAN KAPAN IA SAMPAI? ───────────────────────────────
+              Pertanyaan yang benar-benar ada di kepala orang yang baru saja meminta barangnya
+              kembali — dan yang selama ini tidak dijawab di mana pun. Dua hal yang paling penting
+              ada di sini: bahwa kartunya MASIH AMAN DI RAK KAMI selama belum berangkat, dan
+              NOMOR RESI begitu ia berangkat, supaya "sudah dikirim" bisa ia periksa sendiri di
+              situs kurirnya alih-alih dipercaya karena kata kami. */}
+          {ownerReturnLine(c) && (
+            <p className="mt-1.5 rounded-lg border border-white/[0.07] bg-black/20 px-3 py-2 text-[12.5px] leading-relaxed text-zinc-300">
+              {ownerReturnLine(c)}
+            </p>
+          )}
+
+          {/* ── "Tim kami akan menghubungimu" HARUS PUNYA ARAH SEBALIKNYA ─────────────────────
+              Ini satu-satunya baris di halaman ini yang memberitahu seseorang bahwa barangnya
+              hilang di tangan kami. Menutupnya dengan janji sepihak ("kami akan menghubungimu")
+              lalu tidak memberi dia satu pun cara menghubungi kami adalah bentuk paling murni
+              dari layar yang menghindar. Tautan ini membuka percakapan dua arah dengan tim,
+              sudah terisi nama kartunya. */}
+          {c.status === "LOST" && (
+            <Link
+              href={supportComposeHref(
+                consignmentLostSupportDraft({ cardName: c.cardName, id: c.id }),
+              )}
+              className="mt-2 inline-block rounded-xl border border-red-400/35 bg-red-400/10 px-3.5 py-2 text-[12.5px] font-semibold text-red-200 transition hover:bg-red-400/20"
+            >
+              Hubungi tim Hoshi tentang kartu ini
+            </Link>
+          )}
 
           {c.custodyAcceptedAt && !c.custodyReleasedAt && (
             <p className="mt-1 text-[12px] text-zinc-500">
@@ -220,6 +256,12 @@ function ConsignmentCard({
                 )
               }
             />
+            {/* Lantai harga yang disepakati saat serah terima. Ditampilkan ke PEMILIKNYA karena
+                itu janji yang diucapkan kepadanya — janji yang cuma bisa dibaca sebelah pihak
+                bukan janji, melainkan catatan internal yang kebetulan berbunyi seperti janji. */}
+            {c.reservePriceIdr != null && c.reservePriceIdr > 0 && (
+              <Fact label="Tidak dijual di bawah" value={rp(c.reservePriceIdr)} />
+            )}
             <Fact label="Komisi yang disepakati" value={`${commissionPct(c.commissionBps)}%`} />
             {c.intakeReceiptRef && <Fact label="Tanda terima" value={c.intakeReceiptRef} />}
             {c.custodyReleasedAt && (
@@ -268,6 +310,20 @@ function ConsignmentCard({
               </p>
             </div>
           )}
+
+          {/* Di sinilah perselisihan tentang kartu orang benar-benar dimulai: "foto ini bukan
+              kartuku", "catatan kondisinya tidak begitu". Panel bukti yang menutup tanpa satu
+              pun cara membantahnya membuat seluruh catatan ini kembali menjadi "kata Hoshi". */}
+          <p className="mt-4 border-t border-white/[0.06] pt-3 text-[11.5px] leading-relaxed text-zinc-500">
+            Ada yang tidak sesuai dengan kartumu?{" "}
+            <Link
+              href={supportComposeHref(consignmentSupportDraft({ cardName: c.cardName, id: c.id }))}
+              className="font-semibold text-yellow-300 hover:underline"
+            >
+              Hubungi tim Hoshi
+            </Link>{" "}
+            — catatan lama tetap tersimpan apa adanya, dan perbaikannya ditulis sebagai koreksi.
+          </p>
         </div>
       )}
     </li>
@@ -318,7 +374,10 @@ export default function TitipanPage() {
       setOk(
         wasIntake
           ? "Titipan dibatalkan. Tidak ada kartu yang berpindah tangan."
-          : "Permintaan terkirim. Kartu ini sudah tidak dipajang, dan tim Hoshi akan menghubungimu untuk mengatur serah terimanya.",
+          : // Menyebut DUA hal yang paling mudah disalahpahami sekaligus: kartunya sudah tidak
+            // dijual (jadi tidak ada yang bisa membelinya lagi), TAPI ia belum ke mana-mana —
+            // masih di rak Hoshi, masih tanggung jawab kami, sampai benar-benar berangkat.
+            "Permintaan terkirim. Kartu ini sudah tidak dipajang, dan kartunya tetap aman di rak Hoshi sampai benar-benar diserahkan. Tim Hoshi akan menghubungimu untuk memastikan ke mana kartunya dikembalikan — diambil sendiri atau dikirim kurir. Tidak ada biaya apa pun untukmu.",
       );
       await load();
     } catch (e) {
@@ -346,6 +405,32 @@ export default function TitipanPage() {
             memintanya kembali kapan saja selama belum terjual, tanpa biaya.
           </p>
         </header>
+
+        {/* ── PINTU MASUK KODE KLAIM ────────────────────────────────────────────────────────
+            Ditaruh DI ATAS daftar dan ditampilkan SELALU — juga untuk orang yang sudah punya
+            titipan lain, karena kunjungan berikutnya bisa menghasilkan kartu berikutnya.
+
+            Orang yang dititipi kode biasanya sampai ke situs ini untuk PERTAMA KALINYA justru
+            karena kode itu. Kalau pintunya cuma muncul di keadaan kosong, orang yang sudah punya
+            satu titipan tidak akan menemukan jalan untuk kartu keduanya, dan kartu yang sudah ada
+            di rak Hoshi akan menunggu tanpa pemilik. */}
+        <Link
+          href="/titipan/klaim"
+          className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-400/30 bg-violet-400/[0.07] px-4 py-3.5 transition hover:bg-violet-400/[0.12]"
+        >
+          <span className="min-w-0">
+            <span className="block text-[14px] font-semibold text-violet-100">
+              Punya kode titipan?
+            </span>
+            <span className="mt-0.5 block text-[12.5px] leading-relaxed text-violet-100/75">
+              Kalau tim Hoshi menerima kartumu dan memberimu sebuah kode, masukkan di sini supaya
+              kartunya tersambung ke akun ini.
+            </span>
+          </span>
+          <span className="shrink-0 rounded-xl border border-violet-300/35 bg-violet-400/10 px-4 py-2 text-[13px] font-semibold text-violet-100">
+            Klaim kode →
+          </span>
+        </Link>
 
         {ok && (
           <p className="mb-4 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-[13px] text-emerald-200">
@@ -382,7 +467,18 @@ export default function TitipanPage() {
         ) : rows.length === 0 ? (
           <EmptyState
             title="Belum ada kartu yang kamu titipkan"
-            sub="Titipan dicatat oleh tim Hoshi saat kartumu diserahkan langsung. Kalau kamu baru saja menyerahkan kartu dan belum muncul di sini, hubungi tim kami."
+            sub="Titipan dicatat oleh tim Hoshi saat kartumu diserahkan langsung. Kalau kamu baru saja menyerahkan kartu dan diberi sebuah kode, klaim kodenya lewat tombol di atas — kartunya akan langsung muncul di sini."
+            /* Layar kosong yang dilihat orang yang SUDAH menyerahkan kartunya adalah layar paling
+               menakutkan di produk ini. "Hubungi tim kami" tanpa tautan meninggalkan dia persis di
+               sana; tombol ini membuka percakapan dengan tim, sudah terisi pertanyaannya. */
+            action={
+              <Link
+                href={supportComposeHref(consignmentMissingSupportDraft())}
+                className="inline-block rounded-xl border border-white/12 bg-white/[0.03] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.07]"
+              >
+                Kartuku belum muncul — hubungi tim Hoshi
+              </Link>
+            }
           />
         ) : (
           <ul className="space-y-4">

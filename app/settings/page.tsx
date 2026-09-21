@@ -789,10 +789,27 @@ function InfoHint({ text }: { text: string }) {
 /** Riwayat mutasi saldo in-app (IDRX): top-up (+), hasil jual (+), penarikan (−), refund (+). */
 function BalanceHistory({ ledger }: { ledger: Balance | null }) {
   const idr = new Intl.NumberFormat("id-ID");
+  /**
+   * Nama manusiawi satu `BalanceEntry.reason`.
+   *
+   * Nilainya DITULIS PERSIS seperti di backend — `'TOPUP'`, `'WITHDRAW'`, `'WITHDRAW_REFUND'`,
+   * `'P2P_SALE'`, `CONSIGNMENT_SALE_REASON`, `CONSIGNMENT_COMPENSATION_REASON`. Yang salah eja di
+   * sini tidak meledak; ia cuma menampilkan token mesin di riwayat uang seseorang.
+   *
+   * ⚠️ "WITHDRAWAL" dulu ada di sini dan TIDAK PERNAH cocok: server menulis `WITHDRAW`. Jadi
+   * setiap penarikan tampil sebagai kata "WITHDRAW" di layar pemiliknya.
+   *
+   * Dua baris titipan dipisah dari `P2P_SALE` dengan sengaja: buku besar harus menyebut rail mana
+   * yang membayar (di P2P Hoshi tidak pernah memegang kartunya; di titipan Hoshi memegangnya), dan
+   * "ganti rugi kartu yang hilang di penyimpanan kami" bukan "hasil penjualan" dengan nama lain.
+   */
   const reasonLabel = (r: string): string => {
     if (r === "TOPUP") return "Isi saldo";
-    if (r === "WITHDRAWAL") return "Penarikan";
+    if (r === "WITHDRAW") return "Penarikan";
     if (r === "WITHDRAW_REFUND") return "Refund penarikan";
+    if (r === "CONSIGNMENT_SALE") return "Hasil penjualan kartu titipan";
+    if (r === "CONSIGNMENT_COMPENSATION") return "Ganti rugi kartu titipan";
+    if (r === "P2P_SALE") return "Hasil penjualan";
     if (r.includes("SALE")) return "Hasil penjualan";
     return r;
   };

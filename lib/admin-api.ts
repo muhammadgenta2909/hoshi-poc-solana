@@ -1,4 +1,8 @@
-import type { ConsignmentBase, ConsignmentListingRef } from "./consignment";
+import type {
+  ConsignmentBase,
+  ConsignmentListingRef,
+  ConsignmentReturnPlan,
+} from "./consignment";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
@@ -1511,11 +1515,34 @@ export const setAdminConsignmentPrice = (
  * klaim itu kalah dan server menolak — tidak ada jalan di mana pembeli dan pemilik lama sama-sama
  * menang. GRATIS: nol Rupiah bergerak di jalur ini.
  */
-export const requestAdminConsignmentReturn = (id: string, token: string, note?: string) =>
+export const requestAdminConsignmentReturn = (
+  id: string,
+  token: string,
+  note?: string,
+  /**
+   * KE MANA kartunya pulang, dan siapa yang menanggung ongkirnya.
+   *
+   * Ditanyakan DI SINI karena inilah momen paling murah untuk menanyakannya: pemiliknya sedang
+   * bicara dengan operator. Sesudah teleponnya ditutup, melengkapinya berarti menelepon kembali
+   * — dan itulah bagaimana sebuah kartu berakhir tercatat "ditarik" berminggu-minggu tanpa
+   * pernah dikirim ke mana pun.
+   *
+   * OPSIONAL, dan opsionalnya disengaja: permintaan "saya mau kartu saya kembali" tidak boleh
+   * bisa gagal karena sebuah kode pos. Yang TIDAK opsional adalah alamat pada saat kartunya
+   * ditandai keluar — server menolaknya di sana.
+   *
+   * TIDAK BERLAKU untuk baris INTAKE (kartunya tidak pernah berpindah tangan); server menolak,
+   * bukan mengabaikannya diam-diam.
+   */
+  returnPlan?: ConsignmentReturnPlan,
+) =>
   api<AdminConsignment>(`/admin/consignments/${id}/withdraw`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
-    body: JSON.stringify(note ? { note } : {}),
+    body: JSON.stringify({
+      ...(note ? { note } : {}),
+      ...(returnPlan ? { returnPlan } : {}),
+    }),
   });
 
 /**
@@ -1525,10 +1552,34 @@ export const requestAdminConsignmentReturn = (id: string, token: string, note?: 
  * Ini fakta kedua (`custodyReleasedAt`), bukan pembatalan fakta pertama. Sesudah ini baris
  * titipan tidak bisa dipajang, dijual, atau dikirim oleh apa pun. Kartu HILANG punya rutenya
  * sendiri, supaya "hilang" tidak pernah bisa tercatat diam-diam sebagai pengembalian biasa.
+ *
+ * ── UNTUK `WITHDRAWN`: SERVER MENOLAK KALAU KITA TIDAK TAHU KE MANA KARTUNYA PERGI ───────────
+ *
+ * Kurir menuntut alamat LENGKAP (dicatat di rute penarikan, atau dikirim lagi di sini lewat
+ * `returnPlan`) DAN nama kurir + nomor resi. Ambil sendiri menuntut catatan SIAPA yang mengambil.
+ * Penolakannya berkode `CONSIGNMENT_RETURN_INCOMPLETE` dan kalimatnya menyebut apa yang kurang —
+ * tampilkan apa adanya, jangan ditulis ulang di sini.
+ *
+ * Kalau ditolak, TIDAK ADA yang berubah: kartunya tetap tercatat di rak Hoshi. Itu arah gagal
+ * yang benar — kartu yang masih ada di rak tidak boleh bisa "selesai".
+ *
+ * `SHIPPED_TO_BUYER` tidak tersentuh aturan itu: resi pengiriman ke pembeli hidup di jalur kirim
+ * fisik (`CardRedemption`), bukan di sini.
  */
 export const releaseAdminConsignment = (
   id: string,
-  input: { releaseReason: "WITHDRAWN" | "SHIPPED_TO_BUYER"; note: string; releaseReceiptRef?: string },
+  input: {
+    releaseReason: "WITHDRAWN" | "SHIPPED_TO_BUYER";
+    note: string;
+    releaseReceiptRef?: string;
+    /** Rencana pengembalian, kalau baru dicatat sekarang (pemiliknya datang tanpa pemberitahuan). */
+    returnPlan?: ConsignmentReturnPlan;
+    /** WAJIB berpasangan untuk metode COURIER. */
+    returnCourier?: string;
+    returnTrackingNo?: string;
+    /** WAJIB untuk metode PICKUP: nama orang yang benar-benar berdiri di depan Anda. */
+    returnPickedUpBy?: string;
+  },
   token: string,
 ) =>
   api<AdminConsignment>(`/admin/consignments/${id}/release`, {

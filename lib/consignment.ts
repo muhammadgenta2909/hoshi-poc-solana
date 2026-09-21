@@ -98,6 +98,11 @@ export const ownerStatusLine = (c: ConsignmentCustodyFacts & { status: string })
       return "Sudah terjual. Hasilnya masuk ke saldomu; kartunya menunggu dikirim ke pembeli.";
     case "RELEASED":
       return "Kartu sudah keluar dari penyimpanan Hoshi.";
+    // ⚠️ "Tim kami akan menghubungimu" adalah janji SATU ARAH, dan satu arah saja tidak cukup di
+    // baris yang memberitahu seseorang bahwa barangnya hilang di tangan kami. Layar yang
+    // menampilkannya WAJIB menyertakan tautan ke tim (`consignmentLostSupportDraft` +
+    // `supportComposeHref`) — lihat `app/titipan/page.tsx`. Kalimat ini tidak membawa tautannya
+    // sendiri karena ia string, bukan komponen; itu bukan izin untuk menampilkannya sendirian.
     case "LOST":
       return "Kartu hilang atau rusak saat ada di penyimpanan kami. Tim kami akan menghubungimu.";
     case "CANCELLED":
@@ -107,11 +112,73 @@ export const ownerStatusLine = (c: ConsignmentCustodyFacts & { status: string })
   }
 };
 
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+ * ║ SATU KALIMAT TAMBAHAN UNTUK PEMILIK KARTU: DI MANA KARTUKU SEKARANG, DAN KAPAN IA SAMPAI?   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+ *
+ * TERPISAH dari `ownerStatusLine`, dan itu disengaja. Status menjawab "apa keadaan titipannya";
+ * baris ini menjawab pertanyaan yang benar-benar ada di kepala orang yang baru saja meminta
+ * barangnya kembali — dan menggabungkannya jadi satu kalimat akan membuat salah satunya hilang.
+ *
+ * DUA KEADAAN YANG PALING MUDAH TERTUKAR, dan keduanya disebut apa adanya:
+ *   diminta, belum dikirim → "kartunya MASIH AMAN DI RAK KAMI". Itu bukan basa-basi: selama
+ *                            kartunya di sini, ia masih tanggung jawab Hoshi, dan pemiliknya
+ *                            berhak tahu bahwa tidak ada yang hilang hanya karena belum ada resi.
+ *   sudah dikirim          → NOMOR RESI, supaya "sudah dikirim" bisa ia periksa SENDIRI di situs
+ *                            kurirnya, bukan dipercaya karena "kata Hoshi".
+ *
+ * ⚠️ TIDAK ADA SATU KATA PUN TENTANG TAGIHAN DI SINI, dan tidak boleh ditambahkan: ongkir balik
+ * DICATAT di sisi operator, tidak pernah ditagihkan ke pemilik kartu. Menarik kartu GRATIS, dan
+ * kalimat yang menyiratkan sebaliknya menghapus seluruh nilai tuas itu.
+ *
+ * null = tidak ada yang perlu dikatakan (belum ada permintaan kembali sama sekali).
+ */
+export const ownerReturnLine = (c: {
+  withdrawRequestedAt: string | null;
+  custodyReleasedAt: string | null;
+  releaseReason: string | null;
+  returnMethod: string | null;
+  returnCourier: string | null;
+  returnTrackingNo: string | null;
+  returnPickedUpBy: string | null;
+  returnPlanReady?: boolean;
+}): string | null => {
+  if (c.custodyReleasedAt && c.releaseReason === "WITHDRAWN") {
+    if (c.returnTrackingNo) {
+      return `Sudah dikirim balik${c.returnCourier ? ` lewat ${c.returnCourier}` : ""} — nomor resi ${c.returnTrackingNo}. Kamu bisa melacaknya sendiri di situs kurirnya.`;
+    }
+    if (c.returnPickedUpBy) {
+      return `Sudah diserahkan langsung kepada ${c.returnPickedUpBy}.`;
+    }
+    return "Kartunya sudah keluar dari penyimpanan Hoshi.";
+  }
+  if (!c.withdrawRequestedAt || c.custodyReleasedAt) return null;
+  if (c.returnMethod === "PICKUP") {
+    return "Menunggu kamu ambil di tempat Hoshi. Kartunya masih aman di rak kami sampai kamu datang.";
+  }
+  if (c.returnMethod === "COURIER") {
+    return c.returnPlanReady === false
+      ? "Permintaanmu sudah tercatat, tapi alamat kirimnya belum lengkap di catatan kami — tim Hoshi akan menghubungimu. Kartunya tetap aman di rak kami."
+      : "Permintaanmu sudah tercatat dan kartunya sedang disiapkan untuk dikirim. Nomor resinya muncul di sini begitu paketnya berangkat; sampai saat itu kartunya masih aman di rak kami.";
+  }
+  return "Permintaanmu sudah tercatat. Kartunya masih aman di rak kami — tim Hoshi akan menghubungimu untuk memastikan ke mana kartunya dikembalikan.";
+};
+
 /* ───────────────────────────── foto / bukti ─────────────────────────────── */
 
 /**
- * Jenis foto bukti. FRONT/BACK/CERT adalah yang dipakai gerbang terima-kartu di server;
- * DAMAGE/HANDOVER/OTHER bebas tapi tetap tersimpan permanen.
+ * Jenis foto bukti.
+ *
+ * DUA JENIS BUKTI YANG BERBEDA, dan bedanya bukan gaya penamaan:
+ *   FRONT/BACK/CERT  bukti KEADAAN BARANGNYA — menjawab "apakah sudah begitu sejak awal?"
+ *   HANDOVER         bukti ADANYA KESEPAKATAN — foto STRUK SERAH TERIMA sesudah ditandatangani
+ *                    kedua pihak. Foto slab sebagus apa pun tidak menjawab "dia memang setuju
+ *                    menitipkannya, dengan harga dan komisi ini, pada hari itu"; hanya kertas
+ *                    bertanda tangan yang salinannya ada di tangan PEMILIKNYA yang menjawabnya.
+ *   DAMAGE/OTHER     tambahan, bebas.
+ *
+ * Yang WAJIB sebelum kartu boleh dinyatakan diterima: lihat {@link requiredPhotoKinds}.
  */
 export type ConsignmentPhotoKind = "FRONT" | "BACK" | "CERT" | "DAMAGE" | "HANDOVER" | "OTHER";
 
@@ -129,7 +196,7 @@ export const PHOTO_KIND_LABEL: Record<ConsignmentPhotoKind, string> = {
   BACK: "Belakang",
   CERT: "Sertifikat",
   DAMAGE: "Cacat / catatan",
-  HANDOVER: "Serah terima",
+  HANDOVER: "Struk serah terima",
   OTHER: "Lainnya",
 };
 
@@ -139,8 +206,47 @@ export const PHOTO_KIND_HINT: Record<ConsignmentPhotoKind, string> = {
   BACK: "Seluruh kartu/slab dari belakang.",
   CERT: "Label sertifikat sampai nomornya terbaca jelas.",
   DAMAGE: "Goresan, sudut tumpul, label miring — apa pun yang sudah ada SEBELUM dititipkan.",
-  HANDOVER: "Momen serah terima / tanda terima yang ditandatangani kedua pihak.",
+  HANDOVER:
+    "Struk serah terima yang SUDAH ditandatangani kedua pihak — tanda tangannya harus terlihat. Cetak struknya, tanda tangani di tempat, lalu foto lembarnya.",
   OTHER: "Foto tambahan.",
+};
+
+/**
+ * Bukti yang WAJIB ada sebelum kartu boleh dinyatakan diterima — CERMIN gerbang di server
+ * (`ConsignmentService.acceptCustody`).
+ *
+ * ┌──── DUA SALINAN ATURAN, DAN ITU DISENGAJA — TAPI ADA SYARATNYA ───────────────────────────┐
+ * │ Gerbang SEBENARNYA ada di server; yang di sini cuma supaya operator tahu SEBELUM menekan  │
+ * │ tombol, bukan sesudah ditolak. Justru karena itu ia harus berbunyi SAMA PERSIS: daftar    │
+ * │ klien yang lebih longgar berarti tombol yang menyala lalu ditolak server (operator        │
+ * │ mengira aplikasinya rusak), dan daftar yang lebih ketat berarti tombol yang mati tanpa    │
+ * │ sebab yang bisa dijelaskan. Mengubah salah satu = mengubah keduanya, di perubahan yang    │
+ * │ sama.                                                                                     │
+ * └───────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * `certNumber` kosong = kartu mentah → CERT tidak diminta (tidak ada sertifikat untuk difoto).
+ */
+export const requiredPhotoKinds = (
+  certNumber: string | null | undefined,
+): ConsignmentPhotoKind[] =>
+  (certNumber ?? "").trim()
+    ? ["FRONT", "BACK", "CERT", "HANDOVER"]
+    : ["FRONT", "BACK", "HANDOVER"];
+
+/**
+ * Nama satu bukti yang KURANG, ditulis sebagai yang harus operator LAKUKAN.
+ *
+ * Bukan label slotnya ("Struk serah terima") melainkan pekerjaannya ("foto struk serah terima
+ * yang sudah ditandatangani"): kalimat ini muncul di baris "Belum bisa: …" tepat di bawah tombol
+ * yang mati, dan di detik itu yang dibutuhkan operator adalah perintah, bukan nama kolom.
+ */
+export const PHOTO_KIND_BLOCKER_LABEL: Record<ConsignmentPhotoKind, string> = {
+  FRONT: "foto depan kartu",
+  BACK: "foto belakang kartu",
+  CERT: "foto label sertifikat",
+  DAMAGE: "foto cacat",
+  HANDOVER: "foto struk serah terima yang sudah ditandatangani",
+  OTHER: "foto tambahan",
 };
 
 /**
@@ -180,7 +286,23 @@ export type ConsignmentEvent = {
   createdAt: string;
 };
 
-/** Judul manusiawi satu baris audit. Kind BARU merosot jadi teksnya sendiri, bukan crash. */
+/**
+ * Judul manusiawi satu baris audit. Kind BARU merosot jadi teksnya sendiri, bukan crash.
+ *
+ * ┌──── DAFTAR INI HARUS LENGKAP, BUKAN SEKADAR TIDAK CRASH ──────────────────────────────────┐
+ * │ Jalan merosotnya (`?? kind`) menjaga layar tetap hidup untuk kind yang BELUM ada saat file │
+ * │ ini ditulis. Ia BUKAN izin untuk membiarkan kind yang sudah ada tidak diterjemahkan:       │
+ * │ hasilnya adalah kata seperti "CLAIM_CODE_REDEEMED" di halaman PEMILIK KARTU — orang yang   │
+ * │ baru menyerahkan barang puluhan juta dan sedang membaca riwayatnya untuk menenangkan diri. │
+ * │                                                                                            │
+ * │ Tiga baris klaim di bawah justru yang paling penting diterjemahkan: merekalah satu-satunya │
+ * │ jawaban tertulis atas "dari mana kalian tahu ini orangnya".                                │
+ * │                                                                                            │
+ * │ Padanannya di server: semua `kind:` di `consignment.service.ts` + `kind: 'SOLD'` yang      │
+ * │ ditulis `payments.service.ts` saat settlement. Menambah kind di sana = menambah baris di   │
+ * │ sini, pada perubahan yang sama.                                                            │
+ * └────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
 export const eventTitle = (kind: string): string =>
   ({
     INTAKE: "Kesepakatan dicatat",
@@ -195,6 +317,19 @@ export const eventTitle = (kind: string): string =>
     CANCEL: "Kesepakatan dibatalkan",
     PHOTO: "Foto bukti ditambahkan",
     CORRECTION: "Koreksi catatan",
+    /* Koreksi LABEL (nama kartu, set, nomor, sertifikat, grade) — berbeda dari CORRECTION di
+       atas, dan bedanya penting: baris ini MENIMPA kolomnya (dan judul listing yang sedang
+       tayang), lalu menyimpan nilai sebelum-dan-sesudahnya di catatannya sendiri. Bukti
+       (`conditionNote`, foto) tetap tidak punya rute ubah. */
+    LABEL_CORRECTION: "Keterangan kartu diperbaiki",
+    /* ── SUMBU KLAIM: bagaimana kartu ini tersambung ke sebuah akun ────────────────────────
+       Ditulis dari sudut pandang PEMILIK, karena dialah yang membacanya di /titipan. */
+    CLAIM_CODE_ISSUED: "Kode klaim diterbitkan untuk pemilik",
+    CLAIM_CODE_REDEEMED: "Pemilik menukarkan kode klaimnya",
+    CONSIGNOR_LINKED: "Pemilik ditautkan oleh admin",
+    /* Belum pernah ditulis server: ganti rugi tercatat sebagai baris CORRECTION yang menyebut
+       nominalnya. Dibiarkan di sini supaya kalau server suatu saat memisahkannya, baris itu
+       sudah punya nama dan tidak pernah tampil sebagai token mentah. */
     COMPENSATION: "Ganti rugi dibayarkan",
   })[kind] ?? kind;
 
@@ -267,6 +402,389 @@ export function returnBlockedReason(status: string): string | null {
   return "Status titipan ini belum mendukung permintaan kembali.";
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   PENGEMBALIAN KARTU — KE MANA, SIAPA YANG BAYAR ONGKIRNYA, DAN APAKAH IA SAMPAI.
+
+   ┌──── DUA CARA, DAN KEDUANYA HARUS ADA ──────────────────────────────────────────────────────┐
+   │ DIAMBIL SENDIRI  tidak butuh alamat sama sekali — dan memaksanya mengisi alamat hanya       │
+   │                  melahirkan alamat karangan di baris yang paling tidak membutuhkannya.      │
+   │                  Yang dicatat: SIAPA yang datang mengambil.                                 │
+   │ DIKIRIM KURIR    butuh alamat LENGKAP, lalu nomor resi saat kartunya benar-benar berangkat. │
+   │                                                                                            │
+   │ Memaksa semuanya lewat kurir berarti menagih ongkir ke orang yang rumahnya lima menit dari  │
+   │ kantor; memaksa semuanya diambil sendiri berarti kolektor di Medan tidak pernah bisa        │
+   │ mendapatkan kartunya kembali.                                                               │
+   └────────────────────────────────────────────────────────────────────────────────────────────┘
+
+   ⚠️ ONGKIR BALIK DICATAT, TIDAK DITAGIHKAN. Tidak ada tagihan yang terbit, tidak ada saldo yang
+   dipotong, dan menarik kartu TETAP GRATIS bagi pemiliknya. Kolom penanggung ongkir ada supaya
+   ongkos yang ditanggung Hoshi berhenti jadi kebocoran yang tidak muncul di laporan mana pun —
+   BUKAN supaya seseorang ditagih. Tidak boleh ada satu kalimat pun di UI yang menyiratkan
+   sebaliknya kepada pemilik kartu.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+export type ConsignmentReturnMethod = "PICKUP" | "COURIER";
+export type ConsignmentReturnPayer = "OWNER" | "HOSHI";
+
+/** Alamat pengembalian — bentuk yang SAMA dengan alamat kirim domestik di backend. */
+export type ConsignmentReturnAddress = {
+  recipientName: string;
+  phoneNumber: string;
+  phoneCountryCode?: string;
+  street: string;
+  apt?: string;
+  city: string;
+  /** Provinsi. WAJIB: ia yang menentukan tier ongkir balik. */
+  state: string;
+  zip: string;
+  /** Default "Indonesia" di server kalau dikosongkan. */
+  country?: string;
+};
+
+/**
+ * Body `returnPlan` — bentuk yang SAMA untuk rute penarikan dan rute pelepasan custody.
+ *
+ * Satu bentuk untuk dua momen, dengan sengaja: alamat bisa dicatat saat pemiliknya menelepon,
+ * atau pada detik ia berdiri di depan operator. Dua bentuk yang mirip akan melahirkan dua aturan
+ * "alamat lengkap" yang suatu hari berbeda.
+ */
+export type ConsignmentReturnPlan = {
+  returnMethod: ConsignmentReturnMethod;
+  /** WAJIB kalau returnMethod = "COURIER". */
+  returnAddress?: ConsignmentReturnAddress;
+  returnShippingPayer?: ConsignmentReturnPayer;
+  /** Kosongkan untuk membiarkan server menaksir dari tarif wilayah yang sudah ada. */
+  returnShippingFeeIdr?: number;
+};
+
+/** Label manusiawi. Nilai ASING merosot jadi teksnya sendiri — daftar ini bisa bertambah di server. */
+export const returnMethodLabel = (m: string | null): string | null =>
+  m == null
+    ? null
+    : m === "PICKUP"
+      ? "Diambil sendiri di tempat Hoshi"
+      : m === "COURIER"
+        ? "Dikirim kurir"
+        : m;
+
+/**
+ * Siapa yang menanggung ongkir balik, dalam kalimat.
+ *
+ * Kalimatnya SENGAJA tidak pernah berbunyi "pemilik ditagih": tidak ada penagihan yang terjadi.
+ * Yang benar adalah "ditanggung", dan layar yang memakai kata lain akan membuat pemilik kartu
+ * mengira ada uang yang akan diambil darinya.
+ */
+export const returnPayerLabel = (p: string | null): string | null =>
+  p == null
+    ? null
+    : p === "HOSHI"
+      ? "Ditanggung Hoshi"
+      : p === "OWNER"
+        ? "Ditanggung pemilik kartu"
+        : p;
+
+/** Kolom alamat yang WAJIB — cermin `RETURN_ADDRESS_REQUIRED_FIELDS` di backend. */
+const RETURN_ADDRESS_REQUIRED: (keyof ConsignmentReturnAddress)[] = [
+  "recipientName",
+  "phoneNumber",
+  "street",
+  "city",
+  "state",
+  "zip",
+];
+
+/**
+ * Formulir alamatnya sudah cukup untuk dikirim?
+ *
+ * Ini HANYA untuk mengaktifkan tombol atas apa yang SEDANG DIKETIK — bukan untuk menilai baris
+ * yang sudah tersimpan. Untuk yang tersimpan, jawabannya datang dari server
+ * (`returnAddressComplete` / `returnPlanReady`): salinan aturan di klien yang menilai data
+ * tersimpan akan cepat atau lambat berbeda pendapat dengan gerbangnya.
+ */
+export const isReturnAddressFormComplete = (a: Partial<ConsignmentReturnAddress>): boolean =>
+  RETURN_ADDRESS_REQUIRED.every((k) => (a[k] ?? "").toString().trim().length > 0);
+
+/**
+ * Satu baris ringkas alamat pengembalian yang TERSIMPAN, untuk ditampilkan apa adanya.
+ * null = belum ada alamat (bukan "alamat kosong" — dua hal yang berbeda).
+ */
+export const returnAddressLine = (c: {
+  returnRecipientName: string | null;
+  returnPhoneNumber: string | null;
+  returnStreet: string | null;
+  returnApt: string | null;
+  returnCity: string | null;
+  returnState: string | null;
+  returnZip: string | null;
+}): string | null => {
+  if (!c.returnStreet && !c.returnCity) return null;
+  const parts = [
+    c.returnRecipientName,
+    c.returnPhoneNumber,
+    c.returnStreet,
+    c.returnApt,
+    c.returnCity,
+    c.returnState,
+    c.returnZip,
+  ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+  return parts.length > 0 ? parts.join(" · ") : null;
+};
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   KODE KLAIM — cara sebuah kartu tersambung ke akun pemiliknya, untuk orang yang BELUM PUNYA AKUN.
+
+   ┌──── KENAPA BUKAN EMAIL ────────────────────────────────────────────────────────────────────┐
+   │ `User.email` di backend `String?` — TIDAK unik dan TIDAK PERNAH diverifikasi; hanya        │
+   │ `walletAddress` yang `@unique`. Siapa pun bisa mengetik alamat email orang lain di          │
+   │ pengaturannya sendiri. Menyambungkan kartu senilai puluhan juta ke "siapa pun yang mengaku  │
+   │ memakai alamat itu" bukan sekadar longgar — itu menyerahkan barang orang ke orang lain.     │
+   │                                                                                            │
+   │ Yang dipakai justru barang yang MEMANG berpindah tangan di ruangan yang sama dengan         │
+   │ kartunya: selembar kode yang diberikan operator ke pemiliknya saat serah terima. Siapa yang │
+   │ memegang kode itu adalah orang yang ada di sana.                                            │
+   └────────────────────────────────────────────────────────────────────────────────────────────┘
+
+   DUA SUMBU YANG TIDAK BOLEH DICAMPUR, dan ini sumber salah paham yang paling mahal di layar
+   operator:
+
+     "kartunya ada di tangan Hoshi?"   → custody  (`isInHoshiCustody`, custodyAcceptedAt)
+     "sudah ada akun pemiliknya?"      → klaim    (`isAwaitingClaim`, consignorId/claimedAt)
+
+   Keduanya BERDIRI SENDIRI. Sebuah kartu bisa sudah ada di rak Hoshi (custody beres) dan TETAP
+   belum boleh dipajang karena belum ada akun yang akan menerima hasil penjualannya. Memakai satu
+   kata untuk keduanya akan membuat operator mengira kartu yang "sudah diterima" berarti "siap
+   dijual", padahal uangnya belum punya tujuan.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Status yang MENUTUP pertanyaan "masih menunggu pemiliknya tertaut?".
+ *
+ * CERMIN PERSIS `AWAITING_CLAIM_CLOSED_STATUSES` di `src/common/consignment.gate.ts`, yang juga
+ * menjadi SQL-nya (`awaitingConsignorWhere`). Daftar ini bukan "status terminal" — itu kata yang
+ * pernah dipakai di sini dan justru yang menyesatkan:
+ *
+ *   CANCELLED  tidak ada kartu yang pernah berpindah. Tidak ada apa pun untuk diklaim.
+ *   RELEASED   kartunya sudah PULANG ke tangan pemiliknya. Penautannya masih mungkin (server
+ *              sengaja tidak menutup penukaran kode di sini, supaya ia tetap bisa melihat riwayat
+ *              serah-terimanya sendiri), tapi ia bukan lagi sesuatu yang HOSHI UTANG — jadi ia
+ *              tidak duduk di antrean kerja operator.
+ *
+ * ⚠️ LOST SENGAJA TIDAK ADA DI SINI, dan jangan pernah disapu bersama RELEASED. Custody-nya
+ * memang selesai, tapi kartunya TIDAK pulang: Hoshi berutang ganti rugi, dan rute `compensate`
+ * menuntut pemilik yang tertaut (`requireLinkedConsignorId`) — uang tanpa akun tujuan tidak bisa
+ * dibayarkan sama sekali. Baris LOST tanpa pemilik justru yang PALING mendesak dikejar, dan
+ * menyembunyikannya dari layar operator berarti menghapus satu-satunya pengingat bahwa ada orang
+ * yang belum dibayar untuk kartunya yang hilang di rak kami.
+ */
+const AWAITING_CLAIM_CLOSED_STATUSES = ["CANCELLED", "RELEASED"];
+
+/** Bagaimana pemilik tertaut ke catatannya (`Consignment.consignorLinkMethod` di backend). */
+export type ConsignorLinkMethod = "AT_INTAKE" | "CLAIM_CODE" | "ADMIN_LINK";
+
+/**
+ * Kalimat manusiawi untuk cara penautan. Nilai ASING merosot jadi teksnya sendiri, bukan crash —
+ * daftar ini bisa bertambah di server.
+ *
+ * Ini bukan hiasan. Berbulan-bulan kemudian, "dari mana kalian tahu ini orangnya" adalah
+ * pertanyaan yang harus punya jawaban, dan jawabannya berbeda untuk tiap cara: yang satu berarti
+ * pemiliknya berdiri di sana saat kartunya diserahkan, yang satu berarti ia memegang kertas berisi
+ * kodenya, yang satu berarti seorang admin memeriksa identitasnya dan menuliskan alasannya.
+ */
+export const consignorLinkMethodLabel = (m: string | null): string | null =>
+  m == null
+    ? null
+    : ({
+        AT_INTAKE: "pemiliknya sudah punya akun saat serah terima",
+        CLAIM_CODE: "pemiliknya menukarkan kode klaim di tanda terimanya",
+        ADMIN_LINK: "ditautkan admin setelah memeriksa identitasnya",
+      })[m] ?? m;
+
+/** Bentuk minimum untuk menjawab "baris ini masih menunggu diklaim pemiliknya?". */
+export interface ConsignmentClaimFacts {
+  status: string;
+  consignorId: string | null;
+  /** Jawaban SERVER atas pertanyaan yang sama (`awaitingOwnerClaim`). Kalau ada, ia yang dipakai. */
+  awaitingOwnerClaim?: boolean;
+}
+
+/**
+ * true ⇔ kartu ini belum punya akun pemilik, dan masih menunggu diklaim.
+ *
+ * ┌──── SIAPA YANG BERWENANG, DAN KENAPA ITU PERLU DITULIS ───────────────────────────────────┐
+ * │ `awaitingOwnerClaim` DARI SERVER selalu menang, di SETIAP jalur baca: tiga rute titipan    │
+ * │ mengirimkannya (`custodyFlags` di `consignment.service.ts`), jadi cabang di bawah praktis  │
+ * │ hanya hidup untuk baris yang datang dari tempat lain atau dari server versi lama.          │
+ * │                                                                                            │
+ * │ Karena server yang menang, perbedaan sekecil apa pun antara dua sisi TIDAK akan terlihat   │
+ * │ sebagai perbedaan — ia terlihat sebagai layar yang salah. Dulu klien mengecualikan         │
+ * │ RELEASED/LOST/CANCELLED sementara server hanya mengecualikan CANCELLED, DAN komentar di    │
+ * │ sini mengklaim keduanya predikat yang sama. Klaim itulah yang membuat selisihnya tidak     │
+ * │ pernah dicari: kartu yang sudah dikembalikan ke tangan pemiliknya tetap membawa lencana    │
+ * │ ungu "Belum diklaim" dan tombol "Kirim kode lagi" selamanya, menyuruh operator mengejar    │
+ * │ orang untuk kartu yang sudah ada di tangannya sendiri.                                     │
+ * │                                                                                            │
+ * │ Yang berlaku sekarang, di KEDUA sisi: tertaut → tidak menunggu; kalau belum tertaut, yang  │
+ * │ menutupnya hanya CANCELLED dan RELEASED — LOST tetap menunggu, karena di sanalah Hoshi     │
+ * │ justru berutang. Cabang di bawah adalah KEMBARAN `isAwaitingConsignorClaim`, ditulis dalam │
+ * │ urutan yang sama, dan ia BUKAN pendapat kedua: kalau sisi sana berubah, baris ini ikut     │
+ * │ berubah pada perubahan yang SAMA — bukan "nanti kalau ketahuan".                           │
+ * └────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * Cabang klien membaca `consignorId` SAJA, sama seperti `isConsignorLinked`. Server juga menyimpan
+ * `consignorLinkedAt`/`consignorLinkMethod`, tapi yang menjadi GERBANG di sana hanyalah kolom
+ * id-nya; klien yang menambahkan syarat sendiri akan menampilkan keadaan yang tidak bisa dicapai
+ * baris mana pun, dan operator akan menunggu sesuatu yang tidak akan datang.
+ *
+ * {@link AWAITING_CLAIM_CLOSED_STATUSES} dikecualikan — baca di sana kenapa LOST TIDAK termasuk.
+ *
+ * Arah gagalnya SENGAJA berbeda dari `isInHoshiCustody`. Di sana bahayanya mengaku memegang kartu
+ * yang tidak kita pegang, jadi ia fail-closed. Di sini bahayanya kebalikannya: baris tanpa pemilik
+ * yang TIDAK terlihat di layar operator tidak akan pernah dikejar siapa pun — kartu orang
+ * tergeletak di rak, tidak bisa dipajang, dan tidak ada yang tahu kenapa.
+ */
+export function isAwaitingClaim(c: ConsignmentClaimFacts): boolean {
+  if (typeof c.awaitingOwnerClaim === "boolean") return c.awaitingOwnerClaim;
+  if (c.consignorId != null) return false;
+  return !AWAITING_CLAIM_CLOSED_STATUSES.includes(c.status);
+}
+
+/**
+ * true ⇔ kartu ini boleh dipajang SEKARANG — KEDUA pertanyaan terjawab ya.
+ *
+ * Server mengirimkannya sebagai `listable`, dan itulah yang dipakai. Cabang klien mengulang
+ * definisi yang sama: ada di rak KITA, DAN kita tahu siapa yang dibayar kalau ia terjual, DAN
+ * statusnya masih IN_CUSTODY.
+ *
+ * ⚠️ `inCustody && !ownerLinked` adalah kombinasi yang DULU MUSTAHIL dan sekarang normal. Layar
+ * yang menawarkan tombol "Pajang" berdasarkan custody saja akan menawarkan aksi yang pasti
+ * ditolak server — dengan pesan tentang pemilik, di layar yang barusan bilang kartunya sudah
+ * diterima.
+ */
+export function isListable(
+  c: ConsignmentCustodyFacts & ConsignmentClaimFacts & { listable?: boolean },
+): boolean {
+  if (typeof c.listable === "boolean") return c.listable;
+  return isInHoshiCustody(c) && !isAwaitingClaim(c) && c.status === "IN_CUSTODY";
+}
+
+/**
+ * Kalimat untuk OPERATOR tentang sumbu klaim — sengaja tidak memakai kata "diterima"/"di Hoshi"
+ * sama sekali, supaya ia tidak pernah terbaca sebagai kalimat tentang custody.
+ */
+export function claimStatusLine(c: ConsignmentClaimFacts): string | null {
+  if (!isAwaitingClaim(c)) return null;
+  return "Belum ada akun yang mengklaim kartu ini. Pemiliknya perlu menukarkan kode klaimnya dulu — sampai itu terjadi, hasil penjualannya tidak punya tujuan, jadi kartu ini belum bisa dipajang.";
+}
+
+/* ─────────────────────────── bentuk kode klaim ──────────────────────────── */
+
+/**
+ * Alfabet Crockford Base32 — CERMIN PERSIS `src/common/consignment-claim-code.ts` di backend.
+ *
+ * 32 simbol TANPA `I`, `L`, `O`, `U`. I/L/O dibuang karena tertukar dengan 1/1/0 pada tulisan
+ * tangan — dan kode ini memang ditulis tangan di tanda terima lalu diketik ulang di ponsel. U
+ * dibuang mengikuti Crockford, supaya kode acak tidak pernah tidak sengaja mengeja kata yang tidak
+ * pantas di tanda terima bertanda tangan milik orang lain.
+ */
+const CLAIM_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** 10 simbol × 5 bit = 50 bit entropi. Angka milik server; berkas ini hanya mencerminkannya. */
+export const CLAIM_CODE_LENGTH = 10;
+
+/** Umur kode sejak diterbitkan. Dipakai untuk menyusun kalimat, bukan sebagai gerbang. */
+export const CLAIM_CODE_TTL_DAYS = 30;
+
+/** Ukuran kelompok tampilan: `4T9KM-2X7PQ`. Tanda hubungnya KOSMETIK — server membuangnya. */
+const CLAIM_CODE_GROUP = 5;
+
+/** Satu simbol hasil pemetaan Crockford (O→0, I/L→1), atau null kalau ia bukan simbol kode. */
+function claimCodeSymbol(ch: string): string | null {
+  const mapped = ch === "O" ? "0" : ch === "I" || ch === "L" ? "1" : ch;
+  return CLAIM_CODE_ALPHABET.includes(mapped) ? mapped : null;
+}
+
+/**
+ * Bentuk SAMBIL DIKETIK: buang apa pun yang bukan simbol kode, petakan O→0 dan I/L→1, berhenti di
+ * panjang kode.
+ *
+ * SENGAJA MEMBUANG (bukan menolak) karakter asing — di situlah bedanya dengan `normalizeClaimCode`
+ * di bawah. Orang yang menempelkan "Kode klaim kamu: 4T9KM-2X7PQ" dari WhatsApp harus melihat
+ * kodenya rapi di kolom, bukan kolom yang menolak seluruh tempelan. Yang memutuskan sah atau tidak
+ * tetap bentuk kanoniknya — dan pada akhirnya server.
+ */
+export const claimCodeInput = (raw: string): string => {
+  let out = "";
+  for (const ch of (raw ?? "").toUpperCase()) {
+    const sym = claimCodeSymbol(ch);
+    if (sym == null) continue;
+    out += sym;
+    if (out.length === CLAIM_CODE_LENGTH) break;
+  }
+  return out;
+};
+
+/**
+ * Bentuk KANONIK, atau null kalau ia tidak mungkin menjadi kode klaim.
+ *
+ * CERMIN PERSIS `normalizeClaimCode` di backend, TERMASUK sifat menolaknya: karakter di luar
+ * alfabet dan panjang yang tidak tepat menghasilkan null. Gunanya di sini cuma satu — tombol
+ * "Klaim" baru menyala untuk sesuatu yang memang bisa ditukarkan.
+ *
+ * ⚠️ `null` BUKAN pesan untuk pengguna. Server menjawab bentuk yang salah dengan penolakan yang
+ * SAMA PERSIS dengan "kode tidak ditemukan"; memisahkan keduanya di layar akan mengembalikan
+ * oracle yang susah payah ditutup di sana.
+ */
+export const normalizeClaimCode = (raw: string): string | null => {
+  let out = "";
+  for (const ch of (raw ?? "").toUpperCase()) {
+    if (ch === "-" || ch === " " || ch === "_") continue;
+    const sym = claimCodeSymbol(ch);
+    if (sym == null) return null;
+    out += sym;
+    if (out.length > CLAIM_CODE_LENGTH) return null;
+  }
+  return out.length === CLAIM_CODE_LENGTH ? out : null;
+};
+
+/**
+ * Tampilan untuk dibaca/disalin manusia: `4T9KM-2X7PQ`.
+ *
+ * Menerima BENTUK APA PUN — kode dari server (yang sudah berformat), atau isi kolom yang baru
+ * setengah diketik — jadi ia aman dipakai sekaligus sebagai nilai kolom input.
+ */
+export const formatClaimCode = (raw: string): string => {
+  const clean = claimCodeInput(raw);
+  const groups: string[] = [];
+  for (let i = 0; i < clean.length; i += CLAIM_CODE_GROUP) {
+    groups.push(clean.slice(i, i + CLAIM_CODE_GROUP));
+  }
+  return groups.join("-");
+};
+
+/** Sudah berbentuk kode utuh? Kalau belum, tombol klaimnya memang belum pantas menyala. */
+export const isCompleteClaimCode = (raw: string): boolean => normalizeClaimCode(raw) != null;
+
+/**
+ * Cadangan kalimat penolakan — dipakai HANYA kalau server tidak mengirimkan kalimatnya sendiri.
+ *
+ * Rute penukaran di backend sudah memakai SATU pesan untuk SEMUA sebab (bentuk salah, tidak
+ * ditemukan, kedaluwarsa, sudah dipakai, titipan dibatalkan), dan pesan itulah yang ditampilkan
+ * apa adanya — memecahnya di klien akan mengembalikan oracle yang ditutup di sana. Konstanta ini
+ * ada supaya kegagalan yang tidak membawa pesan (proxy, body bukan JSON) tidak berubah menjadi
+ * "HTTP 404" di depan orang yang baru menyerahkan kartunya.
+ *
+ * ⚠️ Kalimat ini (dan kalimat penolakan dari server, yang berbunyi serupa) menyuruh orang
+ * menghubungi tim Hoshi. Layar yang menampilkannya WAJIB menyertakan tautannya
+ * (`claimCodeSupportDraft` + `supportComposeHref`) — lihat `app/titipan/klaim/page.tsx`. Justru
+ * KARENA layar itu tidak boleh menjelaskan sebab penolakan, pintu ke manusia adalah satu-satunya
+ * jalan keluar yang tersisa; "hubungi tim Hoshi" tanpa tautan berarti tidak ada jalan keluar.
+ */
+export const CLAIM_CODE_REJECTED =
+  "Kode klaim ini tidak berlaku. Periksa lagi kode pada tanda terima kamu — huruf besar-kecil dan " +
+  "tanda hubung tidak berpengaruh. Kode hanya bisa dipakai sekali dan berlaku " +
+  `${CLAIM_CODE_TTL_DAYS} hari sejak diterbitkan; kalau sudah lewat atau kertasnya hilang, ` +
+  "hubungi tim Hoshi yang menerima kartumu untuk penerbitan ulang.";
+
 /* ─────────────────────────── komisi & hasil jual ────────────────────────── */
 
 export const BPS_DENOMINATOR = 10_000;
@@ -284,6 +802,59 @@ export const commissionPct = (bps: number): number =>
 /** Perkiraan hasil bersih pemilik dari sebuah harga pajang (SEBELUM potongan lain apa pun). */
 export const estimatedPayout = (priceIdr: number, bps: number): number =>
   Math.max(0, priceIdr - Math.floor((priceIdr * Math.min(Math.max(bps, 0), BPS_DENOMINATOR)) / BPS_DENOMINATOR));
+
+/* ─────────────────────────── harga terendah yang disepakati ─────────────────────────── */
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════════════════════╗
+ * ║ `reservePriceIdr` ADALAH JANJI YANG DIUCAPKAN DI DEPAN PEMILIK KARTU.                     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════════════════╝
+ *
+ * Operator duduk di ruang tamu orang dan berkata "kami tidak akan melepas di bawah Rp 20 juta",
+ * lalu mengetik angka itu. Selama angka itu tidak muncul lagi di layar mana pun, ia tidak
+ * mengikat apa pun: berminggu-minggu kemudian orang yang sama (atau orang lain) bisa menurunkan
+ * harga ke Rp 15 juta tanpa satu pun layar menyebut bahwa ada janji yang sedang dilanggar.
+ *
+ * Ini SENGAJA bukan gerbang. Menurunkan di bawah lantai kadang MEMANG yang disepakati ulang lewat
+ * telepon, dan memblokirnya hanya akan melahirkan jalan memutar yang tidak tercatat. Yang
+ * dibutuhkan adalah angkanya TERLIHAT pada detik keputusan dibuat, supaya menurunkannya menjadi
+ * tindakan sadar yang alasannya tertulis — dan alasan itu memang sudah wajib di rute harga.
+ *
+ * Padanannya di server: `belowReserveWarning()` di `consignment.service.ts`, yang dipakai rute
+ * pajang DAN rute ubah harga, mengembalikan kalimatnya di `belowReserveWarning` pada respons, dan
+ * menuliskan kalimat yang sama ke baris audit. Ambangnya PERSIS SAMA — `harga < reserve`, tanpa
+ * toleransi: kalau tidak, operator melihat layar yang tenang lalu menerima peringatan dari server
+ * — atau, jauh lebih buruk, sebaliknya.
+ *
+ * SATU-SATUNYA tambahan di sisi ini adalah `priceIdr > 0`, dan itu bukan ambang yang berbeda:
+ * kolom harga yang masih KOSONG terbaca sebagai 0, dan 0 di sini berarti "belum ada angka", bukan
+ * "harga nol rupiah". Server tidak pernah menemui keadaan itu (DTO-nya menolak harga ≤ 0), jadi
+ * tidak ada satu pun harga yang benar-benar bisa dikirim yang dijawab berbeda oleh kedua sisi.
+ *
+ * PEMBAGIAN TUGASNYA: fungsi di sini menjawab tentang harga yang SEDANG DIKETIK dan belum
+ * tersimpan (server belum tahu apa-apa soal itu). Untuk harga yang SUDAH berlaku, jawabannya
+ * sudah ada di baris — bendera `belowReserve` dari server — dan itu yang dipakai.
+ */
+export const isBelowReserve = (
+  priceIdr: number,
+  reservePriceIdr: number | null | undefined,
+): boolean =>
+  reservePriceIdr != null &&
+  reservePriceIdr > 0 &&
+  Number.isFinite(priceIdr) &&
+  priceIdr > 0 &&
+  priceIdr < reservePriceIdr;
+
+/** Kalimat peringatan untuk OPERATOR, atau null kalau harganya masih di atas lantai. */
+export const reserveWarning = (
+  priceIdr: number,
+  reservePriceIdr: number | null | undefined,
+): string | null =>
+  isBelowReserve(priceIdr, reservePriceIdr)
+    ? `Harga ini DI BAWAH harga terendah yang disepakati dengan pemilik kartu (Rp ${Number(
+        reservePriceIdr,
+      ).toLocaleString("id-ID")}). Bicarakan dulu dengan dia, lalu tulis kesepakatannya di kolom alasan — alasan itu tersimpan permanen.`
+    : null;
 
 /* ─────────────────────── verifikasi sertifikat (grader) ─────────────────── */
 
@@ -330,7 +901,19 @@ export type ConsignmentBase = {
   status: ConsignmentStatus | string;
 
   /* pemilik — SNAPSHOT hari serah terima (bukan profil yang bisa berubah) */
-  consignorId: string;
+  /**
+   * Akun Hoshi yang memiliki kartu ini — dan ia BOLEH null.
+   *
+   * null berarti kartunya sudah tercatat (mungkin malah sudah ada di rak Hoshi) tapi BELUM ADA
+   * akun yang terhubung ke sana: pemiliknya belum punya akun saat kartunya diserahkan. Baris
+   * seperti itu tidak bisa dipajang, karena hasil penjualannya tidak punya tujuan.
+   *
+   * Yang menyambungkannya kemudian adalah KODE KLAIM yang dipegang pemiliknya — bukan email.
+   * `User.email` di backend tidak unik dan tidak pernah diverifikasi (hanya `walletAddress` yang
+   * `@unique`), jadi mencocokkan kartu senilai puluhan juta ke "siapa pun yang mengaku memakai
+   * alamat email itu" adalah cara paling mudah menyerahkan barang orang ke orang lain.
+   */
+  consignorId: string | null;
   consignorNameAtIntake: string;
   consignorPhoneAtIntake: string;
   consignorIdKind: string | null;
@@ -375,6 +958,58 @@ export type ConsignmentBase = {
   storageLocation: string | null;
   withdrawRequestedAt: string | null;
 
+  /* ── PENGEMBALIAN KARTU KE PEMILIKNYA: KE MANA, SIAPA YANG BAYAR, APAKAH SAMPAI ────────────
+     Sebelum kolom-kolom ini ada, satu-satunya hal yang diketahui sistem tentang kartu yang
+     "ditarik" adalah bahwa ia ditarik. Ke mana ia dikirim, siapa yang menanggung ongkirnya, dan
+     apakah ia benar-benar sampai tidak tercatat di mana pun — jadi sebuah baris bisa berbunyi
+     selesai sementara kartunya masih di rak.
+
+     "DITARIK" DAN "SUDAH PULANG" ADALAH DUA FAKTA YANG BERBEDA. `withdrawRequestedAt` adalah
+     permintaannya; `custodyReleasedAt` adalah perpindahan fisiknya. Layar TIDAK BOLEH menurunkan
+     yang kedua dari yang pertama: selama kartunya masih di rak, ia masih tanggung jawab Hoshi. */
+
+  /** "PICKUP" (diambil sendiri) | "COURIER" (dikirim kurir). null = belum ditentukan. */
+  returnMethod: string | null;
+
+  /* Alamat tujuan — SNAPSHOT, bentuknya SAMA dengan alamat kirim domestik (`CardRedemption`). */
+  returnRecipientName: string | null;
+  returnPhoneCountryCode: string | null;
+  returnPhoneNumber: string | null;
+  returnStreet: string | null;
+  returnApt: string | null;
+  returnCity: string | null;
+  /** Provinsi. Ikut menentukan tier ongkir balik. */
+  returnState: string | null;
+  returnZip: string | null;
+  returnCountry: string | null;
+
+  /* Resi — bukti yang bisa diperiksa PEMILIK KARTU sendiri, bukan "kata Hoshi". */
+  returnCourier: string | null;
+  returnTrackingNo: string | null;
+
+  /** Siapa yang mengambil kartunya di tempat (metode PICKUP). "Kapan"-nya `custodyReleasedAt`. */
+  returnPickedUpBy: string | null;
+
+  /**
+   * "OWNER" | "HOSHI". ⚠️ DICATAT SAJA — penagihannya BELUM otomatis, dan tidak ada satu Rupiah
+   * pun yang bergerak dari sini. Menarik kartu tetap GRATIS bagi pemiliknya; UI TIDAK BOLEH
+   * menulis kalimat yang berbunyi seolah pemilik akan ditagih.
+   */
+  returnShippingPayer: string | null;
+  /** Nominal ongkir balik (Rupiah utuh). 0 = digratiskan/diambil sendiri; null = belum dicatat. */
+  returnShippingFeeIdr: number | null;
+
+  /* penautan pemilik — SUMBU KEDUA, terpisah dari custody (lihat §KODE KLAIM di atas) */
+  /** Kapan pemiliknya tertaut. null = belum pernah. Fakta append-only, seperti stempel custody. */
+  consignorLinkedAt: string | null;
+  /** Lewat mana ia tertaut: saat serah-terima, lewat kode klaim, atau ditautkan admin. */
+  consignorLinkMethod: ConsignorLinkMethod | string | null;
+
+  /* kode klaim — HASH-nya yang disimpan server; TEKS kodenya tidak pernah ada di baris ini */
+  claimCodeIssuedAt: string | null;
+  /** Kapan kode yang berlaku sekarang kedaluwarsa. null = tidak ada kode hidup. */
+  claimCodeExpiresAt: string | null;
+
   /* hasil */
   soldOrderId: string | null;
   payoutIdrx: number | null;
@@ -383,8 +1018,42 @@ export type ConsignmentBase = {
   createdAt: string;
   updatedAt: string;
 
-  /** Jawaban server atas gerbang custody. Dipakai lebih dulu oleh `isInHoshiCustody`. */
+  /* ── TIGA JAWABAN TERPISAH DARI SERVER (`custodyFlags`), dan memang harus terpisah ──────────
+     inCustody          kartunya ADA di rak Hoshi.
+     ownerLinked        kita TAHU siapa yang dibayar kalau ia terjual.
+     awaitingOwnerClaim kartunya tercatat, tapi pemiliknya belum menukarkan kode klaimnya.
+     listable           boleh dipajang SEKARANG — hanya kalau dua yang pertama sama-sama ya.
+
+     `inCustody && !ownerLinked` dulu mustahil dan sekarang normal. Menurunkan salah satunya dari
+     yang lain di klien akan menghidupkan kembali persis anggapan itu. */
   inCustody?: boolean;
+  ownerLinked?: boolean;
+  awaitingOwnerClaim?: boolean;
+  listable?: boolean;
+
+  /* ── PENGEMBALIAN, DIJAWAB SERVER (`custodyFlags`) ──────────────────────────────────────────
+     returnAddressComplete  alamat pengembaliannya lengkap menurut SATU-SATUNYA definisi yang ada
+                            (`isReturnAddressComplete` di backend). Relevan untuk COURIER.
+     returnPlanReady        kita tahu CUKUP untuk berani melepas custody.
+     returnPending          sudah diminta kembali, TAPI kartunya MASIH di rak kita.
+
+     KENAPA TIDAK DIHITUNG DI SINI. Aturannya sudah hidup di dua tempat yang tidak bisa dilanggar
+     (predikat klaim + CHECK database). Salinan ketiga di klien berarti salah satunya akan
+     diam-diam salah, lalu menawarkan tombol "Catat kartu keluar" yang pasti ditolak — sementara
+     pemilik kartunya berdiri menunggu di depan meja. */
+  returnAddressComplete?: boolean;
+  returnPlanReady?: boolean;
+  returnPending?: boolean;
+
+  /* ── LANTAI HARGA, dijawab server (lihat `custodyFlags`) ────────────────────────────────────
+     effectivePriceIdr  harga yang BENAR-BENAR berlaku: harga listing kalau ia masih tayang,
+                        kalau tidak harga kesepakatan. Itu angka yang dilihat pembeli.
+     belowReserve       harga yang berlaku SEKARANG ada di bawah `reservePriceIdr`.
+
+     Keduanya tentang harga yang SUDAH berlaku. Untuk harga yang sedang DIKETIK operator (belum
+     tersimpan) server belum punya pendapat — itu tugas `reserveWarning` di berkas ini. */
+  effectivePriceIdr?: number;
+  belowReserve?: boolean;
 };
 
 /** Listing yang menempel pada satu titipan (relasi 1-1 lewat `Listing.consignmentId`). */
@@ -427,8 +1096,74 @@ export const getMyConsignments = (token: string) =>
  * (pemilik dibayar). Tidak pernah keduanya — dan pesan penolakannya sudah berbunyi persis itu,
  * jadi tampilkan apa adanya; jangan diterjemahkan ulang di UI.
  */
-export const requestConsignmentReturn = (id: string, token: string, note?: string) =>
+export const requestConsignmentReturn = (
+  id: string,
+  token: string,
+  note?: string,
+  returnPlan?: ConsignmentReturnPlan,
+) =>
   req<MyConsignment>(`/consignments/${id}/withdraw`, token, {
     method: "POST",
-    body: JSON.stringify(note ? { note } : {}),
+    body: JSON.stringify({
+      ...(note ? { note } : {}),
+      ...(returnPlan ? { returnPlan } : {}),
+    }),
   });
+
+/**
+ * ══ TUKARKAN KODE KLAIM ══  `POST /consignments/claim`  ·  body `{ code }`
+ *
+ * Dipanggil oleh orang yang SEDANG LOGIN, jadi yang tertaut ke kartu itu adalah akun yang
+ * wallet-nya sudah menandatangani SIWS — bukan alamat email yang diketik sendiri. Itulah seluruh
+ * isi keamanannya: kode yang berpindah tangan bersama kartunya, ditambah akun yang terbukti
+ * menandatangani.
+ *
+ * Jawabannya SATU baris titipan (server menjawab `byId` dari baris yang baru tertaut): satu kode
+ * membuka tepat satu kartu, karena `claimCodeHash` `@unique` di sana.
+ *
+ * ── PESAN PENOLAKAN DIPAKAI APA ADANYA, dan itu keputusan yang perlu dijelaskan ───────────────
+ * Rute ini di backend sudah menjawab SEMUA sebab dengan objek yang SAMA PERSIS — bentuk salah,
+ * tidak ditemukan, kedaluwarsa, sudah dipakai, titipan dibatalkan — justru supaya ia tidak bisa
+ * dipakai menebak kode orang. Jadi kalimatnya aman ditampilkan, dan ia LEBIH BERGUNA daripada
+ * kalimat karangan klien: ia menyebut masa berlaku dan menyebut penerbitan ulang sebagai jalan
+ * keluarnya. Yang TIDAK boleh terjadi adalah klien memecahnya lagi berdasarkan status HTTP —
+ * itu mengembalikan oracle yang ditutup di sana.
+ *
+ * Kegagalan yang TIDAK membawa kalimat (proxy, body bukan JSON) merosot ke `CLAIM_CODE_REJECTED`
+ * untuk 4xx, dan ke pesan apa adanya untuk 5xx — "server sedang bermasalah" memang bukan jawaban
+ * tentang kodenya, dan menyamarkannya hanya akan membuat orang mengetik ulang kode yang benar.
+ */
+export async function redeemClaimCode(code: string, token: string): Promise<MyConsignment> {
+  // Dinormalkan di klien juga, memakai aturan yang SAMA PERSIS dengan server (Crockford, O→0,
+  // I/L→1). Bukan untuk menggantikan normalisasi server — ia tetap menormalkan lagi — melainkan
+  // supaya yang melintasi jaringan adalah bentuk kanoniknya, bukan tempelan WhatsApp lengkap
+  // dengan spasi dan tanda kutipnya.
+  const normalized = normalizeClaimCode(code);
+  const res = await fetch(`${API_BASE}/consignments/claim`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    // Bentuk yang tidak mungkin TETAP DIKIRIM (apa adanya) alih-alih ditolak di sini: penolakan
+    // lokal dan penolakan server harus terlihat sama persis bagi pengguna, dan satu-satunya cara
+    // menjamin itu adalah membiarkan server yang menjawabnya.
+    body: JSON.stringify({ code: normalized ?? code }),
+  });
+
+  if (!res.ok) {
+    let msg: string | null = null;
+    try {
+      const b = (await res.json()) as { message?: string | string[] };
+      if (b?.message) msg = Array.isArray(b.message) ? b.message.join(", ") : String(b.message);
+    } catch {
+      /* body bukan JSON */
+    }
+    if (msg) throw new Error(msg);
+    throw new Error(
+      res.status >= 400 && res.status < 500 ? CLAIM_CODE_REJECTED : `HTTP ${res.status}`,
+    );
+  }
+
+  return (await res.json()) as MyConsignment;
+}

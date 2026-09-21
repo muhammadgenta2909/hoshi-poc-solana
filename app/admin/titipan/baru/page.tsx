@@ -52,6 +52,10 @@ import {
 } from "@/lib/admin-api";
 import { commissionPct } from "@/lib/consignment";
 import ClaimCodeHandover from "@/components/admin/ClaimCodeHandover";
+import HandoverReceiptButton, {
+  receiptDataFrom,
+  type HandoverReceiptData,
+} from "@/components/admin/HandoverReceipt";
 import ConsignorPicker, { PickedConsignor } from "@/components/admin/ConsignorPicker";
 
 const INPUT =
@@ -280,6 +284,12 @@ export default function AdminTitipanBaruPage() {
    * disimpan di state halaman — bukan dilempar lewat URL — karena ia rahasia sekali-pakai: kode di
    * query string tertinggal di riwayat browser ponsel operator, dan ponsel operator bukan tempat
    * menyimpan kunci ke kartu orang.
+   *
+   * `receipt` adalah isi STRUK SERAH TERIMA, dan ia diambil dari BARIS YANG SERVER KEMBALIKAN —
+   * bukan dari state formulir yang masih tergeletak di layar ini. Bedanya penting: yang dicetak
+   * di kertas dan ditandatangani dua pihak harus persis apa yang TERSIMPAN, bukan apa yang
+   * terakhir diketik. Kalau server menormalkan atau menolak sebagian isian, kertasnya ikut
+   * berbunyi sesuai yang tersimpan.
    */
   const [saved, setSaved] = useState<{
     id: string;
@@ -288,6 +298,7 @@ export default function AdminTitipanBaruPage() {
     ownerPhone: string;
     place: string;
     claim: { code: string; expiresAt: string | null } | null;
+    receipt: HandoverReceiptData;
   } | null>(null);
 
   /* ── Draf: pulihkan sekali saat halaman dibuka, lalu simpan setiap kali isinya berubah ────── */
@@ -541,6 +552,12 @@ export default function AdminTitipanBaruPage() {
         claim: created.claimCode
           ? { code: created.claimCode, expiresAt: created.claimCodeExpiresAt ?? null }
           : null,
+        // Kartunya belum diterima pada titik ini (`custodyAcceptedAt` masih null), jadi tanggal
+        // di struknya jatuh ke HARI INI — yang memang hari kertas ini ditandatangani.
+        //
+        // Kode klaim IKUT TERCETAK kalau ada, dan di sinilah satu-satunya kesempatan itu: server
+        // hanya menyimpan sidiknya, jadi tidak ada layar mana pun yang bisa membacanya lagi nanti.
+        receipt: receiptDataFrom(created, created.claimCode),
       });
       setBusy(false);
     } catch (e) {
@@ -606,10 +623,41 @@ export default function AdminTitipanBaruPage() {
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
             “{saved.cardName}” sudah tercatat atas nama {saved.ownerName}.
             {saved.claim
-              ? " Tinggal satu langkah yang harus selesai sebelum kalian berpisah."
-              : " Berikutnya: foto kartunya, lalu nyatakan diterima."}
+              ? " Tinggal dua hal yang harus selesai sebelum kalian berpisah."
+              : " Berikutnya: cetak struknya, tanda tangani, lalu foto kartunya."}
           </p>
         </header>
+
+        {/* ── STRUK SERAH TERIMA: PALING ATAS, SEBELUM APA PUN ────────────────────────────────
+            Ini satu-satunya barang di seluruh alur yang HARUS berpindah tangan sebagai KERTAS,
+            dan satu-satunya bukti yang isinya tidak bisa Hoshi ubah sendiri nanti — karena satu
+            lembarnya disimpan orang lain. Kodenya ikut tercetak kalau ada.
+
+            Ditaruh di atas panel kode klaim dengan sengaja: urutannya di lapangan adalah cetak →
+            tanda tangan → baru kartunya diterima, dan layar yang menaruhnya di bawah membuat
+            operator menekan "Lanjut" sebelum sempat membacanya. */}
+        <div className="rounded-2xl border border-yellow-400/30 bg-yellow-400/[0.07] p-4 sm:p-5">
+          <h2 className="text-[15px] font-semibold text-yellow-100">
+            Cetak struknya sekarang, selagi kalian masih bertemu
+          </h2>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-yellow-100/80">
+            Dua lembar identik: satu dibawa pulang {saved.ownerName}, satu disimpan Hoshi. Keduanya
+            ditandatangani kedua pihak. Kartu ini <strong>belum bisa dinyatakan diterima</strong>{" "}
+            sampai lembar yang sudah ditandatangani difoto — itu bukti bahwa kesepakatannya memang
+            ada, yang tidak bisa dibuktikan oleh foto kartu sebagus apa pun.
+          </p>
+          <div className="mt-4">
+            <HandoverReceiptButton
+              data={saved.receipt}
+              tone="utama"
+              hint={
+                saved.claim
+                  ? "Kode klaim ikut tercetak di kedua lembar. Ini satu-satunya kesempatan kode itu masuk ke kertas — setelah layar ini ditutup, tidak ada yang bisa membacanya lagi."
+                  : "Pemiliknya sudah punya akun Hoshi, jadi tidak ada kode klaim yang perlu dicetak."
+              }
+            />
+          </div>
+        </div>
 
         {saved.claim ? (
           /* Kedua jalan keluar berada DI DALAM gerbang "sudah saya berikan" milik komponen ini —
@@ -631,7 +679,8 @@ export default function AdminTitipanBaruPage() {
           <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.07] p-4 sm:p-5">
             <p className="text-[13.5px] leading-relaxed text-emerald-100/85">
               Kartunya belum dinyatakan diterima — baris ini masih “Belum diterima”. Serah terima
-              dicatat di halaman titipannya, setelah kartunya difoto.
+              dicatat di halaman titipannya, setelah kartunya difoto dan struk yang sudah
+              ditandatangani ikut difoto.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button
