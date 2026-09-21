@@ -176,7 +176,28 @@ export type AdminFinance = {
   reseller: { count: number; grossIdr: number };
   /** Hoshi jual kartu inventarisnya SENDIRI (source HOSHI). Seluruh omzet = pendapatan Hoshi. */
   hoshiInventory: { count: number; grossIdr: number };
+  /**
+   * P2P = listing milik USER yang kartunya TIDAK dititipkan ke Hoshi.
+   *
+   * Sejak ember `consignment` di bawah ada, backend MENGELUARKAN penjualan titipan dari angka ini
+   * (`nonConsignedListingWhere()`). Kartu titipan juga ber-`sellerId`, jadi sebelum itu ia terhitung
+   * dua kali. Konsekuensinya: menghapus tile "Titipan" dari layar TIDAK mengembalikan angkanya ke
+   * P2P — ia cuma hilang, dan komisi 5% Hoshi terbaca nol.
+   */
   p2p: { count: number; grossIdr: number };
+  /**
+   * TITIPAN — kartu milik ORANG LAIN yang fisiknya ada di rak Hoshi.
+   *
+   * Yang menjadi PENDAPATAN Hoshi di sini hanya `commissionIdr`. `payoutIdr` sudah menjadi saldo
+   * pemilik kartu, jadi ia sudah ikut terhitung di `liabilitiesIdr` — jangan dijumlahkan lagi
+   * sebagai pemasukan. `grossIdr` = keduanya, yaitu yang dibayar pembeli di luar fee QRIS.
+   */
+  consignment: {
+    count: number;
+    grossIdr: number;
+    commissionIdr: number;
+    payoutIdr: number;
+  };
   liabilitiesIdr: number;
   pendingWithdrawalsIdr: number;
   pendingWithdrawalsCount: number;
@@ -1039,6 +1060,18 @@ export type AdminConsignment = ConsignmentBase & {
   listing?: ConsignmentListingRef | null;
 };
 
+/**
+ * Jawaban dua rute yang MENETAPKAN HARGA (pajang & ubah harga).
+ *
+ * `belowReserveWarning` adalah kalimat SERVER, berisi kedua angkanya, dan kalimat yang PERSIS SAMA
+ * sudah ditulis ke baris audit titipan ini. Perubahannya TETAP dilakukan — ini peringatan, bukan
+ * penolakan — jadi layar wajib menampilkannya SESUDAH berhasil, bukan memperlakukannya sebagai
+ * kegagalan. null = harganya tidak di bawah lantai yang disepakati (atau tidak ada lantai).
+ */
+export type AdminConsignmentPriced = AdminConsignment & {
+  belowReserveWarning?: string | null;
+};
+
 /** Satu baris "perlu tindakan" — DIHITUNG SERVER, dikirim terpisah dari barisnya. */
 export type AdminConsignmentTodo = {
   id: string;
@@ -1056,10 +1089,43 @@ export type AdminConsignmentTodo = {
  * lain yang tergeletak tanpa ada yang melihat adalah cara paling umum sebuah janji custody
  * diingkari tanpa siapa pun berniat begitu, dan dua salinan aturan berarti yang satu akan diam.
  */
+/**
+ * Satu kartu yang ADA di catatan kami tapi BELUM punya akun pemilik.
+ *
+ * DIKIRIM TERPISAH dari `actionRequired`, dan perbedaannya penting: `actionRequired` baru menyala
+ * setelah ambang waktu terlewat, sedangkan daftar ini memuat SEMUANYA sejak hari pertama. Pertanyaan
+ * "kartu siapa saja yang saya pegang tanpa tahu pemiliknya" harus bisa dijawab SEKARANG, bukan
+ * seminggu lagi.
+ *
+ * Tiap baris membawa nama & telepon dari snapshot serah-terima — satu-satunya cara menghubungi
+ * orangnya selama belum ada akun — plus keadaan kode klaimnya, supaya operator tahu apakah yang
+ * dibutuhkan MENELEPON atau MENERBITKAN ULANG.
+ */
+export type AwaitingOwnerRow = {
+  id: string;
+  cardName: string;
+  status: string;
+  /** Kartunya benar-benar di rak Hoshi (bukan sekadar kesepakatan yang dicatat). */
+  heldByHoshi: boolean;
+  storageLocation: string | null;
+  receivedAtPlace: string;
+  consignorNameAtIntake: string;
+  consignorPhoneAtIntake: string;
+  claimCodeIssuedAt: string | null;
+  claimCodeExpiresAt: string | null;
+  claimCodeExpired: boolean;
+  /** Tidak ada kode hidup sama sekali → satu-satunya jalan adalah menerbitkan yang baru. */
+  needsClaimCode: boolean;
+  createdAt: string;
+};
+
 export type AdminConsignmentList = {
   total: number;
   rows: AdminConsignment[];
   actionRequired: AdminConsignmentTodo[];
+  /** Kartu yang menunggu pemiliknya — DIHITUNG SERVER, sejak hari pertama. */
+  awaitingOwner: AwaitingOwnerRow[];
+  awaitingOwnerCount: number;
 };
 
 /** Aksi operator pada satu baris titipan. Satu nama = satu rute = satu tombol. */
@@ -1083,6 +1149,12 @@ export type ConsignmentAction =
  *
  * FAIL-CLOSED: status yang tidak dikenal hanya menyisakan aksi yang tidak mengubah keadaan
  * (tambah foto, tulis koreksi) — bukan semuanya.
+ *
+ * "BELUM DIKLAIM" SENGAJA TIDAK IKUT DIHITUNG DI SINI, walaupun ia juga menghalangi LIST. Kalau
+ * dilipat ke sini, kartu yang belum diklaim akan kehilangan panel "Pajang" sepenuhnya — dan
+ * operator tidak pernah membaca alasannya. Presedennya kartu MENTAH: aksinya tetap ditawarkan,
+ * panelnya yang menjelaskan kenapa tombolnya belum boleh ditekan. Yang menolak sungguhan tetap
+ * server.
  */
 export const consignmentAllowedActions = (c: AdminConsignment): ConsignmentAction[] => {
   switch (c.status) {
@@ -1124,9 +1196,25 @@ export const consignmentReleaseReason = (
   return null;
 };
 
-export const getAdminConsignments = (token: string, status?: string) => {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  return api<AdminConsignmentList>(`/admin/consignments${qs}`, {
+/**
+ * Daftar titipan. `filter: "AWAITING_OWNER"` menyaring DI SERVER ke kartu yang pemiliknya belum
+ * tertaut — definisi yang sama dengan `awaitingOwner` di jawabannya, jadi daftar dan hitungannya
+ * tidak bisa melenceng.
+ *
+ * Layar daftar hari ini menarik SEMUANYA sekali lalu menyaring di klien memakai `awaitingOwner`
+ * (jumlah titipan diukur dalam puluhan — kartu FISIK yang diambil satu per satu), jadi `filter`
+ * disediakan untuk pemanggil yang memang hanya butuh irisan itu.
+ */
+export const getAdminConsignments = (
+  token: string,
+  status?: string,
+  filter?: "AWAITING_OWNER",
+) => {
+  const q = new URLSearchParams();
+  if (status) q.set("status", status);
+  if (filter) q.set("filter", filter);
+  const qs = q.toString();
+  return api<AdminConsignmentList>(`/admin/consignments${qs ? `?${qs}` : ""}`, {
     headers: { authorization: `Bearer ${token}` },
   });
 };
@@ -1151,8 +1239,19 @@ export type ConsignmentPhotoInput = {
  * risiko "kartunya ternyata sudah dijual sendiri ke orang lain".
  */
 export type CreateConsignmentInput = {
-  /** User Hoshi yang memiliki kartu. WAJIB user sungguhan: dia yang nanti dibayar. */
-  consignorId: string;
+  /**
+   * Akun Hoshi yang memiliki kartu — DIHILANGKAN kalau pemiliknya belum punya akun.
+   *
+   * Kalau diisi, ia HARUS id akun yang dipilih operator dari hasil pencarian, bukan sesuatu yang
+   * diketik. Kalau dikosongkan, server menerbitkan KODE KLAIM (lihat `claimCode` di jawaban) yang
+   * dibawa pulang pemiliknya, dan baris ini tidak bisa dipajang sampai kode itu dipakai.
+   *
+   * ⚠️ TIDAK ADA field email di sini, dan itu disengaja: `User.email` di backend tidak unik dan
+   * tidak pernah diverifikasi — hanya `walletAddress` yang `@unique`. Menyambungkan kartu ke
+   * "siapa pun yang mengaku memakai alamat email itu" adalah cara menyerahkan barang orang ke
+   * orang lain.
+   */
+  consignorId?: string;
   consignorNameAtIntake: string;
   consignorPhoneAtIntake: string;
   /** "KTP" | "SIM" | "PASPOR" — opsional. */
@@ -1185,8 +1284,126 @@ export type CreateConsignmentInput = {
   photos?: ConsignmentPhotoInput[];
 };
 
+/**
+ * Jawaban yang MEMBAWA KODE KLAIM.
+ *
+ * `claimCode` ada di sini dan TIDAK di `AdminConsignment`, karena ia bukan kolom yang bisa dibaca
+ * ulang: server menyimpan SHA-256-nya (`claimCodeHash`), bukan kodenya. Teks kodenya hidup tepat
+ * sekali — di body respons rute yang menerbitkannya — dan tidak pernah masuk log maupun baris
+ * audit. Konsekuensi untuk layar operator: kalau kodenya hilang sebelum sempat diberikan,
+ * satu-satunya jalan adalah MENERBITKAN YANG BARU, bukan membuka lagi baris lama.
+ */
+export type AdminConsignmentWithClaimCode = AdminConsignment & {
+  /**
+   * Kode SUDAH BERFORMAT dari server (`4T9KM-2X7PQ`). Tidak ada kalau barisnya memang sudah punya
+   * akun pemilik.
+   */
+  claimCode?: string | null;
+  /** Umur kode sejak diterbitkan, dalam hari. Untuk kalimat; tanggal pastinya di baris. */
+  claimCodeExpiresInDays?: number;
+  /** Kalimat instruksi dari server untuk operator. Ditampilkan apa adanya kalau dipakai. */
+  claimCodeNote?: string;
+  /** true kalau ini MENGGANTIKAN kode sebelumnya (yang mati sejak detik itu). */
+  reissued?: boolean;
+};
+
 export const createAdminConsignment = (input: CreateConsignmentInput, token: string) =>
-  api<AdminConsignment>("/admin/consignments", {
+  api<AdminConsignmentWithClaimCode>("/admin/consignments", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Terbitkan / terbitkan ULANG kode klaim untuk titipan yang belum punya akun pemilik.
+ *
+ * Kenapa "terbitkan ulang" dan bukan "lihat lagi": server menyimpan hash kodenya, jadi kode yang
+ * sudah diberikan memang tidak bisa dibaca kembali oleh siapa pun — termasuk oleh Hoshi. Rute ini
+ * membuat kode BARU dan MENIMPA hash yang lama dalam satu tulisan, jadi kertas lama langsung mati
+ * dan tidak pernah ada dua kode hidup untuk satu titipan.
+ *
+ * `note` WAJIB (minimal 10 karakter) dan disimpan permanen sebagai baris audit. Itu bukan
+ * formalitas: penerbitan ulang MEMATIKAN kode yang sedang dipegang seseorang, jadi "kenapa" harus
+ * selalu punya jawaban tertulis ("tanda terima hilang, dikonfirmasi lewat telepon ke nomor yang
+ * tercatat saat serah-terima").
+ *
+ * Ditolak server (409) untuk baris yang SUDAH tertaut ke sebuah akun: tidak ada lagi yang bisa
+ * dibuka dengan kode, dan menerbitkannya hanya akan membuat jalan kedua ke kartu orang.
+ */
+export const issueAdminConsignmentClaimCode = (id: string, note: string, token: string) =>
+  api<AdminConsignmentWithClaimCode>(`/admin/consignments/${id}/claim-code`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ note }),
+  });
+
+/* ─────────────────── mencari pemilik kartu (tanpa pernah menebak) ─────────────────── */
+
+/** Satu kandidat pemilik. Bentuknya dari `GET /admin/consignments/consignor-search`. */
+export type ConsignorCandidate = {
+  id: string;
+  /** Alamat UTUH, bukan bentuk pendek — operator sedang membandingkannya dengan layar orang lain. */
+  walletAddress: string;
+  displayName: string | null;
+  email: string | null;
+  createdAt: string;
+  /** Berapa titipan yang sudah pernah tertaut ke akun ini. */
+  consignmentCount: number;
+  /** Cocok PERSIS pada satu-satunya kolom unik di Hoshi. Ini identitas; sisanya kemiripan. */
+  exactWalletMatch: boolean;
+  /** Kolom mana yang cocok: "walletAddress" | "displayName" | "email". */
+  matchedOn: string[];
+};
+
+/**
+ * Jawaban pencarian pemilik — SELALU daftar, TIDAK PERNAH satu jawaban.
+ *
+ * Bentuk ini adalah inti keamanannya, bukan kenyamanannya. Di backend hanya `walletAddress` yang
+ * `@unique`: `displayName` boleh sama persis untuk sepuluh orang, dan `email` bukan hanya tidak
+ * unik — ia TIDAK PERNAH DIVERIFIKASI. Rute yang memilihkan satu kandidat akan, cepat atau lambat,
+ * menautkan kartu senilai puluhan juta ke orang yang salah, dan melakukannya diam-diam.
+ */
+export type ConsignorSearchResult = {
+  query: string;
+  total: number;
+  /** true = ada kandidat yang TIDAK ditampilkan. Persempit dulu; jangan memilih dari daftar yang tidak lengkap. */
+  truncated: boolean;
+  /** true = lebih dari satu kandidat. UI WAJIB memaksa operator memilih sendiri. */
+  ambiguous: boolean;
+  matches: ConsignorCandidate[];
+  /** Kalimat dari server untuk operator. Ditampilkan apa adanya. */
+  advice: string;
+};
+
+/**
+ * Cari calon pemilik. TIDAK MENULIS APA PUN, dan tidak pernah menjawab "ini orangnya".
+ *
+ * Minimal 3 karakter (server menolak di bawah itu dengan 400 yang menjelaskan).
+ */
+export const searchAdminConsignors = (q: string, token: string) =>
+  api<ConsignorSearchResult>(
+    `/admin/consignments/consignor-search?q=${encodeURIComponent(q)}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+
+/**
+ * ADMIN MENAUTKAN akun pemilik ke titipan yang belum bertuan — Path A yang datang terlambat.
+ *
+ * Untuk keadaan yang benar-benar terjadi: pemiliknya akhirnya membuat akun tapi kertas kodenya
+ * hilang, atau ia datang ke kantor membawa tanda terima bertanda tangannya. `note` WAJIB dan
+ * menjawab "DARI MANA KAMU TAHU INI ORANGNYA" — itu satu-satunya hal yang tersisa kalau penautan
+ * ini dipersoalkan berbulan-bulan kemudian.
+ *
+ * `consignorId` HARUS datang dari `searchAdminConsignors`, dipilih operator sendiri. Server
+ * menolak penautan di atas baris yang sudah punya pemilik: kartu orang tidak boleh bisa berpindah
+ * pemilik lewat satu panggilan admin yang salah ketik.
+ */
+export const linkAdminConsignor = (
+  id: string,
+  input: { consignorId: string; note: string },
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/link-consignor`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -1261,7 +1478,7 @@ export const listAdminConsignment = (
   },
   token: string,
 ) =>
-  api<AdminConsignment>(`/admin/consignments/${id}/listing`, {
+  api<AdminConsignmentPriced>(`/admin/consignments/${id}/listing`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -1279,7 +1496,7 @@ export const setAdminConsignmentPrice = (
   input: { askPriceIdr: number; note: string },
   token: string,
 ) =>
-  api<AdminConsignment>(`/admin/consignments/${id}/price`, {
+  api<AdminConsignmentPriced>(`/admin/consignments/${id}/price`, {
     method: "PATCH",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify(input),

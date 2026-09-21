@@ -11,21 +11,48 @@
    godaan memajang kartu yang "besok diambil" — dan kartu yang masih di tangan orang lain bisa
    ia jual sendiri ke pembeli lain.
 
+   ┌──── SATU PERTANYAAN YANG HARUS DIJAWAB DULUAN ────────────────────────────────────────────┐
+   │ "Orang ini sudah punya akun Hoshi, atau belum?"                                           │
+   │                                                                                            │
+   │ Kebanyakan kolektor lokal yang didatangi BELUM punya. Karena itu jalur "belum punya akun"  │
+   │ bukan jalur darurat — ia jalur yang normal, dan layar ini tidak memperlakukannya sebagai   │
+   │ kegagalan menemukan akun. Operator memilih salah satu dengan sadar; tidak ada yang         │
+   │ terpilih sendiri.                                                                          │
+   │                                                                                            │
+   │ TIDAK ADA KOLOM EMAIL DI SINI, dan itu keputusan keamanan, bukan penyederhanaan. Di        │
+   │ backend `User.email` tidak unik dan tidak pernah diverifikasi — hanya `walletAddress` yang │
+   │ `@unique`. Siapa pun bisa mengetik alamat email orang lain di pengaturannya sendiri.       │
+   │ Menyambungkan kartu puluhan juta ke "siapa pun yang mengaku memakai alamat itu" berarti    │
+   │ menyerahkan barang orang ke orang lain. Yang menyambungkan adalah KODE KLAIM yang benar-   │
+   │ benar berpindah tangan di ruangan yang sama dengan kartunya.                               │
+   └────────────────────────────────────────────────────────────────────────────────────────────┘
+
    SATU LAGI, SOAL IDENTITAS: yang disimpan hanya JENIS dokumen + EMPAT ANGKA TERAKHIR. Nomor
    identitas lengkap tidak pernah dikirim, tidak pernah disimpan, tidak pernah ditampilkan.
+
+   TIGA HAL YANG DITENTUKAN OLEH TEMPAT LAYAR INI DIPAKAI — ruang tamu orang, di ponsel:
+     • DRAF yang selamat. Isian disimpan otomatis dan dipulihkan kalau tab-nya hilang; dibuang
+       begitu titipannya tersimpan, supaya kartu berikutnya tidak mewarisi data kartu sebelumnya.
+       (Blok DRAF di bawah.)
+     • PERINGATAN KARTU MENTAH, di detik keputusan. Kartu tanpa grading bisa diterima tapi belum
+       bisa dipajang; operator harus tahu itu SEBELUM kartunya berpindah tangan, bukan sesampainya
+       di kantor. (Blok peringatan di bagian "Kartunya".)
+     • KARTU BERIKUTNYA DARI PEMILIK YANG SAMA. Satu kunjungan hampir tidak pernah satu kartu.
+       (`nextCardSameOwner`.)
    ══════════════════════════════════════════════════════════════════════════════════════════════ */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useAdminAuth } from "@/lib/adminAuth";
+import { adminStorageKey, useAdminAuth } from "@/lib/adminAuth";
 import {
   createAdminConsignment,
-  getAdminUsers,
-  type AdminUser,
+  type ConsignorCandidate,
   type CreateConsignmentInput,
 } from "@/lib/admin-api";
 import { commissionPct } from "@/lib/consignment";
+import ClaimCodeHandover from "@/components/admin/ClaimCodeHandover";
+import ConsignorPicker, { PickedConsignor } from "@/components/admin/ConsignorPicker";
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-[14px] text-zinc-100 placeholder-zinc-600 outline-none transition focus:border-yellow-400/40";
@@ -36,6 +63,130 @@ const DEFAULT_COMMISSION_BPS = 500;
 const GRADERS = ["", "PSA", "CGC", "BGS"] as const;
 const ID_KINDS = ["", "KTP", "SIM", "PASPOR"] as const;
 const RAW_CONDITIONS = ["", "NM", "LP", "MP", "HP", "DMG"] as const;
+
+/** Jawaban atas "orang ini sudah punya akun Hoshi?". "" = belum dijawab, dan itu bukan default. */
+type OwnerMode = "" | "AKUN" | "TANPA_AKUN";
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   DRAF — formulir ini harus selamat dari ponsel operator.
+
+   Ini bukan formulir yang diisi di meja dengan tab yang tenang. Ia diisi sambil berdiri, di
+   ruang tamu orang, pada ponsel Android yang juga sedang membuka WhatsApp dan kamera. Gestur
+   "kembali" yang tak sengaja, Android yang membuang tab karena kehabisan memori, atau satu
+   ketukan pada notifikasi — dan seluruh isinya hilang DENGAN KOLEKTORNYA MASIH DUDUK DI SANA,
+   menunggu operator mengetik ulang nama, nomor HP, dan catatan kondisi sepanjang tiga kalimat.
+
+   Langkah FOTO di sebelah (`components/admin/ConsignmentPhotos.tsx`) sudah punya disiplin ini:
+   ia mengunggah satu per satu supaya tidak ada draft yang bisa lenyap bersama tab-nya. Formulir
+   sebelum foto tidak punya apa pun. Sekarang punya.
+
+   SATU DRAF SAJA, dan itu cukup: satu operator mengisi satu kartu pada satu waktu. Draf beralamat
+   per-peramban (localStorage), jadi ia tidak pernah menyeberang ke perangkat lain dan tidak pernah
+   sampai ke server.
+
+   DIHAPUS BEGITU TERSIMPAN. Draf yang hidup lebih lama daripada kartunya akan menempel pada kartu
+   BERIKUTNYA — dan kartu berikutnya milik orang lain. Itu kegagalan yang lebih buruk daripada
+   kehilangan draf.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* Bagian kunci yang tetap. Awalan "hoshi.admin." dan akhiran identitas operator ditambahkan oleh
+   `adminStorageKey` — DUA-DUANYA perlu, dan alasannya ditulis lengkap di lib/adminAuth.tsx.
+   Singkatnya: ponsel ini dipakai bergantian. Tanpa akhiran identitas, operator berikutnya membuka
+   formulir ini dan menemukan nama, telepon, dan empat angka KTP orang yang tidak pernah ia temui
+   sudah terisi di sana — lalu ikut tersimpan ke kartu yang salah. */
+const DRAFT_KEY_BASE = "consignment-intake.draft.v1";
+
+/**
+ * Isi draf = persis isi formulir.
+ *
+ * `v` ada supaya draf dari versi formulir yang lebih tua dibuang diam-diam alih-alih memulihkan
+ * separuh layar. Kolom identitas (`idLast4`) ikut disimpan — ia cuma empat angka, ia SUDAH akan
+ * dikirim ke server sebentar lagi, dan draf ini dihapus pada penyimpanan yang berhasil; yang
+ * sebaliknya (operator mengetik ulang nomor identitas orang dari ingatan) justru lebih rawan
+ * salah. Tombol "Buang draf" ada supaya ia bisa dihapus kapan saja tanpa menunggu penyimpanan.
+ */
+type IntakeDraft = {
+  v: 1;
+  savedAt: string;
+  ownerMode: OwnerMode;
+  consignor: ConsignorCandidate | null;
+  nameAtIntake: string;
+  phone: string;
+  idKind: string;
+  idLast4: string;
+  place: string;
+  cardName: string;
+  cardSet: string;
+  cardNumber: string;
+  language: string;
+  tcg: string;
+  grader: string;
+  certNumber: string;
+  gradeLabel: string;
+  gradeScore: string;
+  rawCondition: string;
+  conditionNote: string;
+  rawAck: boolean;
+  askPrice: string;
+  reservePrice: string;
+  commissionBps: string;
+  agreementRef: string;
+  intakeReceiptRef: string;
+};
+
+/** Draf yang belum berisi apa pun yang layak dipulihkan — tidak perlu ditulis, tidak perlu diumumkan. */
+const isBlankDraft = (d: Omit<IntakeDraft, "v" | "savedAt">): boolean =>
+  d.ownerMode === "" &&
+  d.consignor == null &&
+  !d.nameAtIntake.trim() &&
+  !d.phone.trim() &&
+  !d.idKind &&
+  !d.idLast4.trim() &&
+  !d.place.trim() &&
+  !d.cardName.trim() &&
+  !d.cardSet.trim() &&
+  !d.cardNumber.trim() &&
+  !d.language.trim() &&
+  !d.tcg.trim() &&
+  !d.grader &&
+  !d.certNumber.trim() &&
+  !d.gradeLabel.trim() &&
+  !d.gradeScore.trim() &&
+  !d.rawCondition &&
+  !d.conditionNote.trim() &&
+  !d.askPrice.trim() &&
+  !d.reservePrice.trim() &&
+  !d.agreementRef.trim() &&
+  !d.intakeReceiptRef.trim();
+
+/** Semua akses localStorage dibungkus: mode privat/penyimpanan penuh melempar, dan formulir ini
+ *  harus tetap bisa dipakai tanpa draf sama sekali — kehilangan draf bukan alasan layar mati. */
+function readDraft(key: string): IntakeDraft | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as IntakeDraft;
+    return d && d.v === 1 ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(key: string, d: IntakeDraft): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(d));
+  } catch {
+    /* penyimpanan penuh / diblokir — formulirnya tetap jalan, cuma tanpa jaring pengaman */
+  }
+}
+
+function clearDraft(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    /* sama: tidak ada yang perlu digagalkan karena ini */
+  }
+}
 
 function Field({
   label,
@@ -83,10 +234,8 @@ export default function AdminTitipanBaruPage() {
   const router = useRouter();
 
   /* ── pemilik kartu ── */
-  const [userQuery, setUserQuery] = useState("");
-  const [userResults, setUserResults] = useState<AdminUser[]>([]);
-  const [userSearching, setUserSearching] = useState(false);
-  const [consignor, setConsignor] = useState<AdminUser | null>(null);
+  const [ownerMode, setOwnerMode] = useState<OwnerMode>("");
+  const [consignor, setConsignor] = useState<ConsignorCandidate | null>(null);
   const [nameAtIntake, setNameAtIntake] = useState("");
   const [phone, setPhone] = useState("");
   const [idKind, setIdKind] = useState<string>("");
@@ -105,6 +254,14 @@ export default function AdminTitipanBaruPage() {
   const [gradeScore, setGradeScore] = useState("");
   const [rawCondition, setRawCondition] = useState("");
   const [conditionNote, setConditionNote] = useState("");
+  /**
+   * "Saya sudah memberitahu pemiliknya bahwa kartu mentah belum bisa dipajang."
+   *
+   * Hanya WAJIB kalau `grader` kosong. Bukan untuk menghalangi — menerima kartu mentah sering
+   * MEMANG keputusan yang benar — tapi supaya menerimanya menjadi tindakan sadar, bukan akibat
+   * sampingan dari sebuah dropdown yang dibiarkan kosong.
+   */
+  const [rawAck, setRawAck] = useState(false);
 
   /* ── kesepakatan ── */
   const [askPrice, setAskPrice] = useState("");
@@ -116,28 +273,168 @@ export default function AdminTitipanBaruPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /* Pencarian user — debounce ringan supaya tiap ketukan huruf tidak jadi satu request. */
-  const timer = useRef<number | null>(null);
+  /**
+   * Titipan yang BARU SAJA tersimpan — layar jeda antara "sudah tercatat" dan langkah berikutnya.
+   *
+   * `claim` berisi kode klaim HANYA kalau server menerbitkannya (jalur tanpa akun). Kode itu
+   * disimpan di state halaman — bukan dilempar lewat URL — karena ia rahasia sekali-pakai: kode di
+   * query string tertinggal di riwayat browser ponsel operator, dan ponsel operator bukan tempat
+   * menyimpan kunci ke kartu orang.
+   */
+  const [saved, setSaved] = useState<{
+    id: string;
+    cardName: string;
+    ownerName: string;
+    ownerPhone: string;
+    place: string;
+    claim: { code: string; expiresAt: string | null } | null;
+  } | null>(null);
+
+  /* ── Draf: pulihkan sekali saat halaman dibuka, lalu simpan setiap kali isinya berubah ────── */
+
+  /** null = belum ada draf yang dipulihkan. Isi = kapan draf itu terakhir disimpan. */
+  const [restoredAt, setRestoredAt] = useState<string | null>(null);
+  /** Gerbang: jangan menimpa draf tersimpan dengan state awal yang masih kosong. */
+  const [draftReady, setDraftReady] = useState(false);
+
+  /** Kunci draf milik operator INI. Berubah kalau yang login berganti — dan memang harus. */
+  const draftKey = useMemo(() => adminStorageKey(DRAFT_KEY_BASE, token), [token]);
+
   useEffect(() => {
+    // Tunggu token terbaca dulu. Kalau tidak, pemulihan berjalan dengan kunci ".anon", tidak
+    // menemukan apa-apa, lalu membuka gerbang penyimpanan — dan draf operator ditulis ke laci
+    // anonim yang tidak pernah ia baca lagi.
     if (!token) return;
-    const q = userQuery.trim();
-    if (q.length < 2) {
-      /* eslint-disable-next-line react-hooks/set-state-in-effect */
-      setUserResults([]);
+    const d = readDraft(draftKey);
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (d) {
+      setOwnerMode(d.ownerMode);
+      setConsignor(d.consignor);
+      setNameAtIntake(d.nameAtIntake);
+      setPhone(d.phone);
+      setIdKind(d.idKind);
+      setIdLast4(d.idLast4);
+      setPlace(d.place);
+      setCardName(d.cardName);
+      setCardSet(d.cardSet);
+      setCardNumber(d.cardNumber);
+      setLanguage(d.language);
+      setTcg(d.tcg);
+      setGrader(d.grader);
+      setCertNumber(d.certNumber);
+      setGradeLabel(d.gradeLabel);
+      setGradeScore(d.gradeScore);
+      setRawCondition(d.rawCondition);
+      setConditionNote(d.conditionNote);
+      setRawAck(d.rawAck);
+      setAskPrice(d.askPrice);
+      setReservePrice(d.reservePrice);
+      setCommissionBps(d.commissionBps);
+      setAgreementRef(d.agreementRef);
+      setIntakeReceiptRef(d.intakeReceiptRef);
+      setRestoredAt(d.savedAt);
+    }
+    setDraftReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [token, draftKey]);
+
+  /** Isi formulir dalam satu bentuk — dipakai untuk menyimpan draf dan tidak untuk yang lain. */
+  const draftBody = useMemo(
+    () => ({
+      ownerMode,
+      consignor,
+      nameAtIntake,
+      phone,
+      idKind,
+      idLast4,
+      place,
+      cardName,
+      cardSet,
+      cardNumber,
+      language,
+      tcg,
+      grader,
+      certNumber,
+      gradeLabel,
+      gradeScore,
+      rawCondition,
+      conditionNote,
+      rawAck,
+      askPrice,
+      reservePrice,
+      commissionBps,
+      agreementRef,
+      intakeReceiptRef,
+    }),
+    [
+      ownerMode,
+      consignor,
+      nameAtIntake,
+      phone,
+      idKind,
+      idLast4,
+      place,
+      cardName,
+      cardSet,
+      cardNumber,
+      language,
+      tcg,
+      grader,
+      certNumber,
+      gradeLabel,
+      gradeScore,
+      rawCondition,
+      conditionNote,
+      rawAck,
+      askPrice,
+      reservePrice,
+      commissionBps,
+      agreementRef,
+      intakeReceiptRef,
+    ],
+  );
+
+  useEffect(() => {
+    if (!draftReady) return;
+    // Formulir yang kosong tidak menghasilkan draf: kalau tidak, setiap kunjungan ke halaman ini
+    // akan menulis ulang draf kosong tepat sesudah penyimpanan berhasil menghapusnya.
+    if (isBlankDraft(draftBody)) {
+      clearDraft(draftKey);
       return;
     }
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      setUserSearching(true);
-      getAdminUsers(token, { search: q, limit: 8 })
-        .then((r) => setUserResults(r.data))
-        .catch(() => setUserResults([]))
-        .finally(() => setUserSearching(false));
-    }, 300);
-    return () => {
-      if (timer.current) window.clearTimeout(timer.current);
-    };
-  }, [userQuery, token]);
+    writeDraft(draftKey, { v: 1, savedAt: new Date().toISOString(), ...draftBody });
+  }, [draftReady, draftBody, draftKey]);
+
+  /** Buang draf DAN kosongkan formulirnya — satu tombol, tanpa sisa yang membingungkan. */
+  const discardDraft = () => {
+    clearDraft(draftKey);
+    setOwnerMode("");
+    setConsignor(null);
+    setNameAtIntake("");
+    setPhone("");
+    setIdKind("");
+    setIdLast4("");
+    setPlace("");
+    setCardName("");
+    setCardSet("");
+    setCardNumber("");
+    setLanguage("");
+    setTcg("");
+    setGrader("");
+    setCertNumber("");
+    setGradeLabel("");
+    setGradeScore("");
+    setRawCondition("");
+    setConditionNote("");
+    setRawAck(false);
+    setAskPrice("");
+    setReservePrice("");
+    setCommissionBps(String(DEFAULT_COMMISSION_BPS));
+    setAgreementRef("");
+    setIntakeReceiptRef("");
+    setRestoredAt(null);
+    setError(null);
+  };
 
   const askNum = Number(askPrice);
   const bpsNum = Number(commissionBps);
@@ -151,7 +448,8 @@ export default function AdminTitipanBaruPage() {
    */
   const missing = useMemo(() => {
     const m: string[] = [];
-    if (!consignor) m.push("pemilik kartu (akun Hoshi)");
+    if (ownerMode === "") m.push("jawaban: pemiliknya sudah punya akun Hoshi atau belum");
+    if (ownerMode === "AKUN" && !consignor) m.push("akun pemilik (pilih dari hasil pencarian)");
     if (nameAtIntake.trim().length < 2) m.push("nama pemilik di tanda terima");
     if (phone.trim().length < 5) m.push("nomor HP pemilik");
     if (idLast4 !== "" && idLast4.length !== 4) m.push("4 angka terakhir identitas (harus 4 digit)");
@@ -163,8 +461,14 @@ export default function AdminTitipanBaruPage() {
       m.push("nilai grade antara 0 dan 10");
     if (!Number.isFinite(askNum) || askNum <= 0) m.push("harga jual yang disepakati");
     if (!Number.isFinite(bpsNum) || bpsNum < 0 || bpsNum > 10_000) m.push("komisi yang wajar");
+    // Bukan aturan server — aturan RUANG TAMU. Lihat blok peringatan kartu mentah di bawah.
+    // Baru berlaku setelah ada kartu yang dibicarakan: menuntut centang pada formulir yang masih
+    // kosong mengubah peringatan menjadi gangguan, dan peringatan yang jadi gangguan diabaikan.
+    if (cardName.trim() && grader === "" && !rawAck)
+      m.push("centang bahwa pemiliknya sudah diberitahu soal kartu tanpa grading");
     return m;
   }, [
+    ownerMode,
     consignor,
     nameAtIntake,
     phone,
@@ -175,15 +479,20 @@ export default function AdminTitipanBaruPage() {
     gradeScore,
     askNum,
     bpsNum,
+    grader,
+    rawAck,
   ]);
 
   const submit = async () => {
-    if (!token || busy || missing.length > 0 || !consignor) return;
+    if (!token || busy || missing.length > 0 || ownerMode === "") return;
     setBusy(true);
     setError(null);
     try {
       const input: CreateConsignmentInput = {
-        consignorId: consignor.id,
+        // Jalur TANPA_AKUN sengaja TIDAK mengirim `consignorId` sama sekali (bukan mengirim
+        // string kosong): server-lah yang memutuskan menerbitkan kode klaim, dan ia memutuskannya
+        // dari ketiadaan field ini.
+        ...(ownerMode === "AKUN" && consignor ? { consignorId: consignor.id } : {}),
         consignorNameAtIntake: nameAtIntake.trim(),
         consignorPhoneAtIntake: phone.trim(),
         ...(idKind ? { consignorIdKind: idKind } : {}),
@@ -211,13 +520,157 @@ export default function AdminTitipanBaruPage() {
         ...(intakeReceiptRef.trim() ? { intakeReceiptRef: intakeReceiptRef.trim() } : {}),
       };
       const created = await createAdminConsignment(input, token);
-      // Langsung ke halaman barisnya: di sanalah foto diambil dan kartu dinyatakan diterima.
-      router.push(`/admin/titipan/${created.id}`);
+
+      // ── DRAF DIBUANG TEPAT DI SINI, dan tidak sedetik lebih lambat ─────────────────────────
+      // Barisnya sudah ada di server; draf yang tertinggal hanya bisa muncul kembali di atas
+      // KARTU BERIKUTNYA — kartu milik orang lain — dan tidak ada layar yang akan menyadarinya.
+      clearDraft(draftKey);
+      setRestoredAt(null);
+
+      // Layar jeda, bukan lompatan. Kode klaim (kalau ada) hanya hidup di jawaban INI dan tidak
+      // bisa dibaca ulang dari mana pun, jadi pindah halaman sekarang berarti membuang
+      // satu-satunya salinan kunci ke kartu orang selagi orangnya masih berdiri di depan
+      // operator. Tanpa kode pun layar ini tetap berguna: di sinilah kartu BERIKUTNYA dari
+      // pemilik yang sama ditawarkan.
+      setSaved({
+        id: created.id,
+        cardName: created.cardName,
+        ownerName: created.consignorNameAtIntake,
+        ownerPhone: created.consignorPhoneAtIntake,
+        place: created.receivedAtPlace,
+        claim: created.claimCode
+          ? { code: created.claimCode, expiresAt: created.claimCodeExpiresAt ?? null }
+          : null,
+      });
+      setBusy(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal menyimpan titipan.");
       setBusy(false);
     }
   };
+
+  /**
+   * ══ KARTU BERIKUTNYA DARI PEMILIK YANG SAMA ══
+   *
+   * Satu kunjungan hampir tidak pernah satu kartu. Kolektor yang menyerahkan 8 kartu berarti
+   * operator mengetik ulang nama, nomor HP, jenis identitas, empat angka terakhir, dan tempat
+   * serah terima DELAPAN KALI — di ponsel, sambil berdiri, di ruang tamu orang. Blok pemilik
+   * dipertahankan; blok kartu dan blok kesepakatan dikosongkan, karena kartu berikutnya adalah
+   * kartu yang lain dengan harga yang lain.
+   *
+   * Komisi sengaja IKUT dipertahankan: ia disepakati per kunjungan, bukan per kartu, dan
+   * mengembalikannya ke 5% diam-diam akan membekukan angka yang tidak pernah diucapkan.
+   *
+   * ⚠️ SETIAP baris tetap mendapat kode klaimnya SENDIRI — itu bentuk skema hari ini
+   * (`claimCodeHash` `@unique` per titipan), dan layar ini menyebutkannya apa adanya alih-alih
+   * membuat operator mengira satu kode menutup seluruh kunjungan. Irisan "satu kode untuk satu
+   * kunjungan" adalah perubahan skema tersendiri; tidak ada apa pun di sini yang menghalanginya,
+   * karena yang dipakai ulang cuma isi formulir, bukan identitas apa pun.
+   */
+  const nextCardSameOwner = () => {
+    setSaved(null);
+    setError(null);
+    setCardName("");
+    setCardSet("");
+    setCardNumber("");
+    setLanguage("");
+    setTcg("");
+    setGrader("");
+    setCertNumber("");
+    setGradeLabel("");
+    setGradeScore("");
+    setRawCondition("");
+    setConditionNote("");
+    setRawAck(false);
+    setAskPrice("");
+    setReservePrice("");
+    setAgreementRef("");
+    setIntakeReceiptRef("");
+    try {
+      window.scrollTo({ top: 0 });
+    } catch {
+      /* lingkungan tanpa window.scrollTo — tidak ada yang perlu digagalkan karena ini */
+    }
+  };
+
+  /* ── Layar SESUDAH TERSIMPAN: menggantikan formulir, bukan menumpuk di bawahnya ──────────────
+     Titipannya SUDAH tersimpan pada titik ini (operator tidak kehilangan apa pun kalau ia menutup
+     tab). Yang belum selesai ada dua, dan keduanya hanya bisa dilakukan selagi kalian masih
+     bertemu: kodenya harus berpindah tangan, dan kartu berikutnya dari tumpukan yang sama harus
+     dicatat sebelum operator pamit. */
+  if (saved) {
+    return (
+      <div className="space-y-5 pb-10">
+        <header>
+          <h1 className="text-[22px] font-bold text-zinc-100">Titipan tersimpan</h1>
+          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
+            “{saved.cardName}” sudah tercatat atas nama {saved.ownerName}.
+            {saved.claim
+              ? " Tinggal satu langkah yang harus selesai sebelum kalian berpisah."
+              : " Berikutnya: foto kartunya, lalu nyatakan diterima."}
+          </p>
+        </header>
+
+        {saved.claim ? (
+          /* Kedua jalan keluar berada DI DALAM gerbang "sudah saya berikan" milik komponen ini —
+             termasuk "kartu berikutnya". Kartu kedua dari kunjungan yang sama bukan alasan yang
+             cukup untuk meninggalkan layar yang memegang satu-satunya salinan kode kartu pertama. */
+          <ClaimCodeHandover
+            code={saved.claim.code}
+            cardName={saved.cardName}
+            ownerName={saved.ownerName}
+            ownerPhone={saved.ownerPhone}
+            place={saved.place}
+            expiresAt={saved.claim.expiresAt}
+            doneLabel="Lanjut ke foto & serah terima"
+            onDone={() => router.push(`/admin/titipan/${saved.id}`)}
+            secondaryLabel="Catat kartu berikutnya dari pemilik yang sama"
+            onSecondary={nextCardSameOwner}
+          />
+        ) : (
+          <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.07] p-4 sm:p-5">
+            <p className="text-[13.5px] leading-relaxed text-emerald-100/85">
+              Kartunya belum dinyatakan diterima — baris ini masih “Belum diterima”. Serah terima
+              dicatat di halaman titipannya, setelah kartunya difoto.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => router.push(`/admin/titipan/${saved.id}`)}
+                className="rounded-xl px-5 py-2.5 text-[14px] font-semibold text-[#171717] transition hover:brightness-105"
+                style={{ backgroundImage: "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)" }}
+              >
+                Lanjut ke foto & serah terima
+              </button>
+              <button
+                type="button"
+                onClick={nextCardSameOwner}
+                className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-2.5 text-[14px] font-semibold text-zinc-200 transition hover:bg-white/[0.1]"
+              >
+                Catat kartu berikutnya dari pemilik yang sama
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Satu kunjungan hampir tidak pernah satu kartu — dan yang dipertahankan disebutkan
+            terang-terangan, supaya operator tahu persis apa yang TIDAK perlu ia ketik lagi dan
+            apa yang tetap harus ia isi ulang. */}
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+          <p className="text-[13px] font-semibold text-zinc-200">
+            Masih ada kartu lain dari {saved.ownerName}?
+          </p>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-500">
+            “Catat kartu berikutnya” mempertahankan nama, nomor HP, jenis identitas, empat angka
+            terakhir, tempat serah terima, dan komisi — lalu mengosongkan blok kartu dan harga.
+            {saved.claim
+              ? " Tiap kartu tetap punya kode klaimnya sendiri, jadi tiap kode harus diberikan ke pemiliknya sebelum kalian berpisah."
+              : ""}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 pb-28">
@@ -232,53 +685,159 @@ export default function AdminTitipanBaruPage() {
         </p>
       </header>
 
+      {/* ── DRAF DIPULIHKAN ──────────────────────────────────────────────────────────────────
+          Diumumkan, tidak diam-diam. Formulir yang tiba-tiba sudah terisi tanpa penjelasan
+          membuat operator mengira ia sedang melanjutkan kartu INI, padahal isinya bisa saja
+          milik kolektor kemarin. Karena itu nama pemilik dan nama kartu di dalam draf ikut
+          disebut, dan membuangnya cukup satu ketukan. */}
+      {restoredAt && (
+        <div className="rounded-2xl border border-sky-400/30 bg-sky-400/[0.07] px-4 py-3.5">
+          <p className="text-[13px] font-semibold text-sky-100">
+            Draf yang belum tersimpan dipulihkan
+          </p>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-sky-100/80">
+            Isian ini tersimpan otomatis di peramban ini pada{" "}
+            {new Date(restoredAt).toLocaleString("id-ID", {
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            {nameAtIntake.trim() || cardName.trim() ? (
+              <>
+                {" "}
+                — atas nama <strong className="text-sky-50">{nameAtIntake.trim() || "—"}</strong>,
+                kartu <strong className="text-sky-50">{cardName.trim() || "—"}</strong>
+              </>
+            ) : null}
+            . Kalau ini bukan kartu yang sedang kamu catat, buang dulu sebelum mengisi.
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setRestoredAt(null)}
+              className="rounded-lg border border-sky-300/35 bg-sky-400/10 px-3 py-1.5 text-[12px] font-semibold text-sky-100 transition hover:bg-sky-400/20"
+            >
+              Lanjutkan draf ini
+            </button>
+            <button
+              type="button"
+              onClick={discardDraft}
+              className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-[12px] font-semibold text-zinc-300 transition hover:bg-white/[0.08]"
+            >
+              Buang draf & mulai kosong
+            </button>
+          </div>
+        </div>
+      )}
+
       <Section
         title="Pemilik kartu"
-        sub="Harus akun Hoshi yang sungguhan: dia yang nanti menerima hasil penjualannya."
+        sub="Dia yang nanti menerima hasil penjualannya, jadi kartu ini harus punya tujuan yang benar sejak hari ini."
       >
+        {/* ── Pertanyaan pertama, dijawab dengan sadar ── */}
         <div className="sm:col-span-2">
-          <Field label="Cari akun pemilik" required hint="Ketik nama, email, atau alamat wallet.">
-            <input
-              value={consignor ? `${consignor.displayName ?? "Tanpa nama"} · ${consignor.walletAddress}` : userQuery}
-              onChange={(e) => {
+          <span className="mb-2 block text-[13px] font-medium text-zinc-300">
+            Pemiliknya sudah punya akun Hoshi?
+            <span className="ml-1.5 text-[11px] font-bold uppercase text-amber-300">wajib</span>
+          </span>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setOwnerMode("AKUN")}
+              className={`rounded-xl border px-4 py-3 text-left transition ${
+                ownerMode === "AKUN"
+                  ? "border-yellow-400/45 bg-yellow-400/10"
+                  : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+              }`}
+            >
+              <span className="block text-[14px] font-semibold text-zinc-100">Sudah punya</span>
+              <span className="mt-0.5 block text-[11.5px] leading-relaxed text-zinc-500">
+                Cari akunnya, lalu pilih orangnya. Kartunya langsung tersambung.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOwnerMode("TANPA_AKUN");
                 setConsignor(null);
-                setUserQuery(e.target.value);
               }}
-              placeholder="mis. Budi / 7xKXt…"
-              className={INPUT}
-            />
-          </Field>
-          {!consignor && userQuery.trim().length >= 2 && (
-            <div className="mt-2 overflow-hidden rounded-xl border border-white/10 bg-[#121217]">
-              {userSearching && <p className="px-3.5 py-2.5 text-[12px] text-zinc-500">Mencari…</p>}
-              {!userSearching && userResults.length === 0 && (
-                <p className="px-3.5 py-2.5 text-[12px] text-zinc-500">
-                  Tidak ada akun yang cocok. Pemilik kartu harus punya akun Hoshi lebih dulu.
-                </p>
-              )}
-              {userResults.map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  onClick={() => {
-                    setConsignor(u);
-                    setUserQuery("");
-                    if (!nameAtIntake.trim()) setNameAtIntake(u.displayName ?? "");
-                  }}
-                  className="flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left transition hover:bg-white/[0.05]"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-[13px] text-zinc-200">
-                      {u.displayName ?? "Tanpa nama"}
-                    </span>
-                    <span className="block truncate text-[11px] text-zinc-500">{u.walletAddress}</span>
-                  </span>
-                  <span className="shrink-0 text-[11px] text-zinc-600">{u.email ?? ""}</span>
-                </button>
-              ))}
-            </div>
-          )}
+              className={`rounded-xl border px-4 py-3 text-left transition ${
+                ownerMode === "TANPA_AKUN"
+                  ? "border-violet-400/50 bg-violet-400/10"
+                  : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+              }`}
+            >
+              <span className="block text-[14px] font-semibold text-zinc-100">Belum punya</span>
+              <span className="mt-0.5 block text-[11.5px] leading-relaxed text-zinc-500">
+                Jalan terus tanpa akun. Kartunya dapat kode klaim yang dibawa pulang pemiliknya.
+              </span>
+            </button>
+          </div>
         </div>
+
+        {/* ── Jalur A: cari akunnya ── */}
+        {ownerMode === "AKUN" && (
+          <div className="sm:col-span-2">
+            <span className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-zinc-300">
+              Cari akun pemilik
+              <span className="text-[11px] font-bold uppercase text-amber-300">wajib</span>
+            </span>
+
+            {/* Yang dipilih ditampilkan MENGGANTIKAN kotak pencarian, lengkap dengan alamat wallet
+                UTUH: inilah layar terakhir sebelum kartu orang tertaut ke sebuah akun, dan alamat
+                yang dipendekkan membuat dua akun berbeda tampak sama persis. */}
+            {consignor ? (
+              <PickedConsignor user={consignor} onClear={() => setConsignor(null)} />
+            ) : (
+              <ConsignorPicker
+                token={token}
+                onPick={(u) => {
+                  setConsignor(u);
+                  // Nama di tanda terima diisikan sebagai USULAN, dan hanya kalau masih kosong:
+                  // yang ditulis di tanda terima adalah nama yang disebut orangnya hari itu, bukan
+                  // nama tampilan akun yang bisa ia ganti kapan saja.
+                  if (!nameAtIntake.trim()) setNameAtIntake(u.displayName ?? "");
+                }}
+                emptyAction={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOwnerMode("TANPA_AKUN");
+                      setConsignor(null);
+                    }}
+                    className="rounded-lg border border-violet-400/40 bg-violet-400/10 px-3 py-1.5 text-[12px] font-semibold text-violet-200 transition hover:bg-violet-400/20"
+                  >
+                    Catat tanpa akun, pakai kode klaim →
+                  </button>
+                }
+              />
+            )}
+
+            <span className="mt-1.5 block text-[11px] leading-relaxed text-zinc-500">
+              Ketik nama, sebagian alamat wallet, atau email yang ia pakai — minimal 3 huruf. Email
+              hanya membantu MENEMUKAN akunnya; yang menentukan orangnya adalah alamat wallet.
+            </span>
+          </div>
+        )}
+
+        {/* ── Jalur B: belum punya akun ── */}
+        {ownerMode === "TANPA_AKUN" && (
+          <div className="sm:col-span-2 rounded-xl border border-violet-400/30 bg-violet-400/[0.07] px-4 py-3.5">
+            <p className="text-[13px] font-semibold text-violet-100">
+              Kartunya dicatat sekarang, akunnya menyusul.
+            </p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-violet-100/80">
+              Setelah disimpan, layar ini menampilkan <strong>kode klaim</strong> yang harus kamu
+              berikan ke pemiliknya sebelum kalian berpisah — bisa disalin, dikirim lewat WhatsApp,
+              atau dicetak. Dia memakai kode itu di Hoshi untuk menyambungkan kartu ini ke akunnya.
+            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-violet-200/70">
+              Selama belum diklaim, kartu ini tetap bisa kamu terima dan simpan seperti biasa, tapi
+              belum bisa dipajang: hasil penjualannya belum punya tujuan.
+            </p>
+          </div>
+        )}
 
         <Field
           label="Nama di tanda terima"
@@ -288,7 +847,15 @@ export default function AdminTitipanBaruPage() {
           <input value={nameAtIntake} onChange={(e) => setNameAtIntake(e.target.value)} className={INPUT} />
         </Field>
 
-        <Field label="Nomor HP" required>
+        <Field
+          label="Nomor HP"
+          required
+          hint={
+            ownerMode === "TANPA_AKUN"
+              ? "Ke nomor inilah kode klaimnya dikirim lewat WhatsApp. Pastikan benar sebelum lanjut."
+              : undefined
+          }
+        >
           <input
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
@@ -371,7 +938,10 @@ export default function AdminTitipanBaruPage() {
           />
         </Field>
 
-        <Field label="Grader" hint="Kosongkan untuk kartu mentah (belum di-grade).">
+        <Field
+          label="Grader"
+          hint="Kosongkan untuk kartu mentah (belum di-grade) — baca peringatannya di bawah sebelum menerima kartunya."
+        >
           <select value={grader} onChange={(e) => setGrader(e.target.value)} className={INPUT}>
             {GRADERS.map((g) => (
               <option key={g} value={g} className="bg-[#121217]">
@@ -380,6 +950,52 @@ export default function AdminTitipanBaruPage() {
             ))}
           </select>
         </Field>
+
+        {/* ══ KARTU MENTAH: DITERIMA, DISIMPAN, TAPI BELUM BISA DIJUAL ════════════════════════
+            `Listing.grader` adalah enum NOT NULL berisi PSA/CGC/BGS saja, jadi server MENOLAK
+            memajang titipan tanpa grader — dan penolakannya benar: mengisi kolom itu berarti
+            memberi label palsu pada kartu orang lain, persis hal yang seluruh fitur ini dibangun
+            untuk tidak dilakukan.
+
+            Masalahnya bukan aturannya, melainkan KAPAN operator mengetahuinya. Koleksi lokal
+            Indonesia sebagian besar mentah. Tanpa peringatan di sini, operator menerima kartunya,
+            berkata "nanti kami pajangkan", pamit — dan baru menemukan kenyataannya sesampainya di
+            kantor, dengan kartu orang sudah ada di tas. Peringatannya harus berada di detik
+            keputusan, bukan di layar berikutnya.
+
+            Centangnya BUKAN penghalang: menerima kartu mentah sering memang keputusan yang benar
+            (kartunya aman, tercatat, dan bisa diminta kembali kapan saja). Ia hanya memastikan
+            keputusan itu diambil dengan sadar dan diucapkan ke pemiliknya. */}
+        {cardName.trim() !== "" && grader === "" && (
+          <div className="sm:col-span-2 rounded-xl border border-amber-400/35 bg-amber-400/[0.09] px-4 py-3.5">
+            <p className="text-[13px] font-semibold text-amber-100">
+              Kartu tanpa grading belum bisa dipajang di Hoshi.
+            </p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-amber-100/85">
+              Listing di Hoshi wajib menyebut grader (PSA/CGC/BGS), dan menuliskan salah satunya
+              untuk kartu yang belum di-grade berarti memberi label palsu pada kartu orang lain.
+              Jadi kartu ini <strong>akan tercatat, boleh diterima, aman di penyimpanan, dan bisa
+              diminta kembali kapan saja</strong> — tapi ia akan menunggu di rak sampai di-grade,
+              dan tidak akan muncul di marketplace sebelum itu.
+            </p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-amber-100/85">
+              Katakan ini ke pemiliknya <strong>sekarang</strong>, sebelum ia menyerahkan kartunya.
+              Kalau kartunya sebenarnya bersertifikat, pilih grader-nya di atas.
+            </p>
+            <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-relaxed text-amber-50">
+              <input
+                type="checkbox"
+                checked={rawAck}
+                onChange={(e) => setRawAck(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-amber-400"
+              />
+              <span>
+                Pemiliknya sudah saya beritahu bahwa kartu ini belum bisa dipajang untuk dijual,
+                dan ia tetap ingin menitipkannya.
+              </span>
+            </label>
+          </div>
+        )}
         <Field label="Nomor sertifikat">
           <input
             value={certNumber}
@@ -446,7 +1062,13 @@ export default function AdminTitipanBaruPage() {
             className={INPUT}
           />
         </Field>
-        <Field label="Harga terendah yang boleh (Rp)" hint="Opsional — catatan internal.">
+        {/* Ini janji yang diucapkan di depan pemiliknya ("tidak akan kami lepas di bawah X"),
+            bukan memo internal. Ia ditampilkan lagi di layar harga & pajang, dan di halaman
+            pemiliknya sendiri — angka yang cuma bisa dibaca sebelah pihak bukan janji. */}
+        <Field
+          label="Harga terendah yang boleh (Rp)"
+          hint="Opsional, tapi mengikat: angka ini muncul lagi setiap kali harga kartu ini diubah atau dipajang, dan pemiliknya melihatnya di halaman titipannya."
+        >
           <input
             value={reservePrice}
             onChange={(e) => setReservePrice(e.target.value.replace(/[^\d]/g, ""))}
@@ -514,7 +1136,21 @@ export default function AdminTitipanBaruPage() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
           <p className="min-w-0 flex-1 text-[12px] leading-relaxed text-zinc-500">
             {missing.length === 0 ? (
-              <>Siap disimpan. Setelah ini: foto kartunya, lalu nyatakan diterima.</>
+              <>
+                {ownerMode === "TANPA_AKUN" ? (
+                  <>Siap disimpan. Setelah ini: kode klaim untuk pemiliknya, lalu foto kartunya.</>
+                ) : (
+                  <>Siap disimpan. Setelah ini: foto kartunya, lalu nyatakan diterima.</>
+                )}
+                {/* Diulang di bilah simpan: ini kalimat terakhir yang dibaca operator sebelum
+                    kartunya benar-benar berpindah tangan. */}
+                {cardName.trim() !== "" && grader === "" && (
+                  <span className="text-amber-300">
+                    {" "}
+                    Kartu tanpa grading — tercatat dan aman, tapi belum bisa dipajang.
+                  </span>
+                )}
+              </>
             ) : (
               <>Belum lengkap: {missing.join(", ")}.</>
             )}

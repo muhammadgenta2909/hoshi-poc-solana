@@ -160,9 +160,15 @@ export default function AdminTransactionsPage() {
         </div>
       )}
 
-      {/* Dari mana Hoshi dapat uang: reseller CC · stok Hoshi sendiri · komisi P2P. */}
+      {/* Dari mana Hoshi dapat uang. EMPAT ember, dan keempatnya harus ada di layar:
+          reseller CC · stok Hoshi sendiri · komisi P2P · komisi TITIPAN.
+
+          Kalau ember titipan dihapus dari sini, angkanya tidak pindah ke mana-mana — backend
+          sudah mengeluarkan penjualan titipan dari ember P2P supaya tidak terhitung dua kali.
+          Yang terjadi: komisi 5% dari kartu titipan terbaca NOL di satu-satunya layar yang
+          menampilkan uang masuk. */}
       {finance && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] px-5 py-5">
             <span
               className="absolute inset-y-0 left-0 w-1 rounded-r"
@@ -221,9 +227,52 @@ export default function AdminTransactionsPage() {
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-zinc-500">Jadi titipan penjual</span>
+                {/* Disebut "saldo penjual", BUKAN "titipan": di layar ini "titipan" sekarang berarti
+                    kartu titipan (konsinyasi) di tile sebelah, dan dua arti untuk satu kata di satu
+                    layar uang adalah cara paling murah untuk salah mencairkan. */}
+                <span className="text-zinc-500">Jadi saldo penjual</span>
                 <span className="font-semibold tabular-nums text-zinc-300">
                   {rp(finance.p2pNetToSellersIdr)}
+                </span>
+              </div>
+            </div>
+          </div>
+          {/* ── TITIPAN (konsinyasi) ──────────────────────────────────────────────────────────
+              Bentuknya sengaja mirip tile P2P — omzet di atas, pecahan komisi/pemilik di bawah —
+              karena dari sisi uang keduanya memang sama: Hoshi hanya mengambil komisi, sisanya
+              milik orang lain. Bedanya cuma kartunya ada di rak Hoshi.
+
+              Angka besar yang ditampilkan adalah KOMISI, bukan omzet. Di tiga tile lain angka
+              besarnya omzet, jadi ini memang tidak konsisten — dan disengaja: omzet titipan
+              sebagian besar bukan uang Hoshi, dan tile yang memamerkannya sebagai angka utama
+              akan dibaca sebagai pemasukan. Omzetnya tetap ada, di baris bawah. */}
+          <div className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] px-5 py-5">
+            <span
+              className="absolute inset-y-0 left-0 w-1 rounded-r"
+              style={{ background: "#38bdf8", opacity: 0.7 }}
+            />
+            <div className="flex items-start justify-between">
+              <p className="text-[13px] font-medium text-zinc-400">Jual kartu titipan (konsinyasi)</p>
+              <span className="text-[15px]">📦</span>
+            </div>
+            <p className="mt-2 text-[26px] font-bold tabular-nums text-white">
+              {rp(finance.consignment.commissionIdr)}
+            </p>
+            <p className="mt-0.5 text-[12px] leading-snug text-zinc-500">
+              komisi Hoshi dari {finance.consignment.count} penjualan · kartu milik orang lain yang
+              dititipkan ke rak Hoshi
+            </p>
+            <div className="mt-3 space-y-1 border-t border-white/10 pt-3 text-[12px]">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Omzet (dibayar pembeli)</span>
+                <span className="font-semibold tabular-nums text-zinc-300">
+                  {rp(finance.consignment.grossIdr)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Jadi saldo pemilik kartu</span>
+                <span className="font-semibold tabular-nums text-zinc-300">
+                  {rp(finance.consignment.payoutIdr)}
                 </span>
               </div>
             </div>
@@ -235,10 +284,15 @@ export default function AdminTransactionsPage() {
       {finance && finance.sellerBalances.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <h3 className="mb-1 text-sm font-semibold text-zinc-300">
-            Titipan penjual (belum ditarik)
+            Saldo penjual (belum ditarik)
           </h3>
+          {/* Dulu tertulis 'Total ini = "Titipan" di atas'. Sejak kartu titipan punya embernya
+              sendiri, kalimat itu salah: saldo di bawah ini adalah GABUNGAN jatah penjual P2P dan
+              jatah pemilik kartu titipan. Menyamakannya dengan satu tile saja membuat sisa yang
+              wajib disimpan terbaca lebih kecil daripada yang sebenarnya. */}
           <p className="mb-4 text-[12px] text-zinc-500">
-            Total ini = &quot;Titipan&quot; di atas. Cair saat penjual withdraw — selalu sisakan sebanyak ini.
+            Gabungan jatah penjual P2P + jatah pemilik kartu titipan. Cair saat mereka withdraw —
+            selalu sisakan sebanyak ini.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">

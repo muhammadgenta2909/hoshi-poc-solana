@@ -162,7 +162,10 @@ export default function AdminDashboardPage() {
   const s = stats!;
 
   const cards: StatCard[] = [
-    { label: "Omzet jual kartu", value: `Rp ${formatIdr(s.totalRevenue)}`, sub: "kartu terjual (reseller + P2P) — dirinci di Transaksi & Kas", icon: "💰", accent: "#f59e0b" },
+    { label: "Omzet jual kartu", value: `Rp ${formatIdr(s.totalRevenue)}`, // Angkanya SELURUH listing SOLD, tanpa kecuali — termasuk kartu titipan, yang sebagian besar
+    // omzetnya milik pemiliknya, bukan Hoshi. Karena itu label ini menyebut keempat embernya dan
+    // menunjuk ke layar rinciannya; membacanya sebagai pemasukan Hoshi akan melebihkan.
+    sub: "semua kartu terjual (reseller + stok Hoshi + P2P + titipan) — bukan laba, dirinci di Transaksi & Kas", icon: "💰", accent: "#f59e0b" },
     { label: "Kartu terjual", value: s.soldListings.toLocaleString("id-ID"), sub: `${s.totalListings > 0 ? ((s.soldListings / s.totalListings) * 100).toFixed(1) : 0}% dari yang dipajang laku`, icon: "✅", accent: "#3b82f6" },
     { label: "Total listing", value: s.totalListings.toLocaleString("id-ID"), sub: `${s.activeListings.toLocaleString("id-ID")} aktif · ${s.soldListings.toLocaleString("id-ID")} terjual · ${s.cancelledListings.toLocaleString("id-ID")} ditarik${s.pendingEscrowListings > 0 ? ` · ${s.pendingEscrowListings.toLocaleString("id-ID")} nunggu escrow` : ""}`, icon: "📋", accent: "#facc15" },
     { label: "Pengguna", value: s.totalUsers.toLocaleString("id-ID"), sub: "total akun terdaftar", icon: "👤", accent: "#a78bfa" },
