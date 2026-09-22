@@ -29,6 +29,7 @@ import { useAdminAuth } from "@/lib/adminAuth";
 import {
   acceptConsignmentCustody,
   addAdminConsignmentCorrection,
+  AdminApiError,
   compensateAdminConsignment,
   consignmentAllowedActions,
   consignmentReleaseReason,
@@ -67,6 +68,7 @@ import {
 } from "@/lib/consignment";
 import ConsignmentPhotos from "@/components/admin/ConsignmentPhotos";
 import ClaimCodeHandover from "@/components/admin/ClaimCodeHandover";
+import LabelCorrectionPanel from "@/components/admin/LabelCorrectionPanel";
 import HandoverReceiptButton, { receiptDataFrom } from "@/components/admin/HandoverReceipt";
 import ConsignorPicker, { PickedConsignor } from "@/components/admin/ConsignorPicker";
 import { ConfirmDialog } from "@/components/account/ui";
@@ -90,6 +92,44 @@ const dt = (s: string | null | undefined) =>
         minute: "2-digit",
       })
     : "—";
+
+/**
+ * ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+ * ║ GANTI RUGI YANG DITOLAK HARUS TERBACA SEBAGAI DITOLAK.                                     ║
+ * ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+ *
+ * Bug lamanya persis ini: operator salah ketik, mengulang, server menolak, layar tetap hijau —
+ * dan operator pulang mengira pemiliknya sudah dibayar. Fungsi ini hanya menyusun SATU KALIMAT
+ * JUDUL yang bisa dibaca sekilas; teks lengkap dari server tetap ditampilkan apa adanya di
+ * bawahnya, karena ia menyebut nominal, order pembeli, dan tanggal yang tidak boleh ditulis ulang.
+ *
+ * Bercabang pada STATUS HTTP + TEKS PESAN, dan itu disengaja: ketiga penolakan baru ini adalah
+ * `ConflictException`/`BadRequestException` biasa yang TIDAK membawa kode kontrak. Mengarang kode
+ * yang tidak pernah dikirim server hanya akan membuat cabang yang diam-diam tidak pernah kena.
+ *
+ * Cabang terakhir (bukan 400/409, mis. jaringan putus) SENGAJA tidak berkata "tidak ada uang yang
+ * berpindah": permintaan yang tidak pernah terjawab bisa saja sudah sempat menulis di server.
+ */
+const compensateFailureTitle = (e: unknown): string => {
+  const msg = e instanceof Error ? e.message : "";
+  const status = e instanceof AdminApiError ? e.status : 0;
+  if (status === 409 && /SUDAH TERJUAL/i.test(msg)) {
+    return "DITOLAK — kartunya sudah terjual sebelum hilang, jadi yang wajib dipulihkan PEMBELI, bukan pemilik. Nol rupiah masuk ke saldo pemilik.";
+  }
+  if (status === 409 && /SUDAH pernah tercatat/i.test(msg)) {
+    return "DITOLAK — ganti rugi untuk titipan ini SUDAH pernah dibayar. Penekanan tadi tidak memindahkan satu rupiah pun.";
+  }
+  if (status === 400 && /BERBEDA dari harga jual/i.test(msg)) {
+    return "DITOLAK — angka di layar ini tidak sama dengan yang tercatat di server. Muat ulang halamannya, lalu cocokkan lagi dengan struk yang ditandatangani.";
+  }
+  if (status === 409) {
+    return "DITOLAK — keadaan titipan ini tidak mengizinkannya. Tidak ada uang yang berpindah.";
+  }
+  if (status === 400) {
+    return "DITOLAK — permintaannya tidak sah. Tidak ada uang yang berpindah.";
+  }
+  return "GAGAL — dan tidak ada kepastian uangnya TIDAK berpindah. Periksa saldo pemiliknya sebelum mencoba lagi.";
+};
 
 function Card({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   return (
@@ -120,6 +160,8 @@ export default function AdminTitipanDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
+  /** Naik setiap kali baris ini DIBACA ULANG dari server. Lihat catatan di `load()`. */
+  const [rowEpoch, setRowEpoch] = useState(0);
 
   /* form-form aksi */
   const [storageLocation, setStorageLocation] = useState("");
@@ -158,8 +200,17 @@ export default function AdminTitipanDetailPage() {
   const [retTracking, setRetTracking] = useState("");
   const [retPickedUpBy, setRetPickedUpBy] = useState("");
   const [lostNote, setLostNote] = useState("");
-  const [compAmount, setCompAmount] = useState("");
+  /* TIDAK ADA `compAmount` LAGI, dan itu inti perubahannya: nominal ganti rugi bukan keputusan
+     operator. Server membacanya dari `askPriceIdr` — angka yang TERCETAK di struk serah terima
+     yang ditandatangani kedua pihak. Kotak isian kosong di sini dulu mengundang persis kesalahan
+     yang paling mahal ("kurang satu nol") pada satu-satunya aksi di layar ini yang memindahkan
+     uang sungguhan. */
   const [compNote, setCompNote] = useState("");
+  /** Hasil ganti rugi — SUKSES maupun DITOLAK, ditampilkan di panelnya sendiri, bukan sebagai
+      toast hijau yang sama untuk dua kejadian yang berlawanan. */
+  const [compResult, setCompResult] = useState<
+    null | { ok: boolean; title: string; detail: string }
+  >(null);
   const [correction, setCorrection] = useState("");
   const [confirm, setConfirm] = useState<
     null | { kind: "ACCEPT" } | { kind: "RETURN" } | { kind: "RELEASE" } | { kind: "LOST" } | { kind: "COMPENSATE" }
@@ -218,6 +269,15 @@ export default function AdminTitipanDetailPage() {
       setRetCourier(row.returnCourier ?? "");
       setRetTracking(row.returnTrackingNo ?? "");
       setRetPickedUpBy(row.returnPickedUpBy ?? "");
+      /* ── KENAPA ADA PENGHITUNG DI SINI ──────────────────────────────────────────────────
+         Formulir koreksi label disemai dari nilai yang TERSIMPAN, dan ia dipakai persis ketika
+         nilai itu ternyata sudah berubah di server (gerbang optimistik menolak, operator menekan
+         "muat ulang"). Tanpa penanda ini, formulirnya tetap memegang nilai basi dari sebelum
+         pemuatan ulang — dan mengirimkannya lagi hanya menghasilkan penolakan yang sama.
+         Dipakai sebagai `key` panel itu, jadi setiap pembacaan ULANG dari server menyemainya
+         kembali; penyimpanan yang berhasil TIDAK lewat sini (ia memakai baris dari responsnya
+         sendiri), sehingga pesan berhasilnya tidak ikut terhapus. */
+      setRowEpoch((n) => n + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal memuat titipan.");
     } finally {
@@ -358,6 +418,75 @@ export default function AdminTitipanDetailPage() {
     }
   };
 
+  /**
+   * ╔════════════════════════════════════════════════════════════════════════════════════════╗
+   * ║ GANTI RUGI — SATU-SATUNYA AKSI DI LAYAR INI YANG MEMINDAHKAN UANG SUNGGUHAN.           ║
+   * ╚════════════════════════════════════════════════════════════════════════════════════════╝
+   *
+   * TIDAK memakai `run()`, dan itu bukan selera: `run()` menampilkan satu pesan hijau untuk
+   * "berhasil" dan satu pesan merah untuk "aksi gagal" — sementara aksi ini punya TIGA cara
+   * ditolak yang akibatnya berbeda-beda bagi orang yang uangnya sedang dibicarakan, dan satu cara
+   * berhasil yang wajib menyebut NOMINAL YANG BENAR-BENAR DIKREDITKAN (dibaca server dari struk,
+   * bukan dari layar ini).
+   *
+   * `amountIdr` dikirim sebagai KONFIRMASI, diambil dari angka yang SEDANG DITAMPILKAN di layar
+   * ini — bukan dari kotak isian (tidak ada lagi). Gunanya persis satu: kalau baris yang dimuat
+   * layar sudah basi, yang terjadi adalah penolakan 400 yang menyebut KEDUA angka — bukan
+   * pembayaran diam-diam sebesar angka yang tidak pernah dilihat siapa pun.
+   */
+  const payCompensation = async () => {
+    if (!token || busy || !c || compNote.trim().length < NOTE_MIN) return;
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    setCompResult(null);
+    try {
+      const res = await compensateAdminConsignment(
+        c.id,
+        { amountIdr: c.askPriceIdr, note: compNote.trim() },
+        token,
+      );
+      const { credited, compensationIdr, ...row } = res;
+      setC(row);
+      /* `credited` HANYA pernah `true` di server hari ini — "sudah pernah dibayar" terbit sebagai
+         409. Tapi backend LAMA menjawab 200 + `{ credited: false }` untuk pembayaran kedua, dan
+         layar inilah yang dulu menampilkannya sebagai hijau sambil nol rupiah bergerak. Kalau
+         jawaban seperti itu pernah muncul lagi (mis. layar ini menghadap backend yang belum
+         diperbarui), ia dibaca sebagai KEGAGALAN. */
+      if (credited !== true) {
+        setCompResult({
+          ok: false,
+          title: "TIDAK DIBAYAR — server menjawab bahwa tidak ada kredit yang dibuat.",
+          detail:
+            "Kemungkinan besar ganti rugi untuk titipan ini sudah pernah tercatat sebelumnya. " +
+            "Periksa saldo pemiliknya dan riwayat di bawah sebelum melakukan apa pun lagi — " +
+            "jangan membayar ulang dari layar ini.",
+        });
+        return;
+      }
+      setCompNote("");
+      setCompResult({
+        ok: true,
+        title: `${rp(compensationIdr)} BENAR-BENAR dikreditkan ke saldo pemilik.`,
+        detail:
+          "Sebesar harga jual yang disepakati di struk serah terima. Tercatat permanen di " +
+          "riwayat titipan ini, dan pemiliknya bisa membacanya sendiri. Penekanan berikutnya " +
+          "akan DITOLAK — ledger saldo append-only, satu ganti rugi per titipan.",
+      });
+    } catch (e) {
+      setCompResult({
+        ok: false,
+        title: compensateFailureTitle(e),
+        // Pesan server APA ADANYA: ia menyebut nominal yang sudah tercatat, order pembelinya, dan
+        // tanggalnya — informasi yang menentukan langkah berikutnya dan tidak boleh ditulis ulang.
+        detail: e instanceof Error ? e.message : "Server menolak tanpa penjelasan.",
+      });
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+  };
+
   if (loading && !c) return <p className="py-16 text-center text-[13px] text-zinc-500">Memuat…</p>;
 
   if (!c)
@@ -429,6 +558,35 @@ export default function AdminTitipanDetailPage() {
   const rawUnlistable = c.grader == null;
   /** SUMBU KEDUA, berdiri sendiri dari custody: sudah ada akun yang akan menerima uangnya? */
   const awaitingClaim = isAwaitingClaim(c);
+
+  /* ── APA YANG SEBENARNYA TERJADI SESUDAH "TERIMA KARTU" ───────────────────────────────────
+     Dialog konfirmasinya dulu berbunyi "Sesudah ini kartu boleh dipajang" dan notifikasinya
+     "Sekarang boleh dipajang." — untuk SETIAP baris, termasuk dua yang server tolak memajangnya
+     dengan pasti: kartu MENTAH (kolom grader listing hanya mengenal PSA/CGC/BGS) dan titipan yang
+     pemiliknya belum menukarkan kode klaim (hasil penjualannya tidak punya tujuan).
+
+     Operator membaca kalimat itu di teras rumah kolektor, berkata "sudah masuk, nanti kami
+     pajangkan", lalu pamit — dan baru tahu kenyataannya di kantor. Layar ini SUDAH menghitung
+     kedua keadaan itu; yang kurang hanya memakainya untuk mencabangkan kalimatnya. */
+  const afterAcceptBlockers: string[] = [];
+  if (rawUnlistable) {
+    afterAcceptBlockers.push(
+      "kartu ini belum punya grading (kolom grader pada listing hanya mengenal PSA/CGC/BGS)",
+    );
+  }
+  if (awaitingClaim) {
+    afterAcceptBlockers.push(
+      "pemiliknya belum menukarkan kode klaim, jadi hasil penjualannya belum punya tujuan",
+    );
+  }
+  /** Cara membereskannya, disebut spesifik — supaya operator tidak perlu menebak langkah berikutnya. */
+  const afterAcceptFix = rawUnlistable
+    ? awaitingClaim
+      ? " Kalau slab-nya sebenarnya ada, betulkan lewat “Koreksi keterangan kartu” di bawah; kode klaimnya diterbitkan ulang lewat panel ungu di atas."
+      : " Kalau slab-nya sebenarnya ada dan dropdown Grader cuma tertinggal kosong, betulkan lewat “Koreksi keterangan kartu” di bawah — tanpa perlu mengarang pengembalian atau kehilangan."
+    : awaitingClaim
+      ? " Kode klaimnya bisa diterbitkan ulang lewat panel ungu di atas, atau akunnya ditautkan langsung dari sana."
+      : "";
 
   /* ── Layar serah-terima kode: MENGGANTI halaman, bukan modal ──────────────────────────────
      Kodenya hanya hidup di memori halaman ini. Modal yang tertutup karena jari menyenggol latar
@@ -857,6 +1015,17 @@ export default function AdminTitipanDetailPage() {
             </label>
           </div>
 
+          {/* DIKATAKAN SEBELUM TOMBOLNYA DITEKAN, bukan cuma di dialog konfirmasi: inilah kalimat
+              yang menentukan apa yang operator janjikan ke pemilik kartu sambil berpamitan. */}
+          {afterAcceptBlockers.length > 0 && (
+            <p className="mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-100">
+              Menerima kartu ini <strong>tidak</strong> membuatnya bisa dipajang:{" "}
+              {afterAcceptBlockers.join(" dan ")}. Custody-nya tetap tercatat dan kartunya tetap
+              bisa ditarik kembali kapan saja — tapi jangan menjanjikan “nanti kami pajangkan”
+              sebelum itu beres.{afterAcceptFix}
+            </p>
+          )}
+
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <button
               type="button"
@@ -1211,12 +1380,42 @@ export default function AdminTitipanDetailPage() {
                 Simpan koreksi
               </button>
               <p className="text-[11px] text-zinc-500">
-                Tidak menimpa apa pun — ditulis sebagai catatan baru di riwayat.
+                Tidak menimpa apa pun — ditulis sebagai catatan baru di riwayat. Untuk keterangan
+                kartu yang salah ketik (nama, set, nomor, sertifikat, grader), pakai panel di
+                bawah: yang itu memang membetulkan kolomnya.
               </p>
             </div>
           </div>
         )}
       </Card>
+
+      {/* ── KOREKSI KETERANGAN KARTU ───────────────────────────────────────────────────────
+          Panel TERPISAH dari "Tulis koreksi" di atasnya, dan pemisahan itu adalah isinya:
+          `addCorrection` sengaja TIDAK menimpa apa pun (koreksi naratif atas BUKTI), sedangkan
+          panel ini satu-satunya yang MENIMPA kolom identitas kartu — dan judul publiknya.
+
+          Diletakkan tepat SESUDAH kartu "Catatan serah terima" karena di sanalah operator baru
+          saja membaca nilai yang salah. Rutenya sendiri boleh dipakai di status apa pun (nama
+          kartu yang salah tetap salah sesudah kartunya pindah tangan), jadi panel ini tidak
+          disembunyikan oleh status — yang membatasi tetap gerbang di server, dicerminkan di dalam
+          panelnya sebagai penghalang yang terbaca SEBELUM tombolnya ditekan. */}
+      {can("CORRECTION") && (
+        <Card
+          title="Koreksi keterangan kartu"
+          sub="Untuk yang memang SALAH, bukan untuk yang berubah pikiran: nama, set, nomor, sertifikat, grader, grade. Kolomnya ditimpa dan judul publiknya ikut diperbaiki — nilai lamanya pindah ke jejak audit yang pemilik kartu bisa baca sendiri. Catatan kondisi dan foto tidak bisa ditimpa dari sini."
+        >
+          <LabelCorrectionPanel
+            /* Disemai ulang setiap kali barisnya dibaca ulang dari server — bukan setiap kali
+               `c` berubah: penyimpanan yang berhasil sudah menyemai formulirnya sendiri dari
+               respons, dan remount di situ akan menghapus pesan berhasilnya. */
+            key={rowEpoch}
+            c={c}
+            token={token ?? ""}
+            onUpdated={setC}
+            onReload={() => void load()}
+          />
+        </Card>
+      )}
 
       {/* ── RIWAYAT ── */}
       {c.events && c.events.length > 0 && (
@@ -1581,33 +1780,87 @@ export default function AdminTitipanDetailPage() {
               <div className="rounded-xl border border-emerald-400/25 bg-emerald-400/[0.06] p-3.5">
                 <p className="text-[13px] font-semibold text-emerald-200">Ganti rugi ke pemilik</p>
                 <p className="mt-1 text-[12px] leading-relaxed text-zinc-400">
-                  Mengkredit saldo pemilik kartu. Nominalnya keputusan manusia, bukan rumus —
-                  bicarakan dulu dengan orangnya. Aman ditekan dua kali: server hanya membayar
-                  sekali per titipan.
+                  Struk serah terima yang ditandatangani kedua pihak berbunyi:{" "}
+                  <em>“Hoshi mengganti sesuai nilai yang tertulis di struk ini.”</em> Nominalnya
+                  karena itu <strong>bukan keputusan operator</strong> — server membacanya sendiri
+                  dari harga jual yang disepakati di baris titipan ini, dan menolak angka lain.
                 </p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <input
-                    value={compAmount}
-                    onChange={(e) => setCompAmount(e.target.value.replace(/[^\d]/g, ""))}
-                    inputMode="numeric"
-                    placeholder="Nominal (Rp)"
-                    className={INPUT}
-                  />
-                  <input
-                    value={compNote}
-                    onChange={(e) => setCompNote(e.target.value)}
-                    placeholder="Dasar kesepakatannya (wajib)"
-                    className={INPUT}
-                  />
-                </div>
+
+                {/* ANGKA YANG DIJANJIKAN KERTASNYA, DITAMPILKAN — bukan kotak isian kosong.
+                    Kotak kosong di sini dulu mengundang "kurang satu nol" pada satu-satunya aksi
+                    di layar ini yang memindahkan uang sungguhan. */}
+                <p className="mt-3 rounded-lg border border-emerald-400/20 bg-black/25 px-3.5 py-3 text-[13px] leading-relaxed text-zinc-200">
+                  Struk menjanjikan{" "}
+                  <strong className="text-[15px] text-emerald-200">{rp(c.askPriceIdr)}</strong>
+                  <span className="mt-1 block text-[11.5px] text-zinc-500">
+                    Harga jual yang disepakati di struk serah terima — bukan harga dasar
+                    {c.reservePriceIdr != null ? ` (${rp(c.reservePriceIdr)})` : ""}, bukan taksiran
+                    pasar hari ini. Inilah yang akan dikreditkan.
+                  </span>
+                </p>
+
+                {/* ── DUA KEADAAN YANG MEMBUATNYA PASTI DITOLAK, DIKATAKAN LEBIH DULU ─────── */}
+                {c.consignorId == null && (
+                  <p className="mt-3 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-violet-100">
+                    Belum ada akun pemilik yang tertaut ke titipan ini, jadi uangnya belum punya
+                    tujuan — server menolak selama itu. Tautkan akunnya (atau minta pemiliknya
+                    menukarkan kode klaim) lewat panel ungu di atas, baru bayar.
+                  </p>
+                )}
+                {(c.status === "SOLD" || c.soldOrderId != null || c.listing?.buyerId != null) && (
+                  <p className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
+                    Kartu ini <strong>sudah terjual</strong> sebelum hilang. Pemiliknya sudah
+                    menerima payout-nya di detik settlement; yang tidak menerima apa pun adalah{" "}
+                    <strong>PEMBELI</strong>, dan dialah yang wajib dipulihkan — lewat{" "}
+                    <Link href="/admin/transactions" className="text-amber-200 underline">
+                      order pembayarannya (REFUND_DUE)
+                    </Link>
+                    , bukan dari sini. Server menolak ganti rugi ke pemilik di baris seperti ini;
+                    penolakannya sekaligus memastikan utang ke pembelinya sudah tercatat.
+                  </p>
+                )}
+
+                <input
+                  value={compNote}
+                  onChange={(e) => setCompNote(e.target.value)}
+                  placeholder="Dasar kesepakatannya (wajib, min. 10 karakter) — mis. “disepakati lewat telepon 20 Sep, sesuai angka di struk”"
+                  className={`${INPUT} mt-3`}
+                />
+
+                {/* HASILNYA — hijau HANYA kalau rupiahnya benar-benar bergerak. Bug lamanya persis
+                    kebalikan itu: operator salah ketik, mengulang, server menolak, layar tetap
+                    hijau, dan operator mengira pemiliknya sudah dibayar. */}
+                {compResult && (
+                  <div
+                    className={`mt-3 rounded-lg border px-3.5 py-3 text-[12.5px] leading-relaxed ${
+                      compResult.ok
+                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100"
+                        : "border-red-400/40 bg-red-400/10 text-red-200"
+                    }`}
+                  >
+                    <p className="font-semibold">{compResult.title}</p>
+                    <p className="mt-1">{compResult.detail}</p>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setConfirm({ kind: "COMPENSATE" })}
-                  disabled={busy || !compAmount || compNote.trim().length < NOTE_MIN}
-                  className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2.5 text-[13px] font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:opacity-50"
+                  disabled={
+                    busy ||
+                    compNote.trim().length < NOTE_MIN ||
+                    c.consignorId == null ||
+                    !(c.askPriceIdr > 0)
+                  }
+                  className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2.5 text-[13px] font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Bayar ganti rugi
+                  {busy ? "Memproses…" : `Bayar ${rp(c.askPriceIdr)} ke pemilik`}
                 </button>
+                <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500">
+                  Satu ganti rugi per titipan: penekanan kedua DITOLAK (dan penolakannya menyebut
+                  nominal, penerima, dan tanggal yang sudah tercatat), bukan diam-diam membayar dua
+                  kali — dan bukan pula dilaporkan sebagai berhasil.
+                </p>
               </div>
             )}
           </div>
@@ -1621,7 +1874,16 @@ export default function AdminTitipanDetailPage() {
           <>
             Ini mencatat bahwa Hoshi memegang kartu ini, sejak sekarang, dan mencatat kamu sebagai
             penerimanya. Catatan itu <strong>tidak bisa dibatalkan</strong> — kalau kartunya keluar
-            lagi, itu dicatat sebagai kejadian terpisah. Sesudah ini kartu boleh dipajang.
+            lagi, itu dicatat sebagai kejadian terpisah.{" "}
+            {afterAcceptBlockers.length === 0 ? (
+              "Sesudah ini kartu boleh dipajang."
+            ) : (
+              <>
+                Sesudah ini kartunya tercatat ada di rak Hoshi, tapi{" "}
+                <strong>BELUM bisa dipajang</strong>: {afterAcceptBlockers.join(" dan ")}. Jangan
+                menjanjikan “nanti kami pajangkan” ke pemiliknya sebelum itu beres.
+              </>
+            )}
           </>
         }
         confirmLabel="Ya, kartunya ada di saya"
@@ -1637,7 +1899,11 @@ export default function AdminTitipanDetailPage() {
                 },
                 token ?? "",
               ),
-            "Kartu tercatat diterima. Sekarang boleh dipajang.",
+            afterAcceptBlockers.length === 0
+              ? "Kartu tercatat diterima. Sekarang boleh dipajang."
+              : `Kartu tercatat diterima — tapi BELUM bisa dipajang: ${afterAcceptBlockers.join(
+                  " dan ",
+                )}.${afterAcceptFix}`,
           )
         }
         onCancel={() => setConfirm(null)}
@@ -1739,20 +2005,17 @@ export default function AdminTitipanDetailPage() {
 
       <ConfirmDialog
         open={confirm?.kind === "COMPENSATE"}
-        title={`Bayar ${rp(Number(compAmount) || 0)} ke pemilik?`}
-        message="Nominal ini langsung masuk ke saldo pemiliknya. Pastikan angkanya memang yang kalian sepakati."
-        confirmLabel="Bayar"
-        onConfirm={() =>
-          void run(
-            () =>
-              compensateAdminConsignment(
-                c.id,
-                { amountIdr: Number(compAmount), note: compNote.trim() },
-                token ?? "",
-              ),
-            "Ganti rugi tercatat di saldo pemilik.",
-          )
+        title={`Bayar ${rp(c.askPriceIdr)} ke pemilik?`}
+        message={
+          <>
+            Angka ini <strong>dibaca dari struk serah terima</strong> (harga jual yang disepakati),
+            bukan diketik di sini — dan ia langsung masuk ke saldo pemiliknya. Kalau struknya
+            berbunyi lain, yang harus diperbaiki adalah catatan titipannya, bukan pembayarannya.
+            Satu kali per titipan: penekanan berikutnya akan ditolak.
+          </>
         }
+        confirmLabel="Bayar"
+        onConfirm={() => void payCompensation()}
         onCancel={() => setConfirm(null)}
       />
     </div>

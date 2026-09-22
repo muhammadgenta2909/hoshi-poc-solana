@@ -50,7 +50,7 @@ import {
   type ConsignorCandidate,
   type CreateConsignmentInput,
 } from "@/lib/admin-api";
-import { commissionPct } from "@/lib/consignment";
+import { chargeablePriceRange, commissionPct, isChargeablePrice } from "@/lib/consignment";
 import ClaimCodeHandover from "@/components/admin/ClaimCodeHandover";
 import HandoverReceiptButton, {
   receiptDataFrom,
@@ -60,6 +60,9 @@ import ConsignorPicker, { PickedConsignor } from "@/components/admin/ConsignorPi
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-[14px] text-zinc-100 placeholder-zinc-600 outline-none transition focus:border-yellow-400/40";
+
+/** Kolom yang bisa DIKUNCI: terkunci harus KELIHATAN terkunci, bukan cuma tidak merespons ketukan. */
+const LOCKABLE_INPUT = `${INPUT} disabled:cursor-not-allowed disabled:border-white/[0.06] disabled:bg-white/[0.015] disabled:text-zinc-500 disabled:placeholder-zinc-700`;
 
 /** Komisi bawaan (5%) — nilai yang dipakai pemilik produk hari ini. Dibekukan per baris titipan. */
 const DEFAULT_COMMISSION_BPS = 500;
@@ -450,6 +453,37 @@ export default function AdminTitipanBaruPage() {
   const askNum = Number(askPrice);
   const bpsNum = Number(commissionBps);
 
+  /* ══ SERTIFIKAT TANPA GRADER: DICEGAH DI SINI, SEBELUM STRUKNYA DITANDATANGANI ══════════════
+     Server MENOLAK kombinasi `certNumber` terisi + `grader` kosong (`CERT_WITHOUT_GRADER_MESSAGE`
+     di consignment.service.ts), dan penolakannya benar: kunci anti-dobel-titip adalah PASANGAN
+     `UNIQUE(grader, certNumber)` atas custody yang masih hidup, dan di Postgres grader NULL
+     membuat kunci itu TIDAK PERNAH bentrok — satu slab fisik bisa punya dua titipan hidup
+     sekaligus tanpa satu lapis pun berbunyi.
+
+     Tapi penolakan server datang SESUDAH operator menekan Simpan, yaitu saat ia sudah berdiri di
+     depan pemilik kartu dan kertasnya sebentar lagi ditandatangani. Formulir ini karena itu tidak
+     membiarkan keadaannya lahir: begitu grader kosong, ketiga kolom slab (nomor sertifikat, grade,
+     skor) DIKUNCI — bukan dikosongkan diam-diam, karena menghapus yang sudah diketik orang di
+     depan pemiliknya adalah cara lain untuk kehilangan data yang benar.
+
+     Yang sudah TERLANJUR terisi (mis. dipulihkan dari draf, atau grader-nya dikosongkan setelah
+     nomornya diketik) menahan tombol Simpan, dengan kalimat yang menyebut KEDUA jalan keluarnya —
+     dan tombol pembersih di sebelahnya, karena kolom yang terkunci tidak bisa dihapus sendiri
+     oleh operator. */
+  const certFilled = certNumber.trim() !== "";
+  const gradeFilled = gradeLabel.trim() !== "" || gradeScore.trim() !== "";
+  /** Kolom slab terkunci persis saat kartunya mentah: "kartu mentah tidak punya sertifikat". */
+  const slabLocked = grader === "";
+  /** Terkunci TAPI ada isinya — satu-satunya keadaan yang menahan Simpan. */
+  const slabConflict = slabLocked && (certFilled || gradeFilled);
+
+  /** Kosongkan ketiga kolom slab sekaligus — jalan keluar kedua dari `slabConflict`. */
+  const clearSlabFields = () => {
+    setCertNumber("");
+    setGradeLabel("");
+    setGradeScore("");
+  };
+
   /**
    * Yang masih kurang — ditampilkan terus, bukan baru muncul setelah tombol ditekan.
    *
@@ -471,7 +505,21 @@ export default function AdminTitipanBaruPage() {
     if (gradeScore.trim() !== "" && !(Number(gradeScore) >= 0 && Number(gradeScore) <= 10))
       m.push("nilai grade antara 0 dan 10");
     if (!Number.isFinite(askNum) || askNum <= 0) m.push("harga jual yang disepakati");
+    // Rentang yang BISA DITAGIHKAN — ambang yang sama persis dengan `isChargeablePrice` di server,
+    // yang menolak `createIntake` di luar rentang itu. Disebut di sini (bukan cuma di petunjuk
+    // kolomnya) supaya harga yang tidak mungkin ditagihkan tertahan selagi angkanya masih bisa
+    // dirundingkan, bukan sesudah kartunya berpindah tangan.
+    else if (!isChargeablePrice(Math.round(askNum)))
+      m.push(`harga jual di dalam rentang yang bisa ditagihkan (${chargeablePriceRange()})`);
     if (!Number.isFinite(bpsNum) || bpsNum < 0 || bpsNum > 10_000) m.push("komisi yang wajar");
+    // Sertifikat tanpa grader: DITOLAK server. Kedua jalan keluarnya disebut, karena yang kurang
+    // bisa jadi dropdown Grader-nya — bukan nomornya.
+    if (slabConflict)
+      m.push(
+        certFilled
+          ? "pilih grader-nya, atau hapus nomor sertifikatnya — kartu mentah tidak punya sertifikat"
+          : "pilih grader-nya, atau hapus grade dan skornya — kartu mentah tidak punya grade",
+      );
     // Bukan aturan server — aturan RUANG TAMU. Lihat blok peringatan kartu mentah di bawah.
     // Baru berlaku setelah ada kartu yang dibicarakan: menuntut centang pada formulir yang masih
     // kosong mengubah peringatan menjadi gangguan, dan peringatan yang jadi gangguan diabaikan.
@@ -492,6 +540,8 @@ export default function AdminTitipanBaruPage() {
     bpsNum,
     grader,
     rawAck,
+    slabConflict,
+    certFilled,
   ]);
 
   const submit = async () => {
@@ -652,7 +702,7 @@ export default function AdminTitipanBaruPage() {
               tone="utama"
               hint={
                 saved.claim
-                  ? "Kode klaim ikut tercetak di kedua lembar. Ini satu-satunya kesempatan kode itu masuk ke kertas — setelah layar ini ditutup, tidak ada yang bisa membacanya lagi."
+                  ? "Kode klaim ikut tercetak, HANYA di lembar pemilik — lembar Hoshi sengaja tidak memuatnya, karena lembar itulah yang difoto. Ini satu-satunya kesempatan kode itu masuk ke kertas: setelah layar ini ditutup, tidak ada yang bisa membacanya lagi."
                   : "Pemiliknya sudah punya akun Hoshi, jadi tidak ada kode klaim yang perlu dicetak."
               }
             />
@@ -1045,31 +1095,76 @@ export default function AdminTitipanBaruPage() {
             </label>
           </div>
         )}
-        <Field label="Nomor sertifikat">
+        {/* ── TIGA KOLOM SLAB: HIDUP HANYA KALAU ADA GRADER-NYA ────────────────────────────────
+            Nomor sertifikat ADALAH nomor yang diterbitkan SEORANG grader; "nomor sertifikat dari
+            grader yang tidak diketahui" bukan identitas, cuma angka — dan di Postgres ia
+            mematikan penjaga dobel-titip tanpa sepatah kata (lihat blok di dekat `slabConflict`).
+            Karena itu ketiganya dikunci begitu dropdown Grader kosong, dengan alasannya tertulis
+            di kolomnya sendiri, bukan disimpan untuk pesan error sesudah Simpan. */}
+        <Field
+          label="Nomor sertifikat"
+          hint={slabLocked ? "Terkunci: kartu mentah tidak punya sertifikat. Pilih grader dulu." : undefined}
+        >
           <input
             value={certNumber}
             onChange={(e) => setCertNumber(e.target.value)}
+            disabled={slabLocked}
             placeholder="mis. 74185296"
-            className={INPUT}
+            className={LOCKABLE_INPUT}
           />
         </Field>
-        <Field label="Grade">
+        <Field
+          label="Grade"
+          hint={slabLocked ? "Terkunci: grade diterbitkan grader, dan kartu ini belum punya." : undefined}
+        >
           <input
             value={gradeLabel}
             onChange={(e) => setGradeLabel(e.target.value)}
+            disabled={slabLocked}
             placeholder="PSA 10"
-            className={INPUT}
+            className={LOCKABLE_INPUT}
           />
         </Field>
-        <Field label="Nilai grade (angka)">
+        <Field
+          label="Nilai grade (angka)"
+          hint={slabLocked ? "Terkunci: ikut kolom Grade — kartu mentah belum punya nilai grade." : undefined}
+        >
           <input
             value={gradeScore}
             onChange={(e) => setGradeScore(e.target.value)}
+            disabled={slabLocked}
             inputMode="decimal"
             placeholder="10"
-            className={INPUT}
+            className={LOCKABLE_INPUT}
           />
         </Field>
+
+        {/* Terkunci TAPI ada isinya: satu-satunya keadaan yang menahan Simpan di blok kartu.
+            Tombolnya ada karena kolom yang terkunci tidak bisa dikosongkan sendiri oleh operator —
+            peringatan yang jalan keluarnya tidak bisa ditempuh cuma jadi jalan buntu. */}
+        {slabConflict && (
+          <div className="sm:col-span-2 rounded-xl border border-red-400/35 bg-red-400/[0.09] px-4 py-3.5">
+            <p className="text-[13px] font-semibold text-red-100">
+              {certFilled
+                ? "Nomor sertifikat terisi, tapi grader-nya kosong."
+                : "Grade terisi, tapi grader-nya kosong."}
+            </p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-red-100/85">
+              Keduanya satu paket, dan server menolak kombinasi ini: penjaga “satu slab tidak bisa
+              dititipkan dua kali” bersandar pada pasangan grader + nomor sertifikat, dan grader
+              yang kosong membuat penjaga itu tidak pernah berbunyi.{" "}
+              <strong>Pilih grader-nya (PSA/CGC/BGS) sesuai yang tertera di slab</strong>, atau —
+              kalau kartunya memang mentah — hapus isian slab-nya.
+            </p>
+            <button
+              type="button"
+              onClick={clearSlabFields}
+              className="mt-3 rounded-lg border border-red-300/40 bg-red-400/10 px-3 py-1.5 text-[12px] font-semibold text-red-100 transition hover:bg-red-400/20"
+            >
+              Hapus nomor sertifikat, grade, dan skor
+            </button>
+          </div>
+        )}
 
         <Field label="Kondisi kartu mentah">
           <select
@@ -1102,7 +1197,17 @@ export default function AdminTitipanBaruPage() {
       </Section>
 
       <Section title="Kesepakatan" sub="Angka-angka ini dibekukan di baris titipan hari ini.">
-        <Field label="Harga jual (Rp)" required>
+        {/* ── RENTANG YANG BISA DITAGIHKAN, DISEBUT SEBELUM ANGKANYA DISEPAKATI ────────────────
+            Batas IDRX berlaku pada nominal yang DITAGIHKAN (harga + biaya layanan ~0,7%), jadi
+            harga di luar rentang ini ditolak server — di `createIntake`, tepat saat operator
+            menekan Simpan di depan pemilik kartu. Menyebutkannya di kolomnya sendiri memindahkan
+            kabar buruk itu ke saat angkanya masih bisa dirundingkan. Angkanya dibaca dari
+            `lib/consignment.ts`, satu tempat, bukan diketik ulang di layar ini. */}
+        <Field
+          label="Harga jual (Rp)"
+          required
+          hint={`Yang bisa ditagihkan ke pembeli: ${chargeablePriceRange()}. Di luar itu tagihannya tidak bisa terbit — biaya layanan ~0,7% ditambahkan di atas harga, dan hasilnya harus tetap di dalam batas penerbitan tagihan IDRX.`}
+        >
           <input
             value={askPrice}
             onChange={(e) => setAskPrice(e.target.value.replace(/[^\d]/g, ""))}
@@ -1111,12 +1216,16 @@ export default function AdminTitipanBaruPage() {
             className={INPUT}
           />
         </Field>
-        {/* Ini janji yang diucapkan di depan pemiliknya ("tidak akan kami lepas di bawah X"),
-            bukan memo internal. Ia ditampilkan lagi di layar harga & pajang, dan di halaman
-            pemiliknya sendiri — angka yang cuma bisa dibaca sebelah pihak bukan janji. */}
+        {/* ── HARGA DASAR: ACUAN YANG DISEPAKATI, BUKAN KUNCI ──────────────────────────────────
+            Kolom ini dulu berlabel "Harga terendah yang boleh" dengan petunjuk "mengikat" —
+            padahal TIDAK ADA satu baris kode pun yang menolak harga di bawahnya: rute pajang dan
+            rute ubah harga hanya memperingatkan (`belowReserveWarning`) lalu tetap jalan. Struk
+            serah terimanya pun ikut dibetulkan, dan keduanya sekarang berbunyi sama: acuan yang
+            disepakati, yang melepas di bawahnya butuh persetujuan pemilik dan meninggalkan jejak.
+            Kalau operator mengucapkan "mengikat" di ruang tamu orang, kertasnya berbohong. */}
         <Field
-          label="Harga terendah yang boleh (Rp)"
-          hint="Opsional, tapi mengikat: angka ini muncul lagi setiap kali harga kartu ini diubah atau dipajang, dan pemiliknya melihatnya di halaman titipannya."
+          label="Harga dasar yang disepakati (Rp)"
+          hint="Opsional. Bukan kunci otomatis — sistem tidak menolak harga di bawahnya. Yang dijamin: angka ini muncul lagi setiap kali harga kartu ini diubah atau dipajang, alasan melepas di bawahnya wajib diketik dan tersimpan permanen, dan pemiliknya melihat angka ini di halaman titipannya."
         >
           <input
             value={reservePrice}

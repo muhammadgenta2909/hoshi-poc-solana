@@ -950,6 +950,51 @@ export const estimatedPayout = (priceIdr: number, bps: number): number =>
   Math.max(0, priceIdr - Math.floor((priceIdr * Math.min(Math.max(bps, 0), BPS_DENOMINATOR)) / BPS_DENOMINATOR));
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
+   RENTANG HARGA YANG BENAR-BENAR BISA DITAGIHKAN
+
+   Batas IDRX berlaku pada nominal yang DITAGIHKAN ke pembeli, bukan pada harga kartunya: biaya
+   layanan QRIS ~0,7% DITAMBAHKAN di atas harga, jadi rentang harga kartu yang sah lebih sempit
+   daripada rentang mint (Rp 20.000 – Rp 1 miliar).
+
+   ⚠️ DIKETIK ULANG DI SINI, DAN ITU DISENGAJA — DENGAN SATU SYARAT. Sumbernya adalah
+   `CHARGEABLE_PRICE_MIN_IDRX` / `CHARGEABLE_PRICE_MAX_IDRX` di backend
+   (`src/payments/idrx-mint-bounds.ts`), yang MENGHITUNG kedua angka ini dari fee-nya dan punya
+   test yang memakukannya persis ke 19.860 dan 993.048.659. Frontend ini tidak mengimpor apa pun
+   dari repo backend dan belum ada rute yang mengirimkan batasnya, jadi tidak ada cara membacanya
+   saat ini. Kalau suatu hari fee QRIS berubah, KEDUA angka di bawah ikut berubah di sana dan HARUS
+   diperbarui di sini — yang gagal bukan tagihannya, melainkan petunjuk di formulir intake, dan itu
+   gagal dengan diam.
+
+   Yang MENEGAKKANNYA tetap server: `createIntake` menolak `askPriceIdr` di luar rentang ini
+   (`isChargeablePrice`), begitu pula rute pajang dan rute ubah harga. Angka di sini hanya supaya
+   operator tahu batasnya SEBELUM menyepakati harga di depan pemilik kartu — bukan sesudah.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Harga kartu terendah yang tagihannya masih bisa terbit. */
+export const CHARGEABLE_PRICE_MIN_IDR = 19_860;
+
+/** Harga kartu tertinggi yang tagihannya masih bisa terbit. */
+export const CHARGEABLE_PRICE_MAX_IDR = 993_048_659;
+
+/** "Rp 19.860 – Rp 993.048.659" — satu bentuk, dipakai di petunjuk maupun di kalimat penolakan. */
+export const chargeablePriceRange = (): string =>
+  `Rp ${CHARGEABLE_PRICE_MIN_IDR.toLocaleString("id-ID")} – Rp ${CHARGEABLE_PRICE_MAX_IDR.toLocaleString(
+    "id-ID",
+  )}`;
+
+/**
+ * Harga ini bisa ditagihkan ke pembeli?
+ *
+ * Ambangnya PERSIS sama dengan `isChargeablePrice` di server — inklusif di kedua ujung. Harga yang
+ * belum diketik (kosong → NaN/0) dijawab `false`, tapi layar pemanggil yang memutuskan apakah itu
+ * pantas disebut sebagai kesalahan: "belum diisi" bukan "di luar rentang".
+ */
+export const isChargeablePrice = (priceIdr: number): boolean =>
+  Number.isFinite(priceIdr) &&
+  priceIdr >= CHARGEABLE_PRICE_MIN_IDR &&
+  priceIdr <= CHARGEABLE_PRICE_MAX_IDR;
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
    DUA ANGKA YANG TIDAK BOLEH TERTUKAR — dan yang pernah tertukar, dengan akibat yang mahal.
 
    ┌──── ANGKA DI STRUK vs ANGKA DI PAJANGAN ───────────────────────────────────────────────────┐

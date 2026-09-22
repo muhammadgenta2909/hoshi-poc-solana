@@ -7,6 +7,34 @@ import type {
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
+/**
+ * Kegagalan rute admin yang MEMBAWA STATUS HTTP-nya.
+ *
+ * Sebelumnya `api()` melempar `Error` biasa, jadi satu-satunya yang sampai ke layar adalah teks
+ * pesannya. Layar yang perlu MEMBEDAKAN dua penolakan yang berbeda akibatnya — ganti rugi yang
+ * ditolak karena kartunya sudah terjual (yang harus dipulihkan PEMBELI) versus yang ditolak
+ * karena sudah pernah dibayar (nol rupiah bergerak, dan memang tidak boleh bergerak lagi) — tidak
+ * punya apa pun untuk dicabangkan selain mencocokkan kalimat.
+ *
+ * `message` tetap apa adanya dari server, jadi pemanggil lama (`e instanceof Error ? e.message`)
+ * tidak berubah perilakunya sama sekali: ini subclass `Error`.
+ *
+ * SENGAJA TIDAK membawa `code`: rute titipan menolak dengan ConflictException/BadRequestException
+ * BIASA yang tidak punya kode kontrak (berbeda dari jalur kirim fisik di `lib/api.ts`, yang
+ * memang mengirim `code`/`stage`). Field yang selalu `undefined` hanya akan mengundang pemanggil
+ * mengarang kode yang tidak pernah dikirim siapa pun.
+ */
+export class AdminApiError extends Error {
+  constructor(
+    message: string,
+    /** Status HTTP apa adanya. 400 = permintaannya salah bentuk/nilai; 409 = keadaannya menolak. */
+    public status: number,
+  ) {
+    super(message);
+    this.name = "AdminApiError";
+  }
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -19,7 +47,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       if (body?.message)
         msg = Array.isArray(body.message) ? body.message.join(", ") : body.message;
     } catch { /* ignore */ }
-    throw new Error(msg);
+    throw new AdminApiError(msg, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -1658,19 +1686,48 @@ export const markAdminConsignmentLost = (id: string, note: string, token: string
   });
 
 /**
+ * Jawaban SUKSES ganti rugi. `credited` HANYA pernah `true`.
+ *
+ * Dulu baris kedua dijawab `{ credited: false }` dengan HTTP 200, dan layar menampilkan toast
+ * hijau "Ganti rugi tercatat di saldo pemilik" sambil NOL rupiah bergerak. Sekarang keadaan itu
+ * terbit sebagai 409. `compensationIdr` adalah nominal yang BENAR-BENAR dikreditkan — dibaca
+ * server dari `askPriceIdr` (angka di struk), bukan dari body permintaan — jadi layar menampilkan
+ * apa yang TERJADI, bukan apa yang diminta.
+ */
+export type AdminConsignmentCompensated = AdminConsignment & {
+  credited: true;
+  compensationIdr: number;
+};
+
+/**
  * Ganti rugi ke pemilik kartu yang HILANG di tangan Hoshi — lewat ledger saldo yang sudah ada.
  *
- * IDEMPOTEN per titipan di server: klik dua kali tidak bisa membayar dua kali, dan jawabannya
- * membawa `credited` (false = memang sudah pernah dibayar, bukan error).
+ * ══ NOMINALNYA TIDAK DIKETIK OPERATOR ══
+ * Dasarnya `askPriceIdr`: "Harga jual yang disepakati" yang TERCETAK di struk serah terima dua
+ * lembar yang ditandatangani kedua pihak. Server membacanya sendiri dari baris titipan.
  *
- * Ini MEMINDAHKAN UANG ke saldo pemilik. Nominalnya keputusan manusia, bukan rumus.
+ * `amountIdr` di sini KONFIRMASI, bukan perintah: kalau dikirim dan BERBEDA dari `askPriceIdr`,
+ * server menolak 400 yang menyebut kedua angkanya. Layar operator tetap mengirimkannya — bukan
+ * dari kotak isian (tidak ada lagi), melainkan dari angka yang SEDANG DITAMPILKAN di layar itu.
+ * Gunanya persis satu: kalau baris yang dimuat layar sudah basi (harganya berubah sejak halaman
+ * ini dibuka), yang terjadi adalah penolakan yang menyebut kedua angka — bukan pembayaran diam-
+ * diam sebesar angka yang tidak pernah dilihat operator.
+ *
+ * TIGA PENOLAKAN yang WAJIB dibaca sebagai KEGAGALAN oleh pemanggil (semuanya melempar, jadi
+ * tidak ada jalan di mana layar bisa menampilkan hijau sambil nol rupiah bergerak):
+ *   • 409 "SUDAH TERJUAL …"      → yang wajib dipulihkan PEMBELI; utangnya sudah dicatat otomatis
+ *                                  sebagai REFUND_DUE pada order pembayarannya.
+ *   • 409 "SUDAH pernah tercatat" → menyebut nominal, penerima, dan tanggalnya. Nol rupiah bergerak.
+ *   • 400 "BERBEDA dari harga jual yang disepakati" → angka di layar bukan angka di server.
+ * Ketiganya ConflictException/BadRequestException BIASA tanpa kode kontrak — bercabanglah pada
+ * `AdminApiError.status` + teks pesannya, jangan mengarang kode yang tidak dikirim server.
  */
 export const compensateAdminConsignment = (
   id: string,
-  input: { amountIdr: number; note: string },
+  input: { amountIdr?: number; note: string },
   token: string,
 ) =>
-  api<AdminConsignment & { credited: boolean }>(`/admin/consignments/${id}/compensate`, {
+  api<AdminConsignmentCompensated>(`/admin/consignments/${id}/compensate`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -1688,4 +1745,100 @@ export const addAdminConsignmentCorrection = (id: string, note: string, token: s
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
     body: JSON.stringify({ note }),
+  });
+
+/* ─────────────────────────── KOREKSI LABEL (menimpa kolomnya) ─────────────────────────── */
+
+/**
+ * Field LABEL yang boleh dikoreksi. SEMUANYA opsional; minimal SATU wajib ada (ditegakkan server
+ * supaya pesannya bisa menjelaskan garis bukti/label, bukan sekadar "validation failed").
+ *
+ * ⚠️ ARTI TIGA NILAI YANG BERBEDA, dan salah membacanya berarti menghapus kolom orang:
+ *   • field TIDAK ADA di objek  → tidak disentuh
+ *   • string KOSONG ("")        → KOSONGKAN kolomnya (koreksi yang benar kadang berarti menghapus:
+ *                                 nomor sertifikat yang diketik untuk kartu yang ternyata mentah)
+ *   • ada isinya                → timpa dengan nilai itu
+ * `cardName` DIKECUALIKAN dari string kosong: ia judul publik kartunya dan server menolaknya.
+ *
+ * `gradeScore` TIDAK BISA DIKOSONGKAN lewat rute ini (server hanya menerima angka 0–10; tidak ada
+ * bentuk "kosong" untuknya di DTO). Pemanggil yang ingin menghapus grading menghapus `gradeLabel`
+ * dan `grader`-nya.
+ */
+export type CorrectConsignmentLabelInput = {
+  /** Judul PUBLIK kartu — disalin ke `Listing.name`. Tidak boleh string kosong. */
+  cardName?: string;
+  cardSet?: string;
+  cardNumber?: string;
+  certNumber?: string;
+  gradeLabel?: string;
+  /** 0–10. Tidak ada cara mengosongkannya lewat rute ini. */
+  gradeScore?: number;
+  /** "PSA" | "CGC" | "BGS", atau "" = kartunya ternyata MENTAH (kosongkan kolomnya). */
+  grader?: string;
+  /** WAJIB, minimal 10 karakter: APA yang salah dan DARI MANA tahu nilai yang benar. */
+  note: string;
+};
+
+/** Satu kolom yang benar-benar berubah — apa, dari apa, jadi apa. Ditulis server, bukan ditebak. */
+export type ConsignmentLabelChange = {
+  field:
+    | "cardName"
+    | "cardSet"
+    | "cardNumber"
+    | "certNumber"
+    | "grader"
+    | "gradeLabel"
+    | "gradeScore";
+  before: string | number | null;
+  after: string | number | null;
+};
+
+/**
+ * Jawaban koreksi label: baris titipan terbaru + APA yang berubah menurut server.
+ *
+ * `corrected` dipakai layar untuk melaporkan perubahan yang BENAR-BENAR tertulis (server membuang
+ * field yang nilainya sudah sama), dan `listingUpdated` menjawab pertanyaan yang tidak boleh
+ * ditebak: apakah judul yang dilihat publik ikut diperbaiki? `false` bisa berarti listing-nya
+ * sudah tidak ACTIVE (baris itu snapshot apa yang dibeli pembeli — bukan milik kita untuk diubah)
+ * atau memang tidak ada kolom listing yang perlu ikut berubah.
+ */
+export type AdminConsignmentLabelCorrected = AdminConsignment & {
+  corrected: ConsignmentLabelChange[];
+  listingUpdated: boolean;
+};
+
+/**
+ * ══ KOREKSI LABEL — SATU-SATUNYA RUTE DI FITUR TITIPAN YANG MENIMPA KOLOM ══
+ *
+ * Garisnya tegas: `conditionNote` dan foto adalah BUKTI dan TETAP tidak punya rute ubah. Yang
+ * dikoreksi di sini adalah LABEL — klaim tentang kartu MANA ini, yang bisa dicek terhadap kartu
+ * fisiknya sendiri dan terhadap situs grader-nya. Label yang salah ketik bukan bukti tentang apa
+ * pun; ia cuma salah — dan `cardName` disalin LANGSUNG ke judul publik listing-nya.
+ *
+ * Server menulis dalam SATU transaksi: kolom titipan + judul listing yang MASIH ACTIVE + baris
+ * audit `LABEL_CORRECTION` yang menyimpan nilai SEBELUM dan SESUDAH. Jejak itu bisa dibaca
+ * PEMILIK KARTUNYA SENDIRI di /titipan.
+ *
+ * EMPAT PENOLAKAN yang layar harus cerminkan SEBELUM tombolnya ditekan (semuanya juga ditegakkan
+ * server, dan kalau keduanya pernah berbeda, YANG BENAR ADALAH SERVER):
+ *   • `grader` DITOLAK 409 kalau titipannya sudah punya pembeli — grading yang dibaca pembeli SAAT
+ *     IA MEMBAYAR tidak boleh berubah sesudahnya. Field label lain tetap boleh.
+ *   • MENGOSONGKAN `grader` ditolak 409 selama listing-nya masih ACTIVE (`Listing.grader` NOT NULL
+ *     dan tidak ada nilai yang jujur di sana untuk kartu mentah). Turunkan dulu pajangannya.
+ *   • `certNumber` terisi + `grader` kosong ditolak 400: kunci anti-dobel-titip adalah PASANGAN
+ *     (grader, certNumber), dan di Postgres grader NULL membuat kunci itu tidak pernah bentrok.
+ *   • Nomor sertifikat yang bentrok dengan titipan HIDUP lain ditolak 409 (pra-cek; yang
+ *     benar-benar menegakkan tetap partial unique index di database).
+ * Ditambah GERBANG OPTIMISTIK: kalau salah satu nilai yang dikoreksi sudah berubah sejak layar
+ * dimuat, server menolak 409 dan TIDAK menulis apa pun — muat ulang barisnya dulu.
+ */
+export const correctAdminConsignmentLabel = (
+  id: string,
+  input: CorrectConsignmentLabelInput,
+  token: string,
+) =>
+  api<AdminConsignmentLabelCorrected>(`/admin/consignments/${id}/label`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
   });

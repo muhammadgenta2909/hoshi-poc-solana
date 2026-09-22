@@ -9,7 +9,7 @@
 // backend needs no change. Renders nothing. ONLY mount when PRIVY_ENABLED (it
 // calls Privy hooks, which require a <PrivyProvider> ancestor).
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
@@ -20,11 +20,26 @@ import {
 import {
   useAuth,
   registerPrivyLogout,
+  registerPrivyReSignIn,
   isAutoLoginSuppressed,
+  isAutoRecoveryBlocked,
   clearAutoLoginSuppression,
+  type ReSignIn,
 } from "@/lib/useAuth";
 import { registerPrivySigner } from "@/lib/txSigner";
 import { registerCcEmbeddedSigner, clearCcSiwsToken } from "@/lib/ccShippingAuth";
+
+/** Percobaan nonce→sign→JWT dalam SATU pencetakan (backend bisa dingin/berkedip). */
+const MINT_ATTEMPTS = 4;
+const MINT_BACKOFF_MS = 1_500;
+/** Berapa pencetakan OTOMATIS beruntun yang boleh gagal sebelum berhenti sendiri.
+ *  Tanpa ini, sesi yang selalu ditolak akan dicetak ulang terus-menerus. Dipulihkan
+ *  begitu ada satu pencetakan yang berhasil, atau saat user sendiri yang meminta. */
+const MAX_AUTO_CYCLES = 2;
+/** Batas menunggu embedded wallet muncul di useWallets() setelah createWallet(). */
+const WALLET_WAIT_MS = 15_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function PrivyBridge() {
   const { ready, authenticated, logout: privyLogout } = usePrivy();
@@ -32,9 +47,16 @@ export default function PrivyBridge() {
   const { signMessage } = useSignMessage();
   const { createWallet } = useCreateWallet();
   const { signTransaction } = useSignTransaction();
-  const { token, loginWith } = useAuth();
-  // One run at a time (the effect re-fires as `wallets`/auth settle).
-  const busyRef = useRef(false);
+  const { token, user, needsReauth, loginWith } = useAuth();
+  // Pencetakan yang SEDANG berjalan — dibagi ke semua pemanggil (effect di bawah DAN
+  // pemulih 401 di lib/useAuth), jadi tidak pernah ada dua nonce/login berbarengan.
+  // Dulu perannya dipegang `busyRef` boolean yang TIDAK PERNAH dikembalikan ke false
+  // setelah login berhasil: sekali sesi tercetak, bridge ini lumpuh sampai halaman
+  // dimuat ulang — jadi "kosongkan token, nanti bridge mencetak sendiri" pun tidak akan
+  // terjadi di tab yang sesinya baru saja dicetak. Promise ini selalu dilepas di finally.
+  const inFlightRef = useRef<Promise<string> | null>(null);
+  // Jatah pencetakan OTOMATIS yang sudah terpakai (lihat MAX_AUTO_CYCLES).
+  const autoCyclesRef = useRef(0);
 
   // The embedded wallet CC has to sign with, and its address.
   const ccWallet = wallets.find((w) => w.standardWallet?.name === "Privy") ?? wallets[0];
@@ -51,6 +73,19 @@ export default function PrivyBridge() {
     ccWalletRef.current = ccWallet;
     ccSignMessageRef.current = signMessage;
   }, [ccWallet, signMessage]);
+
+  // Bahan pencetak sesi, dibaca lewat ref DENGAN ALASAN YANG SAMA: `wallets`,
+  // `signMessage` dan `createWallet` berganti identitas di render yang sebenarnya tidak
+  // mengubah apa pun. Dengan ref, `mintSession` di bawah jadi STABIL — kalau tidak, ia
+  // akan mendaftar-ulang ke lib/useAuth dan membongkar-pasang effect-nya di setiap churn.
+  const walletsRef = useRef(wallets);
+  const signMessageRef = useRef(signMessage);
+  const createWalletRef = useRef(createWallet);
+  useEffect(() => {
+    walletsRef.current = wallets;
+    signMessageRef.current = signMessage;
+    createWalletRef.current = createWallet;
+  }, [wallets, signMessage, createWallet]);
 
   // Let our logout() end the Privy session too.
   useEffect(() => registerPrivyLogout(privyLogout), [privyLogout]);
@@ -97,58 +132,131 @@ export default function PrivyBridge() {
     };
   }, [authenticated, ccAddress]);
 
+  // Cetak SATU sesi Hoshi dari embedded wallet: pastikan wallet-nya ada → nonce → sign →
+  // JWT. Dipakai oleh DUA pemanggil: effect auto-login di bawah (Privy baru selesai login)
+  // dan pemulih 401 di lib/useAuth (sesi 7 hari yang habis di tengah jalan). Keduanya
+  // berbagi satu promise, jadi pembeli yang menekan tombol beli saat polling juga sedang
+  // kena 401 tetap hanya menandatangani satu nonce.
+  const mintSession = useCallback<ReSignIn>(
+    async (opts) => {
+      const manual = opts?.manual === true;
+      const inFlight = inFlightRef.current;
+      if (inFlight) return inFlight;
+      // Permintaan user mengembalikan jatah otomatis: ia menekan tombol, bukan loop.
+      if (manual) autoCyclesRef.current = 0;
+      if (autoCyclesRef.current >= MAX_AUTO_CYCLES)
+        throw new Error("Sesi baru gagal dicetak berkali-kali — berhenti mencoba sendiri.");
+      autoCyclesRef.current += 1;
+
+      const pick = () => {
+        const list = walletsRef.current;
+        return list.find((w) => w.standardWallet?.name === "Privy") ?? list[0];
+      };
+
+      const run = (async () => {
+        let wallet = pick();
+        // 1) Belum ada embedded wallet → buat eksplisit. createOnLogin bisa gagal/menggantung;
+        //    membuatnya di sini memunculkan error aslinya di console.
+        if (!wallet) {
+          try {
+            console.debug("[privy-bridge] creating embedded Solana wallet…");
+            const created = await createWalletRef.current();
+            console.debug("[privy-bridge] wallet created ✓", created?.wallet?.address);
+          } catch (e) {
+            // "already has an embedded wallet" itu wajar — ia akan muncul di `wallets`.
+            console.warn("[privy-bridge] createWallet returned:", e);
+          }
+          // Tunggu useWallets() memantulkannya. (Dulu di sini alurnya BERHENTI dan
+          // menggantungkan diri pada effect yang dijalankan ulang; sebagai fungsi yang
+          // mengembalikan token, ia harus menyelesaikan urusannya sendiri.)
+          const deadline = Date.now() + WALLET_WAIT_MS;
+          while (!wallet && Date.now() < deadline) {
+            await sleep(400);
+            wallet = pick();
+          }
+        }
+        if (!wallet) throw new Error("Dompet Privy belum siap.");
+        const w = wallet;
+
+        // 2) Sudah ada wallet → nonce→sign→JWT, diulang untuk backend yang dingin.
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= MINT_ATTEMPTS; attempt++) {
+          try {
+            console.debug(`[privy-bridge] sign-in attempt ${attempt} for ${w.address}`);
+            const fresh = await loginWith(w.address, async (message) => {
+              console.debug("[privy-bridge] signing login nonce…");
+              const { signature } = await signMessageRef.current({ message, wallet: w });
+              console.debug("[privy-bridge] nonce signed ✓");
+              return signature;
+            });
+            console.debug("[privy-bridge] signed in ✓ (JWT stored)");
+            return fresh;
+          } catch (e) {
+            lastError = e;
+            console.error(`[privy-bridge] sign-in attempt ${attempt} failed:`, e);
+            if (attempt < MINT_ATTEMPTS) await sleep(MINT_BACKOFF_MS);
+          }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+      })();
+
+      inFlightRef.current = run;
+      try {
+        const fresh = await run;
+        autoCyclesRef.current = 0; // sesi hidup lagi → jatah otomatis pulih
+        return fresh;
+      } finally {
+        inFlightRef.current = null;
+      }
+    },
+    [loginWith],
+  );
+
+  // Umumkan pencetak sesi ke lib/useAuth selama sesi Privy hidup. SEJAK SAAT INI seluruh
+  // aplikasi tahu bahwa 401 milik user INI bisa dipulihkan tanpa melibatkan dia, dan
+  // `login()` punya jalan untuk user yang tidak punya wallet-adapter sama sekali.
+  useEffect(() => {
+    if (!ready || !authenticated) return;
+    return registerPrivyReSignIn(mintSession);
+  }, [ready, authenticated, mintSession]);
+
   useEffect(() => {
     if (!authenticated) {
       // Signed out of Privy → a manual logout is fully done; re-arm.
       clearAutoLoginSuppression();
-      busyRef.current = false;
+      autoCyclesRef.current = 0;
       return;
     }
-    if (!ready || token || isAutoLoginSuppressed() || busyRef.current) return;
-
-    const wallet = wallets.find((w) => w.standardWallet?.name === "Privy") ?? wallets[0];
-    busyRef.current = true;
-
-    (async () => {
-      // 1) No embedded wallet yet → create it explicitly. createOnLogin can fail
-      //    or hang; doing it here surfaces the actual error in the console.
-      if (!wallet) {
-        try {
-          console.debug("[privy-bridge] creating embedded Solana wallet…");
-          const created = await createWallet();
-          console.debug("[privy-bridge] wallet created ✓", created?.wallet?.address);
-        } catch (e) {
-          // "already has an embedded wallet" is benign — it'll appear in `wallets`.
-          console.warn("[privy-bridge] createWallet returned:", e);
-        }
-        // Let the effect re-run once useWallets() reflects the new wallet.
-        busyRef.current = false;
-        return;
-      }
-
-      // 2) Have a wallet → nonce→sign→JWT, retried for a cold backend.
-      for (let attempt = 1; attempt <= 4; attempt++) {
-        try {
-          console.debug(`[privy-bridge] sign-in attempt ${attempt} for ${wallet.address}`);
-          await loginWith(wallet.address, async (message) => {
-            console.debug("[privy-bridge] signing login nonce…");
-            const { signature } = await signMessage({ message, wallet });
-            console.debug("[privy-bridge] nonce signed ✓");
-            return signature;
-          });
-          console.debug("[privy-bridge] signed in ✓ (JWT stored)");
-          return;
-        } catch (e) {
-          console.error(`[privy-bridge] sign-in attempt ${attempt} failed:`, e);
-          if (attempt === 4) {
-            busyRef.current = false;
-            return;
-          }
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-      }
-    })();
-  }, [ready, authenticated, token, wallets, createWallet, loginWith, signMessage]);
+    // Sesi kosong = cetak (perilaku lama). TAMBAHANNYA: token yang masih tersimpan tapi
+    // sudah TERBUKTI DITOLAK (`needsReauth`) juga tidak boleh menghalangi — itu persis
+    // keadaan "pembeli kembali di hari ke-9": token basinya masih ada, dan dulu justru
+    // token itulah yang membuat bridge ini diam.
+    //
+    // Tapi hanya kalau token basi itu MILIK embedded wallet ini. Kalau ia milik wallet lain
+    // (Phantom yang kedaluwarsa, sementara sesi Google kebetulan ikut hidup di browser yang
+    // sama), mencetak di sini akan diam-diam MEMINDAHKAN orang ke akun yang berbeda — vault
+    // dan riwayatnya ikut berganti. Untuk kasus itu, biarkan user yang memilih.
+    const staleIsOurs =
+      needsReauth && (!user?.walletAddress || user.walletAddress === ccAddress);
+    if (
+      !ready ||
+      (token && !staleIsOurs) ||
+      isAutoLoginSuppressed() ||
+      isAutoRecoveryBlocked() // sudah menyerah — tunggu user, jangan berputar
+    )
+      return;
+    void mintSession().catch((e: unknown) => {
+      console.error("[privy-bridge] auto sign-in failed:", e);
+    });
+  }, [
+    ready,
+    authenticated,
+    token,
+    needsReauth,
+    user?.walletAddress,
+    ccAddress,
+    mintSession,
+  ]);
 
   return null;
 }

@@ -15,6 +15,39 @@ import {
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
+/* ---- 401 = SESI HOSHI SUDAH BASI (satu pintu untuk seluruh aplikasi) ---------
+
+   JWT kita berumur 7 hari. Sebelum ini, token yang lewat tanggalnya tetap duduk di
+   localStorage selamanya: tidak ada satu baris pun yang membuangnya, dan satu-satunya
+   pemanggil `setStoredToken(null)` adalah tombol Logout manual. Akibatnya pembeli yang
+   kembali di hari ke-9 menekan tombol beli dan cuma mendapat "Unauthorized".
+
+   Karena SETIAP panggilan berkumpul di fungsi ini, di sinilah tempat yang benar untuk
+   memberi tahu lapisan sesi. Yang dikirim cuma FAKTANYA ("panggilan ke path ini ditolak
+   401"); APA yang harus dilakukan diputuskan lib/useAuth, karena cuma dia yang tahu user
+   ini bisa dicetakkan sesi baru diam-diam (Google/Privy) atau harus menandatangani sendiri
+   (wallet-adapter/SIWS).
+
+   DUA PAGAR, keduanya disengaja:
+     • HANYA 401. 403 TIDAK ikut — itu "kamu login, tapi tidak berhak" (mis. rute admin,
+       atau menyentuh milik orang lain). Membuang/menyegarkan sesi di situ akan melempar
+       orang keluar gara-gara satu tombol yang memang bukan haknya.
+     • Rute /auth/* dikecualikan. Rute itulah PENCETAK sesinya; memanggil pemulih dari
+       sana berarti nonce/login yang ditolak memicu nonce/login berikutnya tanpa akhir.
+
+   Sesi ADMIN tidak lewat sini sama sekali: lib/admin-api.ts punya `api()` + fetch-nya
+   sendiri dan kunci localStorage sendiri, jadi 401 admin tidak pernah menyentuh sesi user. */
+type UnauthorizedHandler = (path: string) => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/** lib/useAuth mendaftarkan pemulih sesinya di sini. Mengembalikan pembatal pendaftaran. */
+export function registerUnauthorizedHandler(fn: UnauthorizedHandler): () => void {
+  unauthorizedHandler = fn;
+  return () => {
+    if (unauthorizedHandler === fn) unauthorizedHandler = null;
+  };
+}
+
 /** Fetch JSON with a clean backend error message (Nest returns {message}).
  *  `timeoutMs` aborts the request — use it on latency-critical calls (login)
  *  so a cold backend surfaces a retryable error instead of an endless spinner.
@@ -34,6 +67,16 @@ async function api<T>(path: string, init?: RequestInit & { timeoutMs?: number })
     throw e;
   }
   if (!res.ok) {
+    // Beri tahu lapisan sesi SEBELUM error dilempar, supaya pemulihan sudah berjalan saat
+    // pemanggil menangkap ApiError-nya. Dibungkus try/catch: handler yang melempar tidak
+    // boleh menutupi error asli yang sedang kita susun di bawah.
+    if (res.status === 401 && !path.startsWith("/auth/")) {
+      try {
+        unauthorizedHandler?.(path);
+      } catch (e) {
+        console.warn("[api] pemulih sesi melempar:", e);
+      }
+    }
     let msg: string = `HTTP ${res.status}`;
     let code: string | undefined;
     let stage: string | undefined;

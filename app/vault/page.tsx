@@ -795,7 +795,7 @@ function RelistModal({
   onClose: () => void;
   onRelisted: (l: Listing) => void;
 }) {
-  const { token, login } = useAuth();
+  const { token, login, canAutoRecover } = useAuth();
   const { setVisible } = useWalletConnect();
   const finishEscrow = useFinishListingEscrow();
   // Prefill dgn harga kartu sekarang (patokan nilai) biar penjual tak mulai dari kolom kosong —
@@ -826,7 +826,20 @@ function RelistModal({
       const l = await finishEscrow(relisted, t);
       onRelisted(l);
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+      /* ── 403 TIDAK PERNAH MENYENTUH SESI, DAN 401 TIDAK MEMBUKA MODAL SENDIRI ──────────────
+         Dulu baris ini menyamakan 401 dan 403, lalu membuka modal SAMBUNGKAN WALLET untuk
+         keduanya. Dua hal salah di situ:
+
+           403 berarti "kamu memang login, tapi ini bukan hakmu". Mengajak orang menyambungkan
+           wallet di situ menyuruh ia memperbaiki hal yang tidak rusak.
+
+           401 untuk user Google membuka modal wallet kepada orang yang tidak punya wallet dan
+           tidak pernah butuh satu. Sejak `lib/api` memulihkan sesi Google di latar, yang benar
+           adalah DIAM — percobaan berikutnya berhasil sendiri.
+
+         Modal hanya untuk yang benar-benar tidak punya jalan pulih otomatis, dan pesannya
+         ditulis di `error` supaya ia tahu kenapa layarnya berubah. */
+      if (e instanceof ApiError && e.status === 401 && !canAutoRecover) {
         setVisible(true);
       }
       setError(e instanceof Error ? e.message : String(e));

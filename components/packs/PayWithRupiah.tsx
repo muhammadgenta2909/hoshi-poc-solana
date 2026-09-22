@@ -137,7 +137,17 @@ export default function PayWithRupiah({
   );
 }
 
-type Stage = "creating" | "checking" | "awaiting" | "fulfilling" | "done" | "error";
+/** `expired` = sesi 7 hari-nya habis dan TIDAK bisa dipulihkan diam-diam (user wallet, atau
+ *  user Google yang pencetakan ulangnya gagal). Layar tersendiri, bukan "error": tidak ada
+ *  yang rusak dan tidak ada uang yang bergerak — pembeli cuma perlu diajak masuk lagi. */
+type Stage =
+  | "creating"
+  | "checking"
+  | "awaiting"
+  | "fulfilling"
+  | "done"
+  | "error"
+  | "expired";
 
 // Exported so the Rip Pack payment-method chooser can open the rupiah flow
 // directly (mounting this creates the IDRX order). The default-export button
@@ -171,7 +181,7 @@ export function PayModal({
    *  kartu yang baru dibeli), bukan sekadar menutup modal. */
   successHref?: string;
 }) {
-  const { token, login, user } = useAuth();
+  const { token, login, user, needsReauth, canAutoRecover } = useAuth();
   const { setVisible } = useWalletConnect();
   const { publicKey } = useWallet();
   const router = useRouter();
@@ -218,8 +228,46 @@ export function PayModal({
   useEffect(() => {
     userRef.current = user;
   }, [user]);
-  // Jaga agar re-auth-on-401 hanya sekali (hindari loop kalau login pun tetap ditolak).
+  // Jaga agar re-auth-on-401 OTOMATIS hanya sekali (hindari loop kalau login pun tetap
+  // ditolak). Tombol pemulihan di layar TIDAK dibatasi ini: setiap klik = keputusan user.
   const reauthedRef = useRef(false);
+  // Hidup selama modal terpasang. Menggantikan flag `alive` lokal milik effect, karena
+  // pemulihan sekarang juga bisa dipicu dari TOMBOL — di luar effect itu.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  // Satu alur (buat order / resume order) pada satu waktu. Tanpa ini, sesi baru yang
+  // mendarat saat tombol pemulihan sedang jalan bisa menembakkan alur KEDUA — dan untuk
+  // jalur "buat order" itu berarti DUA tagihan untuk satu pembelian.
+  const flowBusyRef = useRef(false);
+  // Token yang sudah terbukti ditolak / sudah dipakai mencoba. Dipakai effect "lanjut
+  // otomatis" di bawah supaya ia hanya bereaksi pada sesi yang BENAR-BENAR baru.
+  const staleTokenRef = useRef<string | null>(null);
+  const [reauthBusy, setReauthBusy] = useState(false);
+
+  // PULIH-SENDIRI vs HARUS-DITANDATANGANI — ini pembeda dua jalur login itu, dan semua
+  // keputusan modal ini bergantung padanya:
+  //   • Google/Privy  → `canAutoRecover` (embedded wallet-nya bisa menandatangani nonce
+  //     tanpa user) DAN tidak punya publicKey wallet-adapter → pulih diam-diam.
+  //   • wallet-adapter → publicKey ada, tidak ada yang bisa menandatangani selain user →
+  //     pemulihan lewat tombol, dengan kalimat yang jelas.
+  // publicKey diperiksa DULU: kalau wallet-nya terhubung, tanda tangan memang miliknya —
+  // dan `login()` pun akan memakai wallet itu, bukan embedded wallet Privy.
+  const autoRecover = !publicKey && canAutoRecover;
+  const autoRecoverRef = useRef(autoRecover);
+  useEffect(() => {
+    autoRecoverRef.current = autoRecover;
+  }, [autoRecover]);
+  /** Bentuk ajakan yang pas untuk user ini saat sesinya habis. */
+  const reauthMode: "sign" | "retry" | "signin" = publicKey
+    ? "sign" // wallet terhubung → tanda tangan ulang
+    : canAutoRecover
+      ? "retry" // Google/Privy → coba cetak lagi (tanpa wallet sama sekali)
+      : "signin"; // tidak ada sesi yang bisa dipakai → masuk lagi
 
   // Hangatkan rute tujuan "Lihat Kartu" segera saat modal punya successHref → begitu diklik,
   // bundle route-nya sudah ter-prefetch (navigasi terasa satset, bukan nunggu unduh route).
@@ -227,16 +275,178 @@ export function PayModal({
     if (successHref) router.prefetch(successHref);
   }, [successHref, router]);
 
+  /** Terbitkan tagihan sesuai konteks modal: OFFER > LISTING > pack. */
+  const buildOrder = useCallback(
+    (t: string) =>
+      offerId
+        ? createOfferOrder(offerId, t)
+        : listingId
+          ? createListingOrder(listingId, t)
+          : createPackOrder({ packType, method: "HOSTED" }, t),
+    [offerId, listingId, packType],
+  );
+
+  /** Buat tagihan baru → layar bayar. */
+  const startOrder = useCallback(
+    async (t: string) => {
+      staleTokenRef.current = t; // token ini SUDAH dipakai mencoba
+      const created = await buildOrder(t);
+      if (!mountedRef.current) return;
+      setOrder(created);
+      setStage("awaiting");
+    },
+    [buildOrder],
+  );
+
+  /** Balik dari halaman bayar: poll order yang SUDAH ada, jangan bikin yang baru. */
+  const resumeOrder = useCallback(async (t: string, id: string) => {
+    staleTokenRef.current = t; // token ini SUDAH dipakai mencoba
+    const existing = await getPaymentOrder(id, t);
+    if (!mountedRef.current) return;
+    setOrder(existing);
+    if (existing.status === "FULFILLED") {
+      clearPendingPayment();
+      setStage("done");
+      onFulfilledRef.current?.(existing);
+    } else if (isTerminalPaymentStatus(existing.status)) {
+      clearPendingPayment();
+      setErrorMsg(terminalPaymentMessage(existing.status));
+      setStage("error");
+    } else if (existing.status === "PAID" || existing.status === "FULFILLING") {
+      // Genuinely paid, settlement in flight → "menyiapkan"; the poll drives it to FULFILLED.
+      setStage("fulfilling");
+    } else {
+      // PENDING = order dibuat tapi BELUM dibayar (mis. user klik "Back" dari halaman Duitku
+      // tanpa menuntaskan bayar, atau VA belum ditransfer). JANGAN klaim "Pembayaran
+      // diterima ✓" — tampilkan layar bayar (awaiting) supaya user bisa menyelesaikan. Re-open
+      // memakai order.paymentUrl yang SAMA (bukan order baru) → nol risiko bayar dobel; poll
+      // tetap menangkap begitu lunas.
+      setStage("awaiting");
+    }
+  }, []);
+
+  /** Alur modal ini dengan sebuah token: resume kalau ada order, kalau tidak buat baru.
+   *  Pemanggilnya WAJIB memegang `flowBusyRef` (lihat komentar di ref itu). */
+  const runFlow = useCallback(
+    async (t: string) => {
+      if (resumeOrderId) await resumeOrder(t, resumeOrderId);
+      else await startOrder(t);
+    },
+    [resumeOrderId, resumeOrder, startOrder],
+  );
+
+  /** SATU-SATUNYA tempat modal ini memutuskan apa yang terjadi sesudah alurnya gagal.
+   *
+   *  HANYA 401 yang dianggap sesi basi. 403 SENGAJA tidak ikut: itu "kamu login, tapi tidak
+   *  berhak" — menyegarkan/membuang sesi di situ akan melempar orang keluar gara-gara satu
+   *  tombol yang memang bukan haknya. (Dulu 401 dan 403 diperlakukan sama di sini, dan
+   *  keduanya berakhir dengan membuka modal sambungkan-wallet.) */
+  const handleFlowFailure = useCallback(
+    async (e: unknown) => {
+      const unauthorized = e instanceof ApiError && e.status === 401;
+      if (unauthorized) {
+        // Pemulihan OTOMATIS cuma untuk 401 yang pertama; 401 berikutnya langsung ke layar
+        // ajakan. Yang penting: pembeli TIDAK PERNAH lagi mendarat di "Unauthorized".
+        const firstTry = !reauthedRef.current;
+        reauthedRef.current = true;
+        if (firstTry && autoRecoverRef.current) {
+          // USER GOOGLE: <PrivyBridge> mencetak sesi baru diam-diam. Nol tanda tangan, nol
+          // modal wallet — ia memang tidak punya wallet — dan layar tetap di "Membuat tagihan…".
+          let fresh: string | null = null;
+          try {
+            fresh = await login();
+          } catch (e2) {
+            console.warn("[bayar] pemulihan sesi otomatis gagal:", e2);
+          }
+          if (fresh) {
+            staleTokenRef.current = fresh;
+            try {
+              await runFlow(fresh);
+              return;
+            } catch (e3) {
+              if (!mountedRef.current) return;
+              // Sesi barunya sah tapi alurnya tetap gagal → tampilkan sebab ASLINYA,
+              // jangan menyamarkannya sebagai masalah sesi.
+              if (!(e3 instanceof ApiError && e3.status === 401)) {
+                setErrorMsg(e3 instanceof Error ? e3.message : String(e3));
+                setStage("error");
+                return;
+              }
+            }
+          }
+        }
+        if (!mountedRef.current) return;
+        // `staleTokenRef` TIDAK disentuh di sini: ia ditandai oleh startOrder/resumeOrder
+        // dengan token yang BENAR-BENAR dipakai. Menimpanya dengan isi `tokenRef` (yang
+        // baru menyusul satu render kemudian) bisa membuat effect "lanjut otomatis"
+        // menyangka ada sesi baru dan menembakkan alur — di jalur buat-order itu tagihan kedua.
+        setErrorMsg(null);
+        setStage("expired");
+        return;
+      }
+      if (!mountedRef.current) return;
+      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setStage("error");
+    },
+    [login, runFlow],
+  );
+
+  /** Tombol di layar "sesi berakhir": ambil sesi baru, lalu lanjutkan alur yang tadi gagal. */
+  const reauthAndContinue = useCallback(async () => {
+    if (flowBusyRef.current) return;
+    flowBusyRef.current = true;
+    setReauthBusy(true);
+    try {
+      const fresh = await login(); // wallet → prompt tanda tangan; Google → diam-diam
+      staleTokenRef.current = fresh; // tandai SEBELUM render berikutnya, biar tidak dobel
+      if (!mountedRef.current) return;
+      setErrorMsg(null);
+      setStage(resumeOrderId ? "checking" : "creating");
+      await runFlow(fresh);
+    } catch (e) {
+      if (!mountedRef.current) return;
+      // Tetap di layar ajakan: tombolnya masih ada dan sebabnya tertulis.
+      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setStage("expired");
+    } finally {
+      flowBusyRef.current = false;
+      if (mountedRef.current) setReauthBusy(false);
+    }
+  }, [login, runFlow, resumeOrderId]);
+
+  /** Ajakan kecil saat tagihannya SUDAH ada (menunggu bayar / sedang diproses): cukup
+   *  perbarui sesinya, JANGAN jalankan ulang alurnya — di jalur "buat order" itu berarti
+   *  tagihan KEDUA untuk satu pembelian. Polling menyambung sendiri begitu `token` berganti. */
+  const reauthOnly = useCallback(async () => {
+    setReauthBusy(true);
+    try {
+      const fresh = await login();
+      staleTokenRef.current = fresh;
+      if (mountedRef.current) setErrorMsg(null);
+    } catch (e) {
+      if (mountedRef.current) setErrorMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mountedRef.current) setReauthBusy(false);
+    }
+  }, [login]);
+
+  /** Modal masuk — HANYA dari klik user. Isinya Phantom DAN tombol "Lanjut dengan Google",
+   *  jadi ia bukan jalan buntu bagi yang tak punya wallet; tapi ia tidak boleh pernah
+   *  terbuka sendiri, karena itu persis yang dulu terjadi pada pembeli Google. */
+  const openSignIn = useCallback(() => {
+    setVisible(true);
+  }, [setVisible]);
+
   // Create the order once on mount (needs a JWT — sign in first if needed).
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-    let alive = true;
-    (async () => {
+    flowBusyRef.current = true;
+    void (async () => {
       try {
         if (demo) {
           // No backend, no money: a fake order so the "awaiting" screen renders.
-          if (!alive) return;
+          if (!mountedRef.current) return;
           setOrder({
             merchantOrderId: "demo-order",
             packType,
@@ -260,28 +470,7 @@ export function PayModal({
           // Returned from the payment page — poll the existing order, don't make a new one.
           let rt = tokenRef.current;
           if (!rt) rt = await login();
-          const existing = await getPaymentOrder(resumeOrderId, rt);
-          if (!alive) return;
-          setOrder(existing);
-          if (existing.status === "FULFILLED") {
-            clearPendingPayment();
-            setStage("done");
-            onFulfilledRef.current?.(existing);
-          } else if (isTerminalPaymentStatus(existing.status)) {
-            clearPendingPayment();
-            setErrorMsg(terminalPaymentMessage(existing.status));
-            setStage("error");
-          } else if (existing.status === "PAID" || existing.status === "FULFILLING") {
-            // Genuinely paid, settlement in flight → "menyiapkan"; the poll drives it to FULFILLED.
-            setStage("fulfilling");
-          } else {
-            // PENDING = order dibuat tapi BELUM dibayar (mis. user klik "Back" dari halaman Duitku
-            // tanpa menuntaskan bayar, atau VA belum ditransfer). JANGAN klaim "Pembayaran
-            // diterima ✓" — tampilkan layar bayar (awaiting) supaya user bisa menyelesaikan. Re-open
-            // memakai order.paymentUrl yang SAMA (bukan order baru) → nol risiko bayar dobel; poll
-            // tetap menangkap begitu lunas.
-            setStage("awaiting");
-          }
+          await resumeOrder(rt, resumeOrderId);
           return;
         }
         let t = tokenRef.current;
@@ -292,60 +481,52 @@ export function PayModal({
         const connected = walletPkRef.current?.toBase58() ?? null;
         const tokenAccount = userRef.current?.walletAddress ?? null;
         if (!t || (connected && tokenAccount && connected !== tokenAccount)) {
-          t = await login(); // pops connect/sign; login() selalu mint JWT baru utk wallet terhubung
+          // login() sekarang punya DUA jalur: wallet terhubung → prompt tanda tangan;
+          // tanpa wallet-adapter (user Google) → <PrivyBridge> mencetak sesi diam-diam.
+          t = await login();
         }
         // OFFER (offerId) → bayar di harga offer; MARKETPLACE (listingId) → beli kartu; else pack.
         // Sisa alurnya (bayar hosted, poll) identik untuk semua.
-        const created = offerId
-          ? await createOfferOrder(offerId, t)
-          : listingId
-            ? await createListingOrder(listingId, t)
-            : await createPackOrder({ packType, method: "HOSTED" }, t);
-        if (!alive) return;
-        setOrder(created);
-        setStage("awaiting");
+        await startOrder(t);
       } catch (e) {
-        if (!alive) return;
-        // Token kadaluarsa/invalid (401/403) → tanda tangan ulang untuk wallet terhubung lalu ulangi
-        // pembuatan order SEKALI. Tanpa ini modal buntu di "Unauthorized" (tombol Tutup saja).
-        if (
-          e instanceof ApiError &&
-          (e.status === 401 || e.status === 403) &&
-          !reauthedRef.current &&
-          walletPkRef.current
-        ) {
-          reauthedRef.current = true;
-          try {
-            const fresh = await login();
-            const retried = offerId
-              ? await createOfferOrder(offerId, fresh)
-              : listingId
-                ? await createListingOrder(listingId, fresh)
-                : await createPackOrder({ packType, method: "HOSTED" }, fresh);
-            if (!alive) return;
-            setOrder(retried);
-            setStage("awaiting");
-            return;
-          } catch (e2) {
-            if (!alive) return;
-            if (e2 instanceof ApiError && (e2.status === 401 || e2.status === 403))
-              setVisible(true);
-            setErrorMsg(e2 instanceof Error ? e2.message : String(e2));
-            setStage("error");
-            return;
-          }
-        }
-        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) setVisible(true);
-        setErrorMsg(e instanceof Error ? e.message : String(e));
-        setStage("error");
+        await handleFlowFailure(e);
+      } finally {
+        flowBusyRef.current = false;
       }
     })();
-    return () => {
-      alive = false;
-    };
     // `token` sengaja TIDAK di sini — dibaca via tokenRef (lihat komentar tokenRef di atas)
     // supaya login()-nya-membalik-token tidak men-teardown pembuatan order yang sedang jalan.
-  }, [packType, login, setVisible, demo, resumeOrderId, listingId, offerId]);
+  }, [
+    demo,
+    packType,
+    login,
+    resumeOrderId,
+    resumeOrder,
+    startOrder,
+    handleFlowFailure,
+  ]);
+
+  // Sesi baru mendarat SEMENTARA layar "sesi berakhir" tampil — dari <PrivyBridge> yang
+  // akhirnya berhasil, atau dari modal masuk yang barusan dipakai user. Lanjutkan sendiri:
+  // pembeli tidak perlu menekan tombol untuk sesuatu yang sudah beres.
+  useEffect(() => {
+    if (stage !== "expired") return;
+    if (!token || token === staleTokenRef.current) return;
+    if (flowBusyRef.current) return;
+    flowBusyRef.current = true;
+    staleTokenRef.current = token;
+    setErrorMsg(null);
+    setStage(resumeOrderId ? "checking" : "creating");
+    void (async () => {
+      try {
+        await runFlow(token);
+      } catch (e) {
+        await handleFlowFailure(e);
+      } finally {
+        flowBusyRef.current = false;
+      }
+    })();
+  }, [stage, token, resumeOrderId, runFlow, handleFlowFailure]);
 
   // Poll the order until it settles. Skipped in demo — the fake payment drives the stages.
   useEffect(() => {
@@ -371,7 +552,12 @@ export function PayModal({
           }
         }
       } catch {
-        /* transient — keep polling; a real failure surfaces via terminal status */
+        /* transient — keep polling; a real failure surfaces via terminal status.
+           401 di sini pun BUKAN kegagalan pembayaran: uangnya sudah/masih di jalurnya dan
+           backend tetap memenuhi order lewat callback + rekonsiliasi. Penanganannya sudah
+           terpusat — lib/api memberi tahu lib/useAuth, yang untuk user Google mencetak sesi
+           baru (effect ini ber-dependency `token`, jadi ia menyambung sendiri) dan untuk user
+           wallet menyalakan `needsReauth` → ajakan tanda tangan ulang muncul di bawah. */
       }
     }, POLL_MS);
     return () => {
@@ -509,6 +695,84 @@ export function PayModal({
             </p>
             <p className="text-[11px] text-zinc-500">Jangan tutup halaman ini.</p>
           </Center>
+        )}
+
+        {stage === "expired" && (
+          <Center>
+            <div className="grid h-14 w-14 place-items-center rounded-full bg-amber-500/15 text-2xl">
+              ⏳
+            </div>
+            <p className="text-base font-semibold text-white">Sesi kamu sudah berakhir</p>
+            <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+              {reauthMode === "sign"
+                ? "Demi keamanan, sesi login cuma berlaku 7 hari. Tanda tangani sekali lagi di wallet-mu untuk melanjutkan. "
+                : reauthMode === "retry"
+                  ? "Kami sedang memperbarui sesimu. Tekan tombol di bawah untuk mencoba sekali lagi. "
+                  : "Masuk lagi untuk melanjutkan. Pakai Google kalau kamu tidak punya wallet — tombolnya ada di jendela yang terbuka nanti. "}
+              {/* Jaminan yang benar untuk KONTEKSNYA. Di alur resume, uangnya bisa saja SUDAH
+                  dibayar; menulis "belum ada uang yang keluar" di situ = berbohong ke pembeli. */}
+              {resumeOrderId
+                ? "Pembayaranmu aman dan tetap diproses — sesi yang berlaku cuma dibutuhkan untuk menampilkan statusnya di sini."
+                : "Belum ada uang yang keluar dan belum ada tagihan yang terbuat."}
+            </p>
+            {errorMsg && (
+              <p className="max-w-[18rem] text-[12px] leading-relaxed text-red-300">{errorMsg}</p>
+            )}
+            <button
+              type="button"
+              onClick={reauthMode === "signin" ? openSignIn : () => void reauthAndContinue()}
+              disabled={reauthBusy}
+              className="mt-1 w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105 disabled:opacity-60"
+              style={{ backgroundImage: GOLD_GRADIENT }}
+            >
+              {reauthBusy
+                ? "Menyiapkan sesi…"
+                : reauthMode === "sign"
+                  ? "Tanda tangani ulang"
+                  : reauthMode === "retry"
+                    ? "Coba lagi"
+                    : "Masuk lagi"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-3 text-[15px] font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              Tutup
+            </button>
+          </Center>
+        )}
+
+        {/* Sesi habis saat tagihannya SUDAH ada. Jangan mengubah layar (uangnya mungkin
+            sudah di jalan) — cukup ajak menandatangani ulang supaya pemantauan statusnya
+            nyambung lagi. Tidak pernah membuka modal apa pun sendiri. */}
+        {needsReauth && (stage === "awaiting" || stage === "fulfilling") && (
+          <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-400/[0.07] p-3 text-left">
+            <p className="text-[12px] leading-relaxed text-amber-200">
+              {/* Kalimatnya mengikuti TAHAPNYA: di "awaiting" belum ada uang yang dibayar,
+                  jadi jangan menjanjikan "pembayaranmu tetap diproses" di situ. */}
+              {stage === "fulfilling"
+                ? "Sesi kamu sudah berakhir. Pembayaranmu aman dan tetap diproses — masuk lagi supaya jendela ini bisa memantau statusnya."
+                : "Sesi kamu sudah berakhir. Tagihannya tetap berlaku dan tombol bayar di atas tetap bisa dipakai — masuk lagi supaya jendela ini bisa memantau statusnya."}
+            </p>
+            {errorMsg && (
+              <p className="mt-1 text-[12px] leading-relaxed text-red-300">{errorMsg}</p>
+            )}
+            <button
+              type="button"
+              onClick={reauthMode === "signin" ? openSignIn : () => void reauthOnly()}
+              disabled={reauthBusy}
+              className="mt-2 w-full rounded-lg border border-amber-400/40 bg-amber-400/[0.12] px-3 py-2 text-[13px] font-semibold text-amber-100 transition hover:bg-amber-400/20 disabled:opacity-60"
+            >
+              {reauthBusy
+                ? "Menyiapkan sesi…"
+                : reauthMode === "sign"
+                  ? "Tanda tangani ulang"
+                  : reauthMode === "retry"
+                    ? "Perbarui sesi"
+                    : "Masuk lagi"}
+            </button>
+          </div>
         )}
 
         {stage === "done" && (

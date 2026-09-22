@@ -185,15 +185,28 @@ export function receiptDataFrom(
  *       versi pertama struk ini berbunyi begitu, dan itu janji tertulis yang dibantah oleh
  *       kolom di database kami sendiri. Yang gratis tanpa syarat adalah AMBIL SENDIRI.
  *   5 → `POST /admin/consignments/:id/compensate` → `CONSIGNMENT_COMPENSATION` di buku besar.
+ *       NOMINALNYA DITENTUKAN SERVER dari `askPriceIdr`, bukan diketik operator: `amountIdr` di
+ *       DTO-nya kini cuma KONFIRMASI opsional yang, kalau dikirim, wajib sama persis — selisih
+ *       berapa pun ditolak dengan kedua angka disebutkan. Karena itu kalimatnya WAJIB menyebut
+ *       SATU angka dan menyebutnya dengan nama yang dipakai tabel harga di atas ("harga jual yang
+ *       disepakati"), lengkap dengan nominalnya. Versi pertama struk ini berbunyi "sesuai nilai
+ *       yang tertulis di struk ini" — padahal struk yang sama mencetak DUA angka (harga jual dan
+ *       harga dasar), sehingga kalimat termahal di kertas ini justru yang paling ambigu.
  *   6 → tidak ada kode yang bisa menjamin ini; ia janji perusahaan, dan tempatnya memang di
  *       kertas bertanda tangan, bukan di database.
+ *
+ * Nomor 5 memuat NOMINAL, jadi daftarnya bergantung pada isi struk — karena itu ia fungsi, bukan
+ * konstanta. Angka di kalimat itu dibaca dari `askPriceIdr` YANG SAMA dengan yang dicetak di tabel
+ * harga; tidak ada tempat kedua yang bisa menyimpang darinya.
  */
-const TERMS: readonly string[] = [
+const termsFor = (d: HandoverReceiptData): readonly string[] => [
   "Kartu ini TETAP MILIK PEMILIK selama dititipkan. Hoshi hanya menyimpan dan menjualkannya — kartu titipan bukan milik Hoshi dan tidak pernah menjadi milik Hoshi.",
   "Kalau terjual, komisi Hoshi dipotong dari harga jual. Sisanya menjadi saldo pemilik di akun Hoshi dan bisa ditarik kapan saja.",
   "Selama kartu ini dititipkan, pemilik TIDAK MENJUALNYA ke pihak lain. Satu kartu tidak bisa diserahkan ke dua pembeli.",
   "Pemilik boleh meminta kartunya kembali KAPAN SAJA selama belum terjual. Hoshi tidak memungut biaya penarikan dan tidak memotong komisi apa pun. Diambil sendiri di tempat Hoshi: gratis. Minta dikirim: ongkos kurirnya disepakati saat itu.",
-  "Kalau kartu ini hilang atau rusak karena kelalaian Hoshi selama dititipkan, Hoshi mengganti sesuai nilai yang tertulis di struk ini.",
+  `Kalau kartu ini hilang atau rusak karena kelalaian Hoshi selama dititipkan, Hoshi mengganti sebesar HARGA JUAL YANG DISEPAKATI di struk ini, yaitu ${rp(
+    d.askPriceIdr,
+  )}. Hanya angka itu yang menjadi dasar ganti rugi — bukan harga dasar, dan bukan taksiran pasar saat kejadian.`,
   "Kalau Hoshi berhenti beroperasi, seluruh kartu titipan dikembalikan kepada pemiliknya masing-masing.",
 ];
 
@@ -237,7 +250,23 @@ function identitas(d: HandoverReceiptData): string {
   return `${d.consignorNameAtIntake} · ${kind || "Identitas"} ••••${last4}`;
 }
 
-/** Baris "kartunya": yang kosong DIBUANG, bukan dicetak sebagai "—". */
+/**
+ * Baris "kartunya": yang kosong DIBUANG, bukan dicetak sebagai "—".
+ *
+ * ┌──── APA YANG DIKETIK, TERBACA DI KERTAS — TANPA KECUALI ──────────────────────────────────┐
+ * │ Versi pertama fungsi ini mencetak nomor sertifikat HANYA di dalam cabang `if (d.grader)`.  │
+ * │ Akibatnya: operator mengetik nomor sertifikat tapi dropdown grader-nya tertinggal kosong,  │
+ * │ dan struk yang ditandatangani berbunyi "Kartu mentah (tidak di-grade)" sambil MEMBUANG     │
+ * │ nomornya. Pemilik pulang membawa kertas bertanda tangan yang menggambarkan slab PSA-nya    │
+ * │ sebagai kartu mentah — dan kertas itu, bukan layar admin kami, yang ia bawa kalau protes.  │
+ * │                                                                                            │
+ * │ Karena itu nomor sertifikat (dan grade yang sempat diketik) dicetak DI LUAR cabang grader. │
+ * │ Kalau datanya memang janggal — ada nomor sertifikat tapi grader-nya kosong — kejanggalan   │
+ * │ itu HARUS terlihat di kertas, bukan dirapikan diam-diam olehnya. Formulir intake sekarang  │
+ * │ mencegah kombinasi itu lahir (server pun menolaknya), tapi baris lama dan cetak ulang      │
+ * │ bertahun kemudian tetap bisa membawanya.                                                   │
+ * └────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
 function cardLines(d: HandoverReceiptData): [string, string][] {
   const rows: [string, string][] = [["Nama kartu", d.cardName]];
   const detail = [d.cardSet, d.cardNumber, d.language, d.tcg]
@@ -246,24 +275,28 @@ function cardLines(d: HandoverReceiptData): [string, string][] {
     .join(" · ");
   if (detail) rows.push(["Set / nomor / bahasa / TCG", detail]);
 
+  const cert = (d.certNumber ?? "").trim();
+  const grade = [d.gradeLabel, d.gradeScore != null ? `skor ${d.gradeScore}` : null]
+    .filter(Boolean)
+    .join(" · ");
+
   if (d.grader) {
-    // Slab bernomor: identitas yang bisa dicek DI SITUS GRADER-nya sendiri — satu-satunya baris
-    // di kertas ini yang tidak bersandar pada "kata Hoshi".
-    const grade = [d.gradeLabel, d.gradeScore != null ? `skor ${d.gradeScore}` : null]
-      .filter(Boolean)
-      .join(" · ");
-    rows.push([
-      "Grading",
-      [d.grader, d.certNumber ? `sertifikat ${d.certNumber}` : null, grade || null]
-        .filter(Boolean)
-        .join(" · "),
-    ]);
+    rows.push(["Grading", [d.grader, grade || null].filter(Boolean).join(" · ")]);
   } else {
     rows.push(["Grading", "Kartu mentah (tidak di-grade)"]);
     if ((d.rawCondition ?? "").trim()) {
       rows.push(["Kondisi", (d.rawCondition ?? "").trim()]);
     }
+    // Grade yang tercatat tanpa grader adalah keterangan setengah jadi — tapi membuangnya dari
+    // kertas berarti mengarang keterangan yang lain. Dicetak apa adanya, dengan label yang tidak
+    // berpura-pura ia berasal dari grader mana pun.
+    if (grade) rows.push(["Grade yang dicatat", grade]);
   }
+
+  // Slab bernomor: identitas yang bisa dicek DI SITUS GRADER-nya sendiri — satu-satunya baris di
+  // kertas ini yang tidak bersandar pada "kata Hoshi". Dicetak apa pun isi dropdown grader-nya.
+  if (cert) rows.push(["Nomor sertifikat", cert]);
+
   rows.push(["Catatan kondisi saat diterima", d.conditionNote]);
   return rows;
 }
@@ -323,7 +356,7 @@ function sheet(d: HandoverReceiptData, role: "PEMILIK" | "HOSHI"): string {
     <tr><td class="k">Harga jual yang disepakati</td><td><strong>${esc(rp(d.askPriceIdr))}</strong></td></tr>
     ${
       d.reservePriceIdr != null && d.reservePriceIdr > 0
-        ? `<tr><td class="k">Harga dasar (tidak dilepas di bawah ini)</td><td>${esc(
+        ? `<tr><td class="k">Harga dasar yang disepakati</td><td>${esc(
             rp(d.reservePriceIdr),
           )}</td></tr>`
         : ""
@@ -331,6 +364,30 @@ function sheet(d: HandoverReceiptData, role: "PEMILIK" | "HOSHI"): string {
     <tr><td class="k">Komisi Hoshi</td><td>${esc(String(pct))}% dari harga jual</td></tr>
     <tr><td class="k">Perkiraan diterima pemilik</td><td>${esc(rp(payout))} (pada harga di atas)</td></tr>
   </table>
+  ${
+    /* ┌──── KENAPA KALIMAT INI, DAN BUKAN "TIDAK DILEPAS DI BAWAH INI" ─────────────────────────┐
+       │ Versi pertama struk ini memberi label "Harga dasar (tidak dilepas di bawah ini)" — dan   │
+       │ TIDAK ADA satu baris kode pun yang menegakkannya. createListingFor dan updatePrice di    │
+       │ backend hanya MEMPERINGATKAN (belowReserveWarning) lalu tetap menjalankan                │
+       │ perubahannya. Kartu pemilik bisa tayang dan terjual di bawah angka yang tertulis di      │
+       │ kertas yang ia pegang, tanpa ia pernah menyetujuinya.                                    │
+       │                                                                                          │
+       │ Menegakkannya di server bukan pilihan yang benar: menurunkan di bawah lantai kadang      │
+       │ MEMANG disepakati ulang lewat telepon, dan memblokirnya hanya melahirkan jalan memutar   │
+       │ yang tidak tercatat. Jadi yang diperbaiki adalah KERTASNYA — supaya ia berbunyi persis   │
+       │ sebesar apa yang benar-benar ditegakkan: angkanya muncul kembali di layar pada detik     │
+       │ keputusan harga dibuat, dan alasan melepas di bawahnya WAJIB diketik (rute harga menolak │
+       │ tanpa alasan) lalu tersimpan permanen sebagai baris audit yang tidak bisa dihapus.       │
+       └──────────────────────────────────────────────────────────────────────────────────────────┘ */
+    d.reservePriceIdr != null && d.reservePriceIdr > 0
+      ? `<p class="note">
+    <strong>Harga dasar</strong> adalah angka acuan yang disepakati hari ini, bukan kunci otomatis.
+    Kalau Hoshi perlu melepas kartu ini di bawah angka itu, Hoshi meminta persetujuan pemilik lebih
+    dulu; alasannya dicatat permanen di riwayat titipan ini, dan pemilik bisa melihat angka dasarnya
+    kapan saja di halaman titipannya.
+  </p>`
+      : ""
+  }
 
   ${
     d.claimCode
@@ -352,7 +409,9 @@ function sheet(d: HandoverReceiptData, role: "PEMILIK" | "HOSHI"): string {
 
   <h2>Syarat titipan</h2>
   <ol class="terms">
-    ${TERMS.map((t) => `<li>${esc(t)}</li>`).join("\n    ")}
+    ${termsFor(d)
+      .map((t) => `<li>${esc(t)}</li>`)
+      .join("\n    ")}
   </ol>
 
   <div class="signs">
@@ -430,6 +489,11 @@ export function printHandoverReceipt(d: HandoverReceiptData): boolean {
   table.kv td { padding: 4px 0; border-bottom: 1px solid #e5e5e5; vertical-align: top; }
   td.k { color: #555; width: 42%; padding-right: 10px; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+
+  /* Keterangan pendek di bawah sebuah tabel (mis. arti "harga dasar"). Sengaja lebih kecil dari
+     isi tabelnya tapi TIDAK abu-abu pucat: ia menjelaskan sebuah angka yang ditandatangani, jadi
+     ia harus tetap terbaca di fotokopi dan di kertas termal yang memudar. */
+  .note { font-size: 10.5px; color: #333; margin: 6px 0 0; line-height: 1.45; }
 
   .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
           font-size: 22px; font-weight: 700; letter-spacing: 3px; text-align: center;
