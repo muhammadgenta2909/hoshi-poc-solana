@@ -209,14 +209,50 @@ export const getAdminTreasury = (token: string) =>
 export type AdminTransaction = {
   id: string;
   merchantOrderId: string;
-  type: "PACK" | "RESELLER" | "P2P";
-  /** Model PM: CC vault (harga default, Hoshi 0%) vs Hoshi vault (5% / stok Hoshi). null = pack/topup. */
+  /**
+   * Ember ledger. Backend menurunkannya dari `listingKindOf` (src/common/listing-kind.ts),
+   * BUKAN dari `sellerId != null`.
+   *
+   * CONSIGNMENT berdiri sendiri karena kartu TITIPAN juga ber-`sellerId` dan karena itu dulu
+   * terbaca "P2P". Di layar uang, "P2P" berarti "kartunya milik user, kalau gagal kembalikan saja
+   * uangnya" — dan untuk titipan yang terjual lalu hilang kalimat itu salah: payout-nya SUDAH cair
+   * ke pemilik kartu, jadi memulihkan pembeli adalah KERUGIAN Hoshi, bukan mengembalikan uang yang
+   * masih kami pegang.
+   */
+  type: "PACK" | "RESELLER" | "CONSIGNMENT" | "P2P";
+  /**
+   * Model PM: CC vault (harga default, Hoshi 0%) vs Hoshi vault (5% / stok Hoshi). null =
+   * pack/topup. Di layar ini ia juga menjawab "SIAPA yang mengirim barangnya" — dan untuk baris
+   * TITIPAN jawabannya SELALU Hoshi (kartunya ada di rak Hoshi), apa pun bunyi `source`-nya.
+   */
   vault: "CC" | "HOSHI" | null;
   status: string;
   priceIdr: number;
   item: string | null;
   buyer: string;
+  /** RESELLER → "Hoshi". P2P → penjual user. CONSIGNMENT → PEMILIK kartu titipan. PACK → null. */
   seller: string | null;
+  /**
+   * ╔══════════════════════════════════════════════════════════════════════════════════════════╗
+   * ║ GERBANG UANG. Status REFUND_DUE cuma bilang "kami berutang" — INI yang bilang boleh atau ║
+   * ║ tidaknya ditransfer.                                                                      ║
+   * ╚══════════════════════════════════════════════════════════════════════════════════════════╝
+   * true  → utangnya tercatat DAN uangnya memang ada pada kami; aman dikirim (manual, di luar
+   *         sistem — tidak ada rail refund otomatis di repo ini).
+   * false → JANGAN TRANSFER DULU. Uangnya mungkin tidak pernah benar-benar mendarat di treasury
+   *         kami (pin IDRX menyimpang), atau sudah keluar ke orang lain (payout pemilik titipan),
+   *         atau barangnya sudah/mungkin terkirim. Refund buta di sini = bayar dua kali.
+   *         Yang harus diverifikasi disebut di `error`.
+   *
+   * Opsional HANYA untuk respons backend lama yang belum mengirim kolom ini. Perlakukan `undefined`
+   * sebagai "tidak diketahui" — JANGAN dibaca sebagai true.
+   */
+  refundSafe?: boolean;
+  /**
+   * Teks alasan APA ADANYA yang ditulis penulis utangnya. Ini satu-satunya yang menjelaskan APA
+   * yang sebenarnya terjadi dan APA yang harus diverifikasi. Tampilkan utuh — jangan diringkas.
+   */
+  error?: string | null;
   createdAt: string;
   paidAt: string | null;
   fulfilledAt: string | null;
