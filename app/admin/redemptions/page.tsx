@@ -173,13 +173,44 @@ const RAIL_UI: Record<
   },
 };
 
-/** ASAL kartu — LABEL saja. Rail-nya dibaca dari `redemptionRail()`, bukan dari sini. */
-const SOURCE_LABEL: Record<RedemptionSource, string> = {
-  PACK: "Hasil pack",
-  CC_CATALOG: "Katalog CC",
-  P2P: "Beli antar user",
-  HOSHI: "Stok Hoshi",
-};
+/**
+ * ASAL kartu — LABEL saja. Rail-nya dibaca dari `redemptionRail()`, bukan dari sini.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+ * │ `CONSIGNMENT` DULU TIDAK ADA DI PETA INI, dan akibatnya bukan "label yang kurang rapi":      │
+ * │ `SOURCE_LABEL[r.source]` menghasilkan `undefined` → React merender STRING KOSONG. Jadi baris │
+ * │ yang backend TANDAI SEBAGAI BARANG ORANG LAIN justru tampil paling polos di seluruh tabel,   │
+ * │ dan operator menekan "Dikirim" tanpa satu pun petunjuk bahwa tekanan itu menutup custody     │
+ * │ atas kartu milik orang lain. Setiap nilai baru WAJIB punya barisnya di sini.                 │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * `cls` kosong = label netral (teks abu biasa, seperti sebelumnya). Titipan SENGAJA satu-satunya
+ * yang berwarna: ia bukan sekadar asal yang berbeda, ia kepemilikan yang berbeda.
+ */
+
+/**
+ * Pembungkus yang menolak label KOSONG DI TINGKAT TIPE — `src("")` tidak bisa dikompilasi.
+ *
+ * Repo ini tidak punya test runner di sisi frontend, jadi `tsc --noEmit` adalah gerbangnya, dan
+ * dua hal sekaligus dijaga di sini: `satisfies Record<RedemptionSource, …>` di bawah menolak kunci
+ * yang KURANG maupun yang BERLEBIH (itu yang dulu tidak ada), dan helper ini menolak label kosong
+ * — dua bentuk "string kosong di layar" yang mungkin, dua-duanya jadi error kompilasi.
+ */
+const src = <L extends string>(
+  label: L extends "" ? never : L,
+  cls = "",
+): { label: string; cls: string } => ({ label, cls });
+
+const SOURCE_LABEL = {
+  PACK: src("Hasil pack"),
+  CC_CATALOG: src("Katalog CC"),
+  P2P: src("Beli antar user"),
+  HOSHI: src("Stok Hoshi"),
+  CONSIGNMENT: src(
+    "TITIPAN — milik orang lain",
+    "inline-block w-fit rounded-md border border-fuchsia-400/45 bg-fuchsia-500/15 px-2 py-0.5 font-bold text-fuchsia-300",
+  ),
+} satisfies Record<RedemptionSource, { label: string; cls: string }>;
 
 /** Posisi ongkir rail domestik → kalimat + warna. */
 const ONGKIR_UI: Record<DomesticOngkir, { label: string; cls: string; detail: string }> = {
@@ -583,9 +614,27 @@ export default function AdminRedemptionsPage() {
                           <span className={`h-1.5 w-1.5 rounded-full ${railUi.dotCls}`} aria-hidden />
                           {railUi.label}
                         </span>
-                        <span className="text-[11px] text-zinc-500">
-                          {r.source ? SOURCE_LABEL[r.source] : "asal tak tercatat"}
+                        <span
+                          className={`text-[11px] ${
+                            r.source && SOURCE_LABEL[r.source]?.cls
+                              ? SOURCE_LABEL[r.source].cls
+                              : "text-zinc-500"
+                          }`}
+                        >
+                          {r.source
+                            ? (SOURCE_LABEL[r.source]?.label ?? r.source)
+                            : "asal tak tercatat"}
                         </span>
+                        {/* Titipan SIAPA. Operator yang harus mengambil satu slab dari rak butuh
+                            nama pemiliknya, bukan sekadar kategori. */}
+                        {r.consignment && (
+                          <span
+                            className="truncate text-[11px] text-fuchsia-300/70"
+                            title={`Titipan ${r.consignment.id} · status ${r.consignment.status}`}
+                          >
+                            Pemilik: {r.consignment.consignorName}
+                          </span>
+                        )}
                       </div>
                     </td>
 
@@ -900,19 +949,32 @@ function buildAction(
   }
 
   if (status === "SHIPPED") {
+    // ┌────────────────────────────────────────────────────────────────────────────────────────┐
+    // │ KALIMAT TITIPAN DITARUH DI DEPAN, bukan sebagai catatan kaki. Yang sedang dilakukan    │
+    // │ operator bukan cuma "menandai dikirim": ia MENUTUP CUSTODY atas barang orang lain —    │
+    // │ kartu yang dititipkan seseorang ke rak Hoshi dan yang sampai detik ini masih miliknya  │
+    // │ sampai penjualannya tuntas. Dan ia perlu tahu slab SIAPA yang harus diambil dari rak.  │
+    // └────────────────────────────────────────────────────────────────────────────────────────┘
+    const consignmentWarning = row.consignment
+      ? `KARTU TITIPAN milik ${row.consignment.consignorName} (titipan ${row.consignment.id}). ` +
+        "Menandai DIKIRIM menutup custody Hoshi atas barang orang lain: ambil slab yang BENAR " +
+        "dari rak dan cocokkan sertifikatnya sebelum melanjutkan. "
+      : "";
     return {
       row,
       status,
-      danger: false,
+      danger: !!row.consignment,
       askTracking: domestic,
-      title: "Tandai Dikirim?",
+      title: row.consignment ? "Tandai Dikirim (kartu titipan)?" : "Tandai Dikirim?",
       confirmLabel: "Tandai Dikirim",
-      message: domestic
-        ? `${name} akan ditandai DIKIRIM ke ${row.city}. Ongkirnya sudah lunas. Isi nomor resi ` +
-          "kurirnya di bawah supaya pembeli bisa melacak paketnya."
-        : `${name} akan ditandai DIKIRIM ke ${row.city}. Ini baris jalur CollectorCrypt: ` +
-          "pengiriman sungguhannya (burn NFT + shipment CC) digerakkan sesi tanda tangan user, " +
-          "bukan tombol ini.",
+      message:
+        consignmentWarning +
+        (domestic
+          ? `${name} akan ditandai DIKIRIM ke ${row.city}. Ongkirnya sudah lunas. Isi nomor resi ` +
+            "kurirnya di bawah supaya pembeli bisa melacak paketnya."
+          : `${name} akan ditandai DIKIRIM ke ${row.city}. Ini baris jalur CollectorCrypt: ` +
+            "pengiriman sungguhannya (burn NFT + shipment CC) digerakkan sesi tanda tangan user, " +
+            "bukan tombol ini."),
     };
   }
 

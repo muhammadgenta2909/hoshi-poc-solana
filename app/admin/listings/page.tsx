@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAdminAuth } from "@/lib/adminAuth";
 import {
@@ -29,6 +30,27 @@ const statusColor = (s?: string) => {
     default: return "text-zinc-400";
   }
 };
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+ * ║ BARIS TITIPAN = BARANG ORANG LAIN. Layar ini mencampurnya dengan stok Hoshi sendiri, jadi   ║
+ * ║ ia WAJIB mengatakannya — dan WAJIB mematikan tombol yang merusaknya.                        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+ *
+ * Dibaca dari SATU KOLOM (`consignmentId`), bukan dari bentuk baris: kartu titipan punya
+ * `sellerId != null` persis seperti listing P2P, jadi tebakan apa pun akan salah.
+ *
+ * Backend menolak Deactivate / Delete / Edit harga pada baris titipan DI TITIK TULISNYA — ini
+ * lapis kedua, supaya operator tidak perlu menabrak error 409 untuk mengetahuinya, dan supaya
+ * kalimat "ke mana harus pergi" muncul SEBELUM kliknya, bukan sesudah.
+ */
+const isConsigned = (l: AdminListing): boolean => l.consignmentId != null;
+
+/** Ke mana operator harus pergi untuk baris titipan. Satu kalimat, dipakai di semua tooltip. */
+const CONSIGNMENT_ROUTE_HINT =
+  "Kartu TITIPAN — milik orang lain, fisiknya di rak Hoshi. Urus dari /admin/titipan: " +
+  "turunkan/pajang lewat rute titipan, ubah harga lewat rute harga titipan. Rute itu menjaga " +
+  "status titipannya tetap benar dan meninggalkan jejak audit yang pemiliknya sendiri bisa baca.";
 
 type SortField = "newest" | "price-asc" | "price-desc";
 
@@ -329,12 +351,35 @@ export default function AdminListingsPage() {
                     <td className="px-4 py-3"><Thumb src={l.image} alt="" /></td>
                     <td className="px-4 py-3 font-medium text-white">{l.name}</td>
                     <td className="px-4 py-3">
-                      {(l.source ?? "HOSHI") === "COLLECTORCRYPT" ? (
+                      {/* TITIPAN DIDAHULUKAN: baris titipan bisa berasal dari sumber mana pun,
+                          dan yang paling penting diketahui operator bukan vault-nya melainkan
+                          bahwa kartunya BUKAN MILIK HOSHI. */}
+                      {isConsigned(l) ? (
+                        <span
+                          className="rounded-md border border-fuchsia-400/45 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] font-bold text-fuchsia-300"
+                          title={
+                            (l.consignment
+                              ? `Pemilik: ${l.consignment.consignorNameAtIntake} · titipan ${l.consignment.id} · status ${l.consignment.status}` +
+                                (l.consignment.askPriceIdr !== l.priceIdrx
+                                  ? ` · harga kesepakatan ${formatIdr(l.consignment.askPriceIdr)} BERBEDA dari harga pajangan`
+                                  : "")
+                              : `Titipan ${l.consignmentId}`) +
+                            `\n\n${CONSIGNMENT_ROUTE_HINT}`
+                          }
+                        >
+                          TITIPAN — milik orang lain
+                        </span>
+                      ) : (l.source ?? "HOSHI") === "COLLECTORCRYPT" ? (
                         <span className="rounded-md bg-[#38E5D0]/[0.12] px-2 py-0.5 text-[11px] font-semibold text-[#38E5D0]"
                           title={l.ccPriceUsd != null ? `CC list price $${l.ccPriceUsd}` : undefined}
                         >CollectorCrypt{l.ccHasBuyback ? " • BB" : ""}</span>
                       ) : (
                         <span className="rounded-md bg-yellow-400/10 px-2 py-0.5 text-[11px] font-semibold text-yellow-400">Hoshi</span>
+                      )}
+                      {isConsigned(l) && l.consignment && (
+                        <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                          {l.consignment.consignorNameAtIntake}
+                        </p>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -349,6 +394,24 @@ export default function AdminListingsPage() {
                     <td className="px-4 py-3 tabular-nums text-zinc-400">{l.views}</td>
                     <td className="px-4 py-3 text-[12px] text-zinc-500">{new Date(l.listedAt).toLocaleDateString()}</td>
                     <td className="px-4 py-3">
+                      {/* Baris TITIPAN: ketiga tombol ini TIDAK PUNYA versi yang benar di layar
+                          ini (backend menolak semuanya), jadi yang dirender adalah RUTENYA —
+                          bukan tombol mati tanpa penjelasan. */}
+                      {isConsigned(l) ? (
+                        <div className="flex flex-col gap-1">
+                          <Link
+                            href={`/admin/titipan/${l.consignmentId}`}
+                            className="w-fit rounded-lg border border-fuchsia-400/40 bg-fuchsia-500/10 px-3 py-1 text-[12px] font-semibold text-fuchsia-300 transition hover:bg-fuchsia-500/20"
+                            title={CONSIGNMENT_ROUTE_HINT}
+                          >
+                            Buka di /admin/titipan
+                          </Link>
+                          <span className="text-[11px] leading-tight text-zinc-500">
+                            Edit harga, turunkan pajangan, dan pengembalian kartunya dilakukan di
+                            sana — dari sini semuanya ditolak backend.
+                          </span>
+                        </div>
+                      ) : (
                       <div className="flex gap-2">
                         <button onClick={() => openEdit(l)}
                           className="rounded-lg bg-white/[0.06] px-3 py-1 text-[12px] text-zinc-300 transition hover:bg-white/10"
@@ -374,6 +437,7 @@ export default function AdminListingsPage() {
                           className="rounded-lg bg-red-500/10 px-3 py-1 text-[12px] text-red-400 transition hover:bg-red-500/20"
                         >Delete</button>
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))}

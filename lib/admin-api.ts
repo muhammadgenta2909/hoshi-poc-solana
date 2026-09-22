@@ -84,6 +84,31 @@ export type AdminListing = {
   vaultLocation: string | null;
   cardNumber: string | null;
   variant: string | null;
+  /**
+   * ╔════════════════════════════════════════════════════════════════════════════════════════╗
+   * ║ NON-NULL ⇒ KARTU TITIPAN: barang MILIK ORANG LAIN yang fisiknya ada di rak Hoshi.      ║
+   * ╚════════════════════════════════════════════════════════════════════════════════════════╝
+   *
+   * SATU KOLOM, bukan tebakan dari bentuk. Baris titipan punya `sellerId != null` persis seperti
+   * listing P2P, jadi setiap heuristik "punya penjual?" akan salah menggolongkannya.
+   *
+   * Layar admin listings WAJIB membacanya: Deactivate / Delete / Edit harga pada baris titipan
+   * masing-masing merusak sesuatu yang tidak terlihat di layar ini (status titipan yang terbelah,
+   * kartu fisik yang terkunci di rak, harga yang menyimpang dari kesepakatan pemiliknya).
+   * Backend menolak ketiganya di titik tulisnya; tombol yang dimatikan di sini adalah lapis
+   * KEDUA — supaya operator tidak perlu menabrak error untuk mengetahuinya.
+   */
+  consignmentId?: string | null;
+  /** Ringkasan titipannya — hanya ada kalau `consignmentId` terisi. */
+  consignment?: {
+    id: string;
+    /** ConsignmentStatus: INTAKE | IN_CUSTODY | LISTED | SOLD | RELEASED | LOST | CANCELLED. */
+    status: string;
+    /** SNAPSHOT nama pemilik saat serah-terima — tetap benar meski nama akunnya berubah. */
+    consignorNameAtIntake: string;
+    /** Harga yang DISEPAKATI pemiliknya. Beda dari `priceIdrx` = harga pernah menyimpang. */
+    askPriceIdr: number;
+  } | null;
   /** Vault provenance. Rows synced before this field default to HOSHI server-side. */
   source: "HOSHI" | "COLLECTORCRYPT";
   ccNftAddress: string | null;
@@ -328,7 +353,21 @@ export type RedemptionStatus =
   | "RECLAIM_DUE"
   | "SHIP_FAILED_POST_BURN";
 
-export type RedemptionSource = "PACK" | "CC_CATALOG" | "P2P" | "HOSHI";
+/**
+ * ASAL kartu pada baris permintaan kirim — LABEL, bukan gerbang rail.
+ *
+ * `CONSIGNMENT` SENGAJA ADA DI SINI dan tidak boleh dihapus lagi: backend MENULISNYA
+ * (`redemption.service.ts` → `source = listing.consignmentId != null ? 'CONSIGNMENT' : 'HOSHI'`)
+ * supaya operator tahu kartu SIAPA yang sedang ia pegang. Selama nilai ini absen dari tipe,
+ * `SOURCE_LABEL[r.source]` menghasilkan `undefined` dan React merender STRING KOSONG — jadi
+ * satu-satunya petunjuk bahwa paket itu barang orang lain justru menghilang tanpa jejak.
+ */
+export type RedemptionSource =
+  | "PACK"
+  | "CC_CATALOG"
+  | "P2P"
+  | "HOSHI"
+  | "CONSIGNMENT";
 
 /** Rail pengiriman, DITURUNKAN SERVER dari `listingId`. Lihat blok di atas. */
 export type RedemptionRail = "HOSHI_DOMESTIC" | "CC_VAULT";
@@ -350,6 +389,20 @@ export type AdminRedemption = {
   cardSet: string | null;
   /** Asal kartu → LABEL saja, BUKAN gerbang rail. null = data lama. */
   source: RedemptionSource | null;
+  /**
+   * Titipan yang kartunya sedang dikirim — null kalau baris ini bukan titipan.
+   *
+   * Dihitung server dari `Listing.consignment` (FAKTA), bukan dari `source` (label yang pada
+   * baris warisan bisa berbunyi 'HOSHI'). Yang dibutuhkan operator di rak bukan kategorinya
+   * melainkan NAMA pemiliknya — tanpa itu ia tidak tahu slab siapa yang harus diambil.
+   */
+  consignment?: {
+    id: string;
+    status: string;
+    /** SNAPSHOT nama pemilik saat serah-terima. */
+    consignorName: string;
+    askPriceIdr: number;
+  } | null;
   recipientName: string;
   street: string;
   apt?: string | null;

@@ -85,15 +85,30 @@ const shipKeyForListing = (l: Listing): string | null =>
     : (l.nft?.assetAddress ?? l.ccNftAddress ?? null);
 
 // Redemption yang membuat kartu SUDAH keluar dari vault: begitu burn tersubmit, NFT tak lagi di
-// wallet (di prod di-burn; di staging disimulasi disembunyikan). SHIPPED = status record-only lama.
+// wallet (di prod di-burn; di staging disimulasi disembunyikan).
 //
 // FUNDED SENGAJA TIDAK di sini: di status itu ongkirnya sudah didanai ke wallet user tapi burn-nya
 // BELUM ditandatangani — kartunya masih utuh di vault.
+//
+// ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+// │ `SHIPPED` DIKELUARKAN DARI DAFTAR INI DENGAN SENGAJA.                                        │
+// │                                                                                              │
+// │ SHIPPED adalah status yang DITULIS ADMIN pada rail DOMESTIK: paketnya baru saja diserahkan   │
+// │ ke kurir, dan justru DI SITULAH pembeli paling butuh melihat kartunya — bersama resinya.     │
+// │ Selama status ini ikut menyembunyikan baris, pembeli yang sudah membayar dua kali (kartu +   │
+// │ ongkir) melihat kartunya LENYAP dari Vault pada hari pengiriman dan tidak punya satu pun     │
+// │ jejak paketnya. Rail domestik juga tidak pernah mem-burn apa pun (settlement-nya             │
+// │ database-only), jadi tidak ada aset yang benar-benar hilang dari wallet di status ini.       │
+// │                                                                                              │
+// │ Kartunya sekarang bertahan dengan badge "📦 Dikirim" sampai DELIVERED — dan DELIVERED tetap  │
+// │ di dalam daftar, karena di sana kartunya memang sudah ada di tangan pemiliknya.              │
+// │ Untuk rail CC, SHIPPED cuma status record-only warisan (alurnya BURN_SUBMITTED → IN_TRANSIT  │
+// │ → DELIVERED, ketiganya tetap di sini), jadi perubahan ini tidak menyentuh jalur itu.         │
+// └──────────────────────────────────────────────────────────────────────────────────────────────┘
 const SHIPPED_OUT = new Set<RedemptionStatus>([
   "BURN_SUBMITTED",
   "IN_TRANSIT",
   "DELIVERED",
-  "SHIPPED",
 ]);
 
 export default function VaultPage() {

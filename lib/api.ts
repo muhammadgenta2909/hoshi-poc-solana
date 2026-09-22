@@ -448,10 +448,17 @@ export type CardRedemption = {
   city: string;
   country: string;
   status: RedemptionStatus;
-  /** Nomor resi CC (baru terisi setelah dikirim). Opsional: /redemptions/me record-only bisa
-   *  mengabaikannya; /redemptions/:id/status yang mengembalikannya saat IN_TRANSIT/DELIVERED. */
+  /**
+   * Nomor resi kurir. SEJAK PERBAIKAN INI `/redemptions/me` IKUT MEMBAWANYA — dulu tidak, dan
+   * itulah kenapa baris "Resi: …" di /withdraw selalu kosong meski resinya tersimpan rapi di
+   * database. Dua penulisnya: admin (rail DOMESTIK, saat menandai SHIPPED) dan poll shipment CC
+   * (rail CC, saat IN_TRANSIT/DELIVERED).
+   *
+   * Tetap OPSIONAL di tipe ini supaya respons backend LAMA (yang belum membawanya) tidak
+   * membuat layar gagal render — array kosong dan `undefined` sama-sama berarti "belum ada resi".
+   */
   trackingIds?: string[];
-  /** Link lacak resi (sejajar dengan trackingIds). */
+  /** Link lacak resi (sejajar indeksnya dengan trackingIds). */
   trackingUrls?: string[];
   createdAt: string;
 };
