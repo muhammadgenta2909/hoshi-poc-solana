@@ -391,8 +391,32 @@ function MyListings({ token, login }: { token: string; login: () => Promise<stri
                   {l.grade} · {l.set} · {l.rarity}
                 </p>
                 <Idrx amount={l.price} size={14} className="mt-1.5 text-[14px] text-zinc-200" />
+                {/* ── KENAPA BARIS INI PERLU KALIMATNYA SENDIRI ──────────────────────────────
+                    Kartu titipan ber-`sellerId` = pemiliknya, persis seperti listing P2P, jadi
+                    ia memang lolos filter `sellerId: userId` dan muncul di daftar ini. Yang TIDAK
+                    boleh ikut muncul adalah tombol Cancel: gerbang titipan di server menolaknya
+                    setelah cek sellerId lolos, jadi yang didapat pemiliknya adalah penolakan —
+                    pada kartunya sendiri. Penarikannya harus lewat /titipan supaya baris listing
+                    dan baris custody turun dalam SATU transaksi. */}
+                {l.consigned && (l.status ?? "ACTIVE") === "ACTIVE" && (
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-violet-200/70">
+                    Kartu titipan — ditarik lewat halaman Titipan Saya, bukan dari sini.
+                  </p>
+                )}
               </div>
-              {(l.status ?? "ACTIVE") === "ACTIVE" ? (
+              {/* Pengalihan ini HANYA untuk baris yang masih ACTIVE — yaitu baris yang tadinya
+                  menawarkan tombol Cancel. Titipan yang sudah terjual atau sudah turun tidak bisa
+                  ditarik lagi, jadi mengarahkannya ke /titipan berarti menjanjikan aksi yang tidak
+                  ada di sana; baris seperti itu tetap memakai "View" seperti sebelumnya. */}
+              {l.consigned && (l.status ?? "ACTIVE") === "ACTIVE" ? (
+                <Link
+                  href="/titipan"
+                  title="Kartu titipan: minta kembali lewat halaman Titipan Saya"
+                  className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-1.5 text-[13px] font-semibold text-violet-200 transition hover:bg-violet-400/20"
+                >
+                  Titipan Saya →
+                </Link>
+              ) : (l.status ?? "ACTIVE") === "ACTIVE" ? (
                 <button
                   type="button"
                   onClick={() => onCancel(l.id)}

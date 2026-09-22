@@ -17,6 +17,7 @@ import {
   getCities,
   getCountries,
   getStates,
+  type GeoCity,
   type GeoCountry,
   type GeoState,
 } from "@/lib/geo";
@@ -36,11 +37,8 @@ import {
 // home-market default (independent of the chosen country).
 const emptyForm = {
   fullName: "",
-  country: "",
   street: "",
   apt: "",
-  state: "",
-  city: "",
   phoneCode: "+62",
   phone: "",
   zip: "",
@@ -245,6 +243,308 @@ function SearchCombobox({
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   KASKADE WILAYAH (negara → provinsi → kota) — SATU IMPLEMENTASI, DIPAKAI BERSAMA.
+
+   Dulu kaskade ini hidup di dalam `AddAddressForm` dan tidak bisa dipakai layar lain. Layar kedua
+   yang membutuhkan alamat — "ke mana kartu titipanku dikembalikan?" di `/titipan` — karenanya
+   berdiri di persimpangan yang dua-duanya buruk: menyalin ~120 baris kaskade (lalu punya DUA
+   jawaban untuk "provinsi apa saja yang ada di Indonesia", yang suatu hari akan berbeda), atau
+   tidak punya pemilih wilayah sama sekali.
+
+   Jadi kaskadenya dikeluarkan apa adanya menjadi satu hook + tiga kontrol. `AddAddressForm` di
+   bawah memakainya PERSIS seperti sebelumnya — perilakunya tidak berubah — dan layar titipan
+   memakai yang sama dengan label berbahasa Indonesia.
+
+   ┌──── SETIAP TINGKAT WAJIB PUNYA JALAN KETIK-MANUAL ─────────────────────────────────────────┐
+   │ Sumber datanya adalah layanan luar (countrystatecity.in lewat proxy backend), dan ia MEMANG │
+   │ bisa mati: tanpa `CSC_API_KEY` backend menjawab 503. Kalau sebuah dropdown yang gagal       │
+   │ memuat berarti formulirnya tidak bisa dikirim, maka orang yang ingin barangnya sendiri      │
+   │ kembali terjebak oleh kegagalan infrastruktur KAMI. Setiap tingkat karena itu merosot ke    │
+   │ input teks biasa, dan bahkan saat daftarnya hidup, teks yang diketik tetap bisa dipakai     │
+   │ (`allowCustom`) — daftar provinsi/kota pihak ketiga tidak pernah lengkap untuk Indonesia.   │
+   └────────────────────────────────────────────────────────────────────────────────────────────┘
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Apa yang dipegang kaskade + cara mengubahnya. Dikembalikan {@link useGeoCascade}. */
+export type GeoCascade = {
+  /** NAMA (bukan iso2) — itu yang dikirim ke backend di semua rute alamat. */
+  country: string;
+  state: string;
+  city: string;
+  /** MEMILIH dari daftar: mengubah satu tingkat SEKALIGUS mengosongkan tingkat di bawahnya. */
+  setCountry: (name: string) => void;
+  setState: (name: string) => void;
+  setCity: (name: string) => void;
+  /* ── MENGETIK ≠ MEMILIH, dan menyamakannya menghapus isian orang ──────────────────────────
+     Pada tingkat yang merosot jadi input teks, `onChange` menyala SETIAP KETUKAN. Kalau ketukan
+     itu memakai `setCountry`/`setState` di atas, memperbaiki satu huruf typo di kolom negara
+     menghapus provinsi DAN kota yang sudah susah payah diketik — di formulir yang seluruh
+     alasannya ada adalah karena layanan wilayahnya sedang mati. Jadi mengetik hanya mengubah
+     nilainya sendiri. Yang mengosongkan tingkat bawah tetap PILIHAN dari daftar, karena di
+     sanalah "provinsi ini milik negara yang lain" benar-benar terjadi. */
+  typeCountry: (name: string) => void;
+  typeState: (name: string) => void;
+  /** Daftar negaranya sendiri gagal dimuat → SELURUH kaskade jadi teks bebas. */
+  offline: boolean;
+  /* ── dibaca kontrol di bawah; bukan untuk dipakai pemanggil ── */
+  countries: GeoCountry[] | null;
+  countryIso: string;
+  states: GeoState[] | null;
+  statesFail: boolean;
+  stateIso: string;
+  cities: GeoCity[] | null;
+  citiesFail: boolean;
+};
+
+/**
+ * Kaskade wilayah: memegang nama negara/provinsi/kota + daftar untuk tiap tingkat.
+ *
+ * `initial.country` dipakai layar yang negaranya SUDAH pasti (pengembalian kartu titipan selalu
+ * kurir domestik), supaya daftar provinsinya langsung termuat tanpa satu dropdown yang jawabannya
+ * cuma satu.
+ *
+ * iso2 tiap tingkat DITURUNKAN dari nama + daftarnya, bukan disimpan sebagai state tersendiri:
+ * dengan begitu nama yang dipasang di awal ikut menemukan iso2-nya begitu daftarnya tiba, dan
+ * tidak ada sepasang state yang bisa saling bertentangan.
+ */
+export function useGeoCascade(initial?: { country?: string }): GeoCascade {
+  const [country, setCountryName] = useState(initial?.country ?? "");
+  const [state, setStateName] = useState("");
+  const [city, setCityName] = useState("");
+
+  const [countries, setCountries] = useState<GeoCountry[] | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [states, setStates] = useState<GeoState[] | null>(null);
+  const [statesFail, setStatesFail] = useState(false);
+  const [cities, setCities] = useState<GeoCity[] | null>(null);
+  const [citiesFail, setCitiesFail] = useState(false);
+
+  // Countries — fetched once (getCountries memoises the promise module-wide).
+  useEffect(() => {
+    let alive = true;
+    getCountries()
+      .then((cs) => alive && setCountries(cs))
+      .catch(() => alive && setOffline(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const countryIso = useMemo(
+    () => (countries ?? []).find((c) => c.name === country)?.iso2 ?? "",
+    [countries, country],
+  );
+  const stateIso = useMemo(
+    () => (states ?? []).find((s) => s.name === state)?.iso2 ?? "",
+    [states, state],
+  );
+
+  // States — refetched whenever the resolved country iso changes. The downstream
+  // reset lives in the setters, so this effect only ever setStates from an async
+  // callback (never synchronously during the effect).
+  useEffect(() => {
+    if (!countryIso) return;
+    let alive = true;
+    getStates(countryIso)
+      .then((s) => alive && setStates(s))
+      .catch(() => alive && setStatesFail(true));
+    return () => {
+      alive = false;
+    };
+  }, [countryIso]);
+
+  // Cities — refetched whenever the resolved state iso changes.
+  useEffect(() => {
+    if (!countryIso || !stateIso) return;
+    let alive = true;
+    getCities(countryIso, stateIso)
+      .then((c) => alive && setCities(c))
+      .catch(() => alive && setCitiesFail(true));
+    return () => {
+      alive = false;
+    };
+  }, [countryIso, stateIso]);
+
+  // Picking a level resets everything BELOW it — value and list alike — so no
+  // stale province from the previous country (or stale city from the previous
+  // province) can survive into the submitted address.
+  const setCountry = useCallback((name: string) => {
+    setCountryName(name);
+    setStates(null);
+    setStatesFail(false);
+    setStateName("");
+    setCities(null);
+    setCitiesFail(false);
+    setCityName("");
+  }, []);
+  const setState = useCallback((name: string) => {
+    setStateName(name);
+    setCities(null);
+    setCitiesFail(false);
+    setCityName("");
+  }, []);
+
+  return {
+    country,
+    state,
+    city,
+    setCountry,
+    setState,
+    setCity: setCityName,
+    typeCountry: setCountryName,
+    typeState: setStateName,
+    offline,
+    countries,
+    countryIso,
+    states,
+    statesFail,
+    stateIso,
+    cities,
+    citiesFail,
+  };
+}
+
+/** Teks yang bisa diganti per layar — file ini berbahasa Inggris, `/titipan` tidak. */
+type GeoControlText = {
+  placeholder?: string;
+  /** Placeholder saat tingkat itu merosot jadi input teks. */
+  textPlaceholder?: string;
+  searchPlaceholder?: string;
+  ariaLabel?: string;
+};
+
+/** Negara. Merosot jadi teks bebas kalau daftar negaranya sendiri tidak bisa dimuat. */
+export function GeoCountryControl({
+  geo,
+  placeholder = "Select country",
+  textPlaceholder = "Country / region",
+  searchPlaceholder = "Search country…",
+  ariaLabel = "Country or region",
+}: { geo: GeoCascade } & GeoControlText) {
+  const asText = geo.offline || (geo.countries !== null && geo.countries.length === 0);
+  const items = useMemo<ComboItem[]>(
+    () =>
+      (geo.countries ?? []).map((c) => ({
+        value: c.name,
+        label: `${c.emoji} ${c.name}`,
+        keywords: c.name,
+      })),
+    [geo.countries],
+  );
+  if (asText) {
+    return (
+      <TextInput
+        value={geo.country}
+        maxLength={56}
+        onChange={(e) => geo.typeCountry(e.target.value)}
+        placeholder={textPlaceholder}
+        aria-label={ariaLabel}
+      />
+    );
+  }
+  return (
+    <SearchCombobox
+      value={geo.country}
+      onSelect={(it) => geo.setCountry(it.value)}
+      items={items}
+      loading={geo.countries === null}
+      placeholder={placeholder}
+      searchPlaceholder={searchPlaceholder}
+      ariaLabel={ariaLabel}
+    />
+  );
+}
+
+/** Provinsi/negara bagian. `allowCustom` menyala: daftar pihak ketiga tidak pernah lengkap. */
+export function GeoStateControl({
+  geo,
+  placeholder = "Select state/province",
+  textPlaceholder,
+  searchPlaceholder = "Search or type state…",
+  ariaLabel = "State or province",
+}: { geo: GeoCascade } & GeoControlText) {
+  const asText =
+    geo.offline ||
+    !geo.countryIso ||
+    geo.statesFail ||
+    (geo.states !== null && geo.states.length === 0);
+  const loading = !geo.offline && !!geo.countryIso && !geo.statesFail && geo.states === null;
+  const items = useMemo<ComboItem[]>(
+    () => (geo.states ?? []).map((s) => ({ value: s.name, label: s.name })),
+    [geo.states],
+  );
+  if (asText) {
+    return (
+      <TextInput
+        value={geo.state}
+        maxLength={80}
+        onChange={(e) => geo.typeState(e.target.value)}
+        placeholder={
+          textPlaceholder ??
+          (geo.offline || !geo.countryIso ? "State / province" : "Type your state/province")
+        }
+        aria-label={ariaLabel}
+      />
+    );
+  }
+  return (
+    <SearchCombobox
+      value={geo.state}
+      onSelect={(it) => geo.setState(it.value)}
+      items={items}
+      loading={loading}
+      allowCustom
+      placeholder={placeholder}
+      searchPlaceholder={searchPlaceholder}
+      ariaLabel={ariaLabel}
+    />
+  );
+}
+
+/** Kota/kabupaten. `allowCustom` menyala sejak awal — kota kecil sering tidak ada di daftar. */
+export function GeoCityControl({
+  geo,
+  placeholder = "Select city",
+  textPlaceholder = "City",
+  searchPlaceholder = "Search or type city…",
+  ariaLabel = "City",
+}: { geo: GeoCascade } & GeoControlText) {
+  const asText =
+    geo.offline ||
+    !geo.stateIso ||
+    geo.citiesFail ||
+    (geo.cities !== null && geo.cities.length === 0);
+  const loading = !geo.offline && !!geo.stateIso && !geo.citiesFail && geo.cities === null;
+  const items = useMemo<ComboItem[]>(
+    () => (geo.cities ?? []).map((c) => ({ value: c.name, label: c.name })),
+    [geo.cities],
+  );
+  if (asText) {
+    return (
+      <TextInput
+        value={geo.city}
+        maxLength={80}
+        onChange={(e) => geo.setCity(e.target.value)}
+        placeholder={textPlaceholder}
+        aria-label={ariaLabel}
+      />
+    );
+  }
+  return (
+    <SearchCombobox
+      value={geo.city}
+      onSelect={(it) => geo.setCity(it.value)}
+      items={items}
+      loading={loading}
+      allowCustom
+      placeholder={placeholder}
+      searchPlaceholder={searchPlaceholder}
+      ariaLabel={ariaLabel}
+    />
+  );
+}
+
 /** A plain checkbox row (native input + label), gold-accented to match Toggle. */
 function CheckRow({
   checked,
@@ -410,105 +710,10 @@ function AddAddressForm({
   const [error, setError] = useState<string | null>(null);
   const [noZip, setNoZip] = useState(false);
 
-  // Geo cascade. `null` = not loaded yet; a *Fail flag = that fetch 503'd/errored
-  // → free-text fallback for that level. The iso2 of the picked country/state is
-  // kept alongside the stored NAME because the next level's fetch is keyed by it.
-  const [countries, setCountries] = useState<GeoCountry[] | null>(null);
-  const [geoFail, setGeoFail] = useState(false);
-  const [countryIso, setCountryIso] = useState("");
-  const [states, setStates] = useState<GeoState[] | null>(null);
-  const [statesFail, setStatesFail] = useState(false);
-  const [stateIso, setStateIso] = useState("");
-  const [cities, setCities] = useState<{ name: string }[] | null>(null);
-  const [citiesFail, setCitiesFail] = useState(false);
-
-  // Countries — fetched once (getCountries memoises the promise module-wide).
-  useEffect(() => {
-    let alive = true;
-    getCountries()
-      .then((cs) => alive && setCountries(cs))
-      .catch(() => alive && setGeoFail(true));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // States — fetched whenever the chosen country changes. The downstream reset
-  // (clearing the previous country's states to the loading state) happens in the
-  // pick handler, so this effect only ever setStates from an async callback.
-  useEffect(() => {
-    if (!countryIso) return;
-    let alive = true;
-    getStates(countryIso)
-      .then((s) => alive && setStates(s))
-      .catch(() => alive && setStatesFail(true));
-    return () => {
-      alive = false;
-    };
-  }, [countryIso]);
-
-  // Cities — fetched whenever the chosen state changes (reset also in the handler).
-  useEffect(() => {
-    if (!countryIso || !stateIso) return;
-    let alive = true;
-    getCities(countryIso, stateIso)
-      .then((c) => alive && setCities(c))
-      .catch(() => alive && setCitiesFail(true));
-    return () => {
-      alive = false;
-    };
-  }, [countryIso, stateIso]);
-
-  const countryItems = useMemo<ComboItem[]>(
-    () =>
-      (countries ?? []).map((c) => ({
-        value: c.name,
-        label: `${c.emoji} ${c.name}`,
-        keywords: c.name,
-      })),
-    [countries],
-  );
-  const stateItems = useMemo<ComboItem[]>(
-    () => (states ?? []).map((s) => ({ value: s.name, label: s.name })),
-    [states],
-  );
-  const cityItems = useMemo<ComboItem[]>(
-    () => (cities ?? []).map((c) => ({ value: c.name, label: c.name })),
-    [cities],
-  );
-
-  // Picking a country/state stores the NAME (backend field) and resolves the iso2
-  // for the next level, then resets everything downstream so no stale value (or
-  // stale list) from the previous country/state lingers. Resetting the child
-  // lists to `null` here (not in the fetch effect) puts the next level straight
-  // into its loading state without a synchronous setState inside an effect.
-  const pickCountry = (it: ComboItem) => {
-    setField("country", it.value);
-    setCountryIso((countries ?? []).find((c) => c.name === it.value)?.iso2 ?? "");
-    setStates(null);
-    setStatesFail(false);
-    setField("state", "");
-    setStateIso("");
-    setCities(null);
-    setCitiesFail(false);
-    setField("city", "");
-  };
-  const pickState = (it: ComboItem) => {
-    setField("state", it.value);
-    setStateIso((states ?? []).find((s) => s.name === it.value)?.iso2 ?? "");
-    setCities(null);
-    setCitiesFail(false);
-    setField("city", "");
-  };
-
-  // Per-level field modes. A level shows a combobox only when geo is up and there
-  // is something to pick; otherwise it degrades to a free-text input.
-  const stateAsText =
-    geoFail || !countryIso || statesFail || (states !== null && states.length === 0);
-  const stateLoading = !geoFail && !!countryIso && !statesFail && states === null;
-  const cityAsText =
-    geoFail || !stateIso || citiesFail || (cities !== null && cities.length === 0);
-  const cityLoading = !geoFail && !!stateIso && !citiesFail && cities === null;
+  // Geo cascade — the SHARED implementation (see useGeoCascade above), so this
+  // modal and /titipan's return-address form can never disagree about which
+  // provinces exist. Country/state/city live in the hook, not in `form`.
+  const geo = useGeoCascade();
 
   const toggleNoZip = (v: boolean) => {
     setNoZip(v);
@@ -520,9 +725,9 @@ function AddAddressForm({
     // raw multi-field class-validator error from the (atomic) CreateAddressDto.
     const missing: string[] = [];
     if (!form.fullName.trim()) missing.push("full name");
-    if (!form.country.trim()) missing.push("country");
+    if (!geo.country.trim()) missing.push("country");
     if (!form.street.trim()) missing.push("street address");
-    if (!form.city.trim()) missing.push("city");
+    if (!geo.city.trim()) missing.push("city");
     if (!noZip && !form.zip.trim()) missing.push("zip/postal code");
     if (missing.length) {
       setError(`Please fill in: ${missing.join(", ")}.`);
@@ -539,11 +744,11 @@ function AddAddressForm({
       const created = await addAddress(
         {
           fullName: form.fullName,
-          country: form.country,
+          country: geo.country,
           street: form.street,
           apt: form.apt || undefined, // optional — omit rather than send ""
-          state: form.state || undefined,
-          city: form.city,
+          state: geo.state || undefined,
+          city: geo.city,
           phoneCountryCode: form.phoneCode || undefined,
           phoneNumber: form.phone || undefined,
           // CreateAddressDto requires a non-empty zip; "-" is the placeholder for
@@ -559,12 +764,12 @@ function AddAddressForm({
     } finally {
       setBusy(false);
     }
-  }, [form, noZip, token, onAdded]);
+  }, [form, geo.country, geo.state, geo.city, noZip, token, onAdded]);
 
   return (
     <ModalShell open onClose={onClose} title="Add New Address" maxWidth={560}>
       <div className="space-y-4">
-        {geoFail && (
+        {geo.offline && (
           <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[12px] leading-relaxed text-zinc-400">
             Location lookup is unavailable right now — type your country, state and city manually.
           </p>
@@ -580,25 +785,7 @@ function AddAddressForm({
         </ModalField>
 
         <ModalField label="Country/Region">
-          {geoFail || (countries !== null && countries.length === 0) ? (
-            <TextInput
-              value={form.country}
-              maxLength={56}
-              onChange={(e) => setField("country", e.target.value)}
-              placeholder="Country / region"
-              aria-label="Country or region"
-            />
-          ) : (
-            <SearchCombobox
-              value={form.country}
-              onSelect={pickCountry}
-              items={countryItems}
-              loading={countries === null}
-              placeholder="Select country"
-              searchPlaceholder="Search country…"
-              ariaLabel="Country or region"
-            />
-          )}
+          <GeoCountryControl geo={geo} />
         </ModalField>
 
         <ModalField label="Street Address">
@@ -621,48 +808,11 @@ function AddAddressForm({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <ModalField label="State/Province">
-            {stateAsText ? (
-              <TextInput
-                value={form.state}
-                maxLength={80}
-                onChange={(e) => setField("state", e.target.value)}
-                placeholder={geoFail || !countryIso ? "State / province" : "Type your state/province"}
-                aria-label="State or province"
-              />
-            ) : (
-              <SearchCombobox
-                value={form.state}
-                onSelect={pickState}
-                items={stateItems}
-                loading={stateLoading}
-                placeholder="Select state/province"
-                searchPlaceholder="Search state…"
-                ariaLabel="State or province"
-              />
-            )}
+            <GeoStateControl geo={geo} />
           </ModalField>
 
           <ModalField label="City/Department">
-            {cityAsText ? (
-              <TextInput
-                value={form.city}
-                maxLength={80}
-                onChange={(e) => setField("city", e.target.value)}
-                placeholder="City"
-                aria-label="City"
-              />
-            ) : (
-              <SearchCombobox
-                value={form.city}
-                onSelect={(it) => setField("city", it.value)}
-                items={cityItems}
-                loading={cityLoading}
-                allowCustom
-                placeholder="Select city"
-                searchPlaceholder="Search or type city…"
-                ariaLabel="City"
-              />
-            )}
+            <GeoCityControl geo={geo} />
           </ModalField>
         </div>
 

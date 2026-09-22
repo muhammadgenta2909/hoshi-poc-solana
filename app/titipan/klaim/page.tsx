@@ -38,6 +38,7 @@ import {
   ownerStatusLine,
   redeemClaimCode,
   statusUi,
+  ThrottledError,
   type MyConsignment,
 } from "@/lib/consignment";
 import TopNav from "@/components/packs/TopNav";
@@ -56,6 +57,21 @@ export default function KlaimTitipanPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [claimed, setClaimed] = useState<MyConsignment | null>(null);
+  /* Detik tersisa sampai rem percobaan lepas. 0 = tidak sedang direm. Lihat efek di bawah. */
+  const [cooldown, setCooldown] = useState(0);
+
+  /* ── HITUNG MUNDUR YANG BENAR-BENAR BERJALAN ────────────────────────────────────────────────
+     "Tunggu 42 detik" yang dicetak sekali lalu diam memaksa orangnya menghitung sendiri sambil
+     menebak kapan tombolnya hidup lagi — dan tebakan yang meleset berarti ia menabrak rem yang
+     sama sekali lagi. Angkanya turun di label tombol, jadi tidak ada yang perlu ditebak.
+     setState-nya terjadi di dalam callback interval (bukan saat efek dijalankan), jadi ia tidak
+     melanggar `react-hooks/set-state-in-effect`. */
+  const cooling = cooldown > 0;
+  useEffect(() => {
+    if (!cooling) return;
+    const id = window.setInterval(() => setCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearInterval(id);
+  }, [cooling]);
 
   /* Kode dari tautan (?kode=…). Client-only lewat window.location — BUKAN useSearchParams —
      supaya halaman ini tidak butuh Suspense boundary, konvensi yang sama dengan /messages dan
@@ -77,15 +93,26 @@ export default function KlaimTitipanPage() {
   }, []);
 
   const submit = async () => {
-    if (!token || busy || !isCompleteClaimCode(code)) return;
+    if (!token || busy || cooling || !isCompleteClaimCode(code)) return;
     setBusy(true);
     setError(null);
     try {
       setClaimed(await redeemClaimCode(code, token));
     } catch (e) {
-      // Pesan server dipakai APA ADANYA. Ia sudah satu kalimat untuk semua sebab penolakan kode,
-      // dan ia menyebut masa berlaku serta jalan keluarnya (penerbitan ulang) — dua hal yang
-      // dibutuhkan orang yang sedang berdiri dengan kertas di tangan.
+      // ── REM PERCOBAAN: KEGAGALAN SATU-SATUNYA DI LAYAR INI YANG BUKAN TENTANG KODENYA ───────
+      //
+      // Lima salah ketik dalam semenit bukan penyerang — itu orang yang menyalin 10 simbol dari
+      // tulisan tangan ke layar ponsel. Yang dulu muncul di sini adalah `ThrottlerException: Too
+      // Many Requests` apa adanya. `ThrottledError` membawa lama tunggunya, jadi tombolnya bisa
+      // ikut menghitung mundur alih-alih menyuruh orangnya menebak.
+      if (e instanceof ThrottledError) {
+        setCooldown(e.retryAfterSeconds);
+        setError(e.message);
+        return;
+      }
+      // Sisanya: pesan server dipakai APA ADANYA. Ia sudah satu kalimat untuk semua sebab
+      // penolakan kode, dan ia menyebut masa berlaku serta jalan keluarnya (penerbitan ulang) —
+      // dua hal yang dibutuhkan orang yang sedang berdiri dengan kertas di tangan.
       setError(e instanceof Error ? e.message : "Gagal mengklaim kode.");
     } finally {
       setBusy(false);
@@ -233,7 +260,12 @@ export default function KlaimTitipanPage() {
                 draft: ia rahasia sekali-pakai. */}
             {error && (
               <div className="mt-4 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3">
-                <p className="text-[13px] leading-relaxed text-red-200">{error}</p>
+                {/* `whitespace-pre-line`: kalimat rem percobaan sengaja dua paragraf — "tunggu
+                    sekian detik" dan "cocokkan lagi dari struk" adalah dua instruksi berbeda, dan
+                    menempelkannya jadi satu blok membuat yang kedua tidak terbaca. */}
+                <p className="whitespace-pre-line text-[13px] leading-relaxed text-red-200">
+                  {error}
+                </p>
                 <Link
                   href={supportComposeHref(claimCodeSupportDraft())}
                   className="mt-3 inline-block rounded-lg border border-red-300/30 bg-red-400/10 px-3.5 py-2 text-[12.5px] font-semibold text-red-100 transition hover:bg-red-400/20"
@@ -246,11 +278,15 @@ export default function KlaimTitipanPage() {
             <button
               type="button"
               onClick={() => void submit()}
-              disabled={busy || !isCompleteClaimCode(code)}
+              disabled={busy || cooling || !isCompleteClaimCode(code)}
               className="mt-4 w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
               style={{ backgroundImage: "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)" }}
             >
-              {busy ? "Mengklaim…" : "Klaim kartu saya"}
+              {busy
+                ? "Mengklaim…"
+                : cooling
+                  ? `Bisa dicoba lagi dalam ${cooldown} detik`
+                  : "Klaim kartu saya"}
             </button>
           </section>
         )}

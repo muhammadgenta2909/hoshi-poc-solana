@@ -27,12 +27,15 @@ import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import {
   acceptedByLabel,
+  agreedPriceIdr,
   canRequestReturn,
   certLookupUrl,
   commissionPct,
   estimatedPayout,
   eventTitle,
   getMyConsignments,
+  hasOpenableListing,
+  livePriceIdr,
   ownerReturnLine,
   ownerStatusLine,
   requestConsignmentReturn,
@@ -42,6 +45,7 @@ import {
   type ConsignmentPhotoKind,
   type MyConsignment,
 } from "@/lib/consignment";
+import ReturnRequestDialog from "./ReturnRequestDialog";
 import TopNav from "@/components/packs/TopNav";
 import { ACCOUNT_BG } from "@/lib/theme";
 import { ConfirmDialog, EmptyState, GhostButton, PrimaryButton } from "@/components/account/ui";
@@ -81,7 +85,16 @@ function ConsignmentCard({
   const photos = c.photos ?? [];
   const cover = photos.find((p) => p.kind === "FRONT")?.url ?? photos[0]?.url ?? c.listing?.image ?? null;
   const certUrl = certLookupUrl(c.grader ?? null, c.certNumber ?? null);
-  const price = c.listing?.priceIdrx ?? c.askPriceIdr;
+  /* ── DUA ANGKA, DAN DULU CUMA SATU YANG DITAMPILKAN — YANG SALAH ──────────────────────────
+     `c.listing?.priceIdrx ?? c.askPriceIdr` terlihat wajar dan justru itu masalahnya: relasi
+     listing 1-1 dan barisnya DIPAKAI ULANG, jadi titipan yang pernah dipajang lalu ditarik tetap
+     menggendong harga pajang TERAKHIRNYA — sering lebih rendah dari angka di struk bertanda
+     tangan yang dipegang pemiliknya — dan angka itu dicetak dengan label "Harga yang disepakati".
+     Sekarang keduanya dibaca terpisah: kesepakatan SELALU `askPriceIdr`, pajangan hanya berarti
+     selama pajangannya hidup. (Backend `listMine` juga sudah berhenti mengirim listing CANCELLED;
+     ini lapis keduanya.) */
+  const agreed = agreedPriceIdr(c);
+  const live = livePriceIdr(c);
   const blocked = returnBlockedReason(c.status);
 
   return (
@@ -146,15 +159,52 @@ function ConsignmentCard({
           )}
 
           {(c.status === "LISTED" || c.status === "IN_CUSTODY") && (
-            <p className="mt-2 text-[13px] text-zinc-300">
-              {c.status === "LISTED" ? "Dipajang " : "Harga yang disepakati "}
-              <strong className="text-white">{rp(price)}</strong>
-              <span className="text-zinc-500">
-                {" "}
-                · kamu menerima ± {rp(estimatedPayout(price, c.commissionBps))} setelah komisi{" "}
-                {commissionPct(c.commissionBps)}%
-              </span>
-            </p>
+            <>
+              {/* Harga pajang: HANYA kalau pajangannya benar-benar hidup. */}
+              {live != null && (
+                <p className="mt-2 text-[13px] text-zinc-300">
+                  Dipajang <strong className="text-white">{rp(live)}</strong>
+                  <span className="text-zinc-500">
+                    {" "}
+                    · kamu menerima ± {rp(estimatedPayout(live, c.commissionBps))} setelah komisi{" "}
+                    {commissionPct(c.commissionBps)}%
+                  </span>
+                </p>
+              )}
+
+              {/* Harga kesepakatan: angka di struk, apa adanya. */}
+              <p className={`text-[13px] text-zinc-300 ${live != null ? "mt-1" : "mt-2"}`}>
+                Harga yang disepakati <strong className="text-white">{rp(agreed)}</strong>
+                {live == null && (
+                  <span className="text-zinc-500">
+                    {" "}
+                    · kamu menerima ± {rp(estimatedPayout(agreed, c.commissionBps))} setelah komisi{" "}
+                    {commissionPct(c.commissionBps)}%
+                  </span>
+                )}
+              </p>
+
+              {/* ── SELISIHNYA DISEBUT, TIDAK DIBIARKAN DITEMUKAN SENDIRI ────────────────────
+                  Harga pajang yang berbeda dari angka di struk bisa saja memang disepakati lewat
+                  telepon — tapi kalau tidak, inilah satu-satunya layar tempat pemiliknya bisa
+                  menyadarinya. Menampilkan dua angka tanpa mengakui bahwa keduanya berbeda
+                  membuat yang lebih kecil terbaca sebagai koreksi diam-diam. */}
+              {live != null && live !== agreed && (
+                <p className="mt-1.5 rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber-100/85">
+                  Harga pajangnya berbeda dari angka di tanda terimamu. Kalau perubahan ini belum
+                  pernah kamu sepakati,{" "}
+                  <Link
+                    href={supportComposeHref(
+                      consignmentSupportDraft({ cardName: c.cardName, id: c.id }),
+                    )}
+                    className="font-semibold text-amber-200 hover:underline"
+                  >
+                    beri tahu tim Hoshi
+                  </Link>
+                  .
+                </p>
+              )}
+            </>
           )}
 
           {c.status === "SOLD" && (
@@ -163,11 +213,25 @@ function ConsignmentCard({
               {c.commissionIdrx != null && (
                 <span className="text-zinc-500"> (komisi Hoshi {rp(c.commissionIdrx)})</span>
               )}
+              {/* Kalimat "masuk ke saldomu" yang tidak menautkan ke mana pun memaksa orang
+                  mencari sendiri halaman penarikannya — di menu yang tidak menyebut kata
+                  "saldo penjualan". Uangnya miliknya; jalan mengambilnya harus ada di baris
+                  yang mengumumkan bahwa uang itu ada. */}
+              <span className="text-zinc-500">
+                {" "}
+                ·{" "}
+                <Link href="/tarik-saldo" className="font-semibold text-yellow-300 hover:underline">
+                  tarik ke rekeningmu →
+                </Link>
+              </span>
             </p>
           )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {c.listing && (
+            {/* Listing yang sudah DIBATALKAN bukan tautan, ia jalan buntu — dan jalan buntu di
+                halaman yang sedang membuktikan bahwa barang orang aman adalah kerugian bersih.
+                (Backend `listMine` juga sudah tidak mengirimkannya; ini penjaga keduanya.) */}
+            {c.listing && hasOpenableListing(c) && (
               <Link
                 href={`/marketplace/${c.listing.id}`}
                 className="rounded-xl border border-white/12 bg-white/[0.03] px-3.5 py-2 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.07]"
@@ -363,22 +427,24 @@ export default function TitipanPage() {
     void load();
   }, [token, load]);
 
-  const confirmReturn = async () => {
-    if (!asking || !token || busy) return;
+  /* ── DUA JALUR, DAN BACKEND MEMANG MEMBEDAKANNYA ───────────────────────────────────────────
+     INTAKE  kartunya belum pernah berpindah tangan → yang dibatalkan adalah KESEPAKATANNYA, dan
+             rute `withdraw` MENOLAK (422) kalau `returnPlan` ikut dikirim untuk baris seperti
+             ini — tidak ada apa pun untuk dikirim balik. Jalur ini tetap satu konfirmasi
+             sederhana, tanpa formulir alamat.
+     selain  kartunya ada di rak kami → ada barang yang benar-benar harus dikembalikan, dan "ke
+             mana" ditanyakan sekarang, di ReturnRequestDialog, selagi orangnya masih di layar. */
+  const cancelling = asking?.status === "INTAKE" ? asking : null;
+  const returning = asking && asking.status !== "INTAKE" ? asking : null;
+
+  const confirmCancel = async () => {
+    if (!cancelling || !token || busy) return;
     setBusy(true);
     setError(null);
     setOk(null);
     try {
-      const wasIntake = asking.status === "INTAKE";
-      await requestConsignmentReturn(asking.id, token);
-      setOk(
-        wasIntake
-          ? "Titipan dibatalkan. Tidak ada kartu yang berpindah tangan."
-          : // Menyebut DUA hal yang paling mudah disalahpahami sekaligus: kartunya sudah tidak
-            // dijual (jadi tidak ada yang bisa membelinya lagi), TAPI ia belum ke mana-mana —
-            // masih di rak Hoshi, masih tanggung jawab kami, sampai benar-benar berangkat.
-            "Permintaan terkirim. Kartu ini sudah tidak dipajang, dan kartunya tetap aman di rak Hoshi sampai benar-benar diserahkan. Tim Hoshi akan menghubungimu untuk memastikan ke mana kartunya dikembalikan — diambil sendiri atau dikirim kurir. Tidak ada biaya apa pun untukmu.",
-      );
+      await requestConsignmentReturn(cancelling.id, token);
+      setOk("Titipan dibatalkan. Tidak ada kartu yang berpindah tangan.");
       await load();
     } catch (e) {
       // Pesan server dipakai apa adanya: kalau kartunya terjual lebih dulu, kalimat itulah yang
@@ -389,6 +455,16 @@ export default function TitipanPage() {
       setAsking(null);
     }
   };
+
+  const returnRequested = useCallback(
+    (message: string) => {
+      setOk(message);
+      setError(null);
+      setAsking(null);
+      void load();
+    },
+    [load],
+  );
 
   return (
     <div
@@ -499,16 +575,35 @@ export default function TitipanPage() {
                 yang kalian sepakati di awal — dan angka komisi itu dibekukan hari kartumu
                 diserahkan, jadi tidak bisa berubah belakangan.
               </li>
+              {/* Kalimat "bisa ditarik kapan saja" tanpa tautan ke halaman penarikannya
+                  meninggalkan orangnya mencari sendiri menu yang tidak menyebut kata "saldo
+                  penjualan". Uangnya miliknya; jalan mengambilnya disebutkan di tempat yang
+                  menjanjikannya. */}
+              <li>
+                <strong className="text-zinc-200">Hasil penjualan bisa ditarik kapan saja.</strong>{" "}
+                Saldonya masuk ke akun ini dan dicairkan ke rekening bank atau e-wallet-mu lewat{" "}
+                <Link
+                  href="/tarik-saldo"
+                  className="font-semibold text-yellow-300 hover:underline"
+                >
+                  Tarik Saldo
+                </Link>
+                .
+              </li>
               <li>
                 <strong className="text-zinc-200">Buktinya tidak bisa dihapus.</strong> Tanggal
                 terima, kondisi, dan foto yang diambil saat serah terima tersimpan permanen —
                 termasuk dari sisi Hoshi. Kalau suatu saat ada beda pendapat soal kondisi kartu,
                 catatan itu yang berbicara.
               </li>
+              {/* SENGAJA berbunyi berbeda dari butir saldo di atas: "menarik kartu" dan "menarik
+                  saldo" adalah dua hal yang sama sekali berbeda, dan dua butir yang sama-sama
+                  berbunyi "bisa ditarik kapan saja" membuat keduanya kabur. */}
               <li>
-                <strong className="text-zinc-200">Kamu bisa menariknya kapan saja.</strong> Selama
-                belum terjual, minta kembali lewat tombol di atas. Tidak ada biaya simpan, biaya
-                tarik, atau biaya pajang.
+                <strong className="text-zinc-200">Kartunya bisa kamu minta kembali kapan saja.</strong>{" "}
+                Selama belum terjual, minta lewat tombol di atas — dan di situ juga kamu menyebut ke
+                mana ia dikembalikan: diambil sendiri di tempat Hoshi, atau dikirim ke alamatmu.
+                Tidak ada biaya simpan, biaya tarik, biaya kirim, atau biaya pajang.
               </li>
               <li>
                 <strong className="text-zinc-200">Kalau kartumu bersertifikat,</strong> nomornya bisa
@@ -520,33 +615,31 @@ export default function TitipanPage() {
         )}
       </main>
 
+      {/* INTAKE: tidak ada kartu yang berpindah, jadi tidak ada alamat yang perlu ditanyakan. */}
       <ConfirmDialog
-        open={!!asking}
-        title={asking?.status === "INTAKE" ? "Batalkan titipan ini?" : "Minta kartu ini kembali?"}
+        open={!!cancelling}
+        title="Batalkan titipan ini?"
         message={
-          asking?.status === "INTAKE" ? (
-            <>
-              Kesepakatan untuk <strong>{asking?.cardName}</strong> dibatalkan. Kartunya masih ada
-              di tanganmu, jadi tidak ada yang perlu diserahkan dan tidak ada biaya apa pun.
-            </>
-          ) : (
-            <>
-              Kartu <strong>{asking?.cardName}</strong> akan diturunkan dari marketplace (kalau
-              sedang dipajang) dan disiapkan untuk diserahkan kembali kepadamu. Tidak dipungut biaya
-              apa pun.
-              <br />
-              <br />
-              Kalau kartunya kebetulan terjual persis saat permintaan ini masuk, penjualannya yang
-              berlaku dan hasilnya langsung masuk ke saldomu — kami akan memberitahumu.
-            </>
-          )
+          <>
+            Kesepakatan untuk <strong>{cancelling?.cardName}</strong> dibatalkan. Kartunya masih
+            ada di tanganmu, jadi tidak ada yang perlu diserahkan dan tidak ada biaya apa pun.
+          </>
         }
-        confirmLabel={
-          busy ? "Mengirim…" : asking?.status === "INTAKE" ? "Ya, batalkan" : "Ya, minta kembali"
-        }
-        onConfirm={() => void confirmReturn()}
+        confirmLabel={busy ? "Mengirim…" : "Ya, batalkan"}
+        onConfirm={() => void confirmCancel()}
         onCancel={() => setAsking(null)}
       />
+
+      {/* Kartunya ADA di rak kami: "ke mana ia dikembalikan?" ditanyakan sekarang, bukan lewat
+          telepon menyusul. Lihat catatan panjang di ReturnRequestDialog. */}
+      {token && (
+        <ReturnRequestDialog
+          consignment={returning}
+          token={token}
+          onClose={() => setAsking(null)}
+          onDone={returnRequested}
+        />
+      )}
     </div>
   );
 }

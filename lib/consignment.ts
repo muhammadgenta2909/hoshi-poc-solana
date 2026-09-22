@@ -25,6 +25,100 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   HTTP 429 — DAN KENAPA PESAN SERVER TIDAK BOLEH DIPAKAI APA ADANYA DI SINI.
+
+   Semua rute di backend duduk di bawah ThrottlerGuard global, dan rute penukaran kode klaim punya
+   remnya sendiri (5 percobaan/menit/IP). Yang dikirim Nest saat rem itu bekerja adalah
+   `{ statusCode: 429, message: "ThrottlerException: Too Many Requests" }` — kalimat bahasa Inggris
+   yang menyebut nama sebuah KELAS.
+
+   Di layar mana pun itu buruk; di `/titipan/klaim` ia adalah kegagalan produk. Yang sedang berdiri
+   di depannya adalah kolektor yang kartunya SUDAH DIBAWA PERGI oleh tim Hoshi, sedang menyalin 10
+   simbol dari tulisan tangan di struk ke layar ponsel. Salah ketik lima kali dalam semenit sama
+   sekali tidak aneh — dan yang ia terima sebagai jawaban adalah nama kelas Java-esque, tanpa satu
+   kata pun tentang apa yang harus ia lakukan berikutnya.
+
+   ⚠️ INI BUKAN PELONGGARAN REM. Batas, jendela, dan perilaku throttle-nya tidak disentuh sama
+   sekali — yang berubah hanya KALIMAT yang dibacakan kepada pemilik kartunya, ditambah satu
+   header (`Retry-After`) yang backend memang sudah kirim dan sekarang boleh dibaca browser.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Jendela throttle backend, detik. Cermin `ttl: 60000` (global maupun rute kode klaim). */
+const THROTTLE_WINDOW_SECONDS = 60;
+
+/** Batas percobaan kode klaim per menit — cermin `@Throttle({ limit: 5 })` di controller. */
+export const CLAIM_CODE_ATTEMPTS_PER_MINUTE = 5;
+
+/**
+ * Kegagalan karena rem, bukan karena yang diketik salah — DUA hal yang sangat berbeda bagi orang
+ * yang membacanya, jadi ia punya tipe sendiri supaya layar bisa membedakannya tanpa mengendus
+ * teks pesan.
+ */
+export class ThrottledError extends Error {
+  /** Detik sampai boleh mencoba lagi. Selalu ≥ 1 — "tunggu 0 detik" bukan instruksi. */
+  readonly retryAfterSeconds: number;
+  constructor(message: string, retryAfterSeconds: number) {
+    super(message);
+    this.name = "ThrottledError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/**
+ * Detik sampai boleh mencoba lagi.
+ *
+ * Dibaca dari header `Retry-After` yang dikirim ThrottlerGuard. Header itu baru TERBACA dari
+ * browser karena backend mencantumkannya di `exposedHeaders` (lihat `src/main.ts`); kalau ia
+ * tidak terbaca — proxy yang membuangnya, backend versi lama, CORS yang belum diperbarui —
+ * jawabannya JATUH KE JENDELA PENUH. Itu batas atas yang jujur: menunggu terlalu lama sedikit
+ * tidak melukai siapa pun, sedangkan menebak terlalu pendek mengirim orangnya menabrak rem yang
+ * sama sekali lagi.
+ */
+function retryAfterSeconds(res: Response): number {
+  const raw = res.headers.get("retry-after");
+  const n = raw == null ? NaN : Number(raw.trim());
+  // Batas atas 1 jam: nilai aneh dari proxy tidak boleh berubah jadi "tunggu 9 hari".
+  return Number.isFinite(n) && n >= 1 && n <= 3600
+    ? Math.ceil(n)
+    : THROTTLE_WINDOW_SECONDS;
+}
+
+/** "42 detik" / "2 menit" — lama tunggu dalam satuan yang enak dibaca. */
+export const waitPhrase = (seconds: number): string => {
+  const s = Math.max(1, Math.ceil(seconds));
+  return s < 60 ? `${s} detik` : `${Math.ceil(s / 60)} menit`;
+};
+
+/** Kalimat umum untuk rute titipan mana pun yang kena rem. */
+const throttledMessage = (seconds: number): string =>
+  `Terlalu banyak permintaan dari perangkat ini dalam waktu singkat. Tunggu ${waitPhrase(
+    seconds,
+  )}, lalu coba lagi. Tidak ada yang rusak dan tidak ada yang hilang — halaman ini cuma sedang diminta pelan-pelan.`;
+
+/**
+ * Kalimat untuk kolektor yang salah ketik kode klaimnya beberapa kali.
+ *
+ * Tiga hal yang HARUS ada di dalamnya, dan ketiganya pernah tidak ada: berapa lama menunggu,
+ * bahwa kodenya perlu dicocokkan ulang DARI STRUK (di situlah salah ketiknya lahir), dan bahwa
+ * ini bukan pertanda kartunya bermasalah.
+ *
+ * Catatan alfabet di dalamnya bukan hiasan: `I`, `L`, `O` dan `U` TIDAK ADA di Crockford Base32,
+ * jadi coretan yang terbaca seperti "I" atau "O" di tulisan tangan pasti angka 1 atau 0. Itu
+ * persis jenis salah baca yang membuat orang mengetik kode yang bentuknya sah tapi isinya salah —
+ * dan kolom input di halaman klaim memang sudah memetakannya otomatis, jadi yang tersisa adalah
+ * memberitahunya supaya ia berhenti curiga pada hurufnya sendiri.
+ */
+export const claimCodeThrottledMessage = (seconds: number): string =>
+  `Terlalu banyak percobaan kode. Penukaran kode dibatasi ${CLAIM_CODE_ATTEMPTS_PER_MINUTE} ` +
+  `percobaan per menit — batas itu yang membuat kode kartumu tidak bisa ditebak orang lain. ` +
+  `Tunggu ${waitPhrase(seconds)}, lalu coba lagi.\n\n` +
+  `Sambil menunggu, cocokkan sekali lagi dengan kode di tanda terima yang kamu pegang: ` +
+  `${CLAIM_CODE_LENGTH} simbol, huruf besar-kecil dan tanda hubung tidak berpengaruh, dan huruf ` +
+  `I, L, O, U tidak pernah dipakai — coretan yang terlihat seperti itu pasti angka 1 atau 0. ` +
+  `Kartumu tetap tercatat atas namamu di Hoshi selama kamu menunggu; tidak ada yang berubah ` +
+  `karena kode yang salah ketik.`;
+
 async function req<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -35,6 +129,12 @@ async function req<T>(path: string, token: string, init?: RequestInit): Promise<
     },
   });
   if (!res.ok) {
+    // Ditangkap SEBELUM `message` server dibaca: pada 429 isinya "ThrottlerException: Too Many
+    // Requests", dan tidak ada layar yang boleh menampilkan itu kepada pemilik kartu.
+    if (res.status === 429) {
+      const wait = retryAfterSeconds(res);
+      throw new ThrottledError(throttledMessage(wait), wait);
+    }
     let msg = `HTTP ${res.status}`;
     try {
       const b = (await res.json()) as { message?: string | string[] };
@@ -505,6 +605,52 @@ export const isReturnAddressFormComplete = (a: Partial<ConsignmentReturnAddress>
   RETURN_ADDRESS_REQUIRED.every((k) => (a[k] ?? "").toString().trim().length > 0);
 
 /**
+ * Kolom alamat yang bermasalah, dalam KALIMAT — atau null kalau semuanya sudah cukup.
+ *
+ * ┌──── KENAPA PANJANG MINIMUMNYA DICERMINKAN DI SINI ─────────────────────────────────────────┐
+ * │ `ConsignmentReturnAddressDto` di backend memasang `@MinLength` di tiap kolom. Kolom yang    │
+ * │ terisi TAPI terlalu pendek (kota "A", kode pos "40") lolos `isReturnAddressFormComplete` —  │
+ * │ ia cuma bertanya "kosong atau tidak" — lalu ditolak ValidationPipe dengan daftar pesan      │
+ * │ class-validator berbahasa Inggris. Yang membaca daftar itu adalah pemilik kartu yang sedang │
+ * │ mencoba meminta barangnya sendiri kembali dari ponsel.                                      │
+ * │                                                                                            │
+ * │ Ini BUKAN gerbang — server tetap yang memutuskan. Ia hanya memastikan penolakan yang sudah  │
+ * │ pasti terjadi dikatakan dalam bahasa yang orangnya mengerti, sebelum ia terkirim.           │
+ * └────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
+const RETURN_ADDRESS_RULES: {
+  key: keyof ConsignmentReturnAddress;
+  min: number;
+  /** Nama kolomnya seperti yang tertulis di layar, supaya kalimatnya bisa ditunjuk. */
+  label: string;
+}[] = [
+  { key: "recipientName", min: 2, label: "Nama penerima" },
+  { key: "phoneNumber", min: 5, label: "Nomor telepon" },
+  { key: "street", min: 5, label: "Alamat lengkap" },
+  { key: "city", min: 2, label: "Kota/kabupaten" },
+  { key: "state", min: 2, label: "Provinsi" },
+  { key: "zip", min: 3, label: "Kode pos" },
+];
+
+export const returnAddressProblem = (
+  a: Partial<ConsignmentReturnAddress>,
+): string | null => {
+  const empty = RETURN_ADDRESS_RULES.filter(
+    (r) => (a[r.key] ?? "").toString().trim().length === 0,
+  );
+  if (empty.length > 0) {
+    return `Masih kosong: ${empty.map((r) => r.label.toLowerCase()).join(", ")}. Kurir butuh semuanya supaya kartunya sampai ke tangan yang benar.`;
+  }
+  const short = RETURN_ADDRESS_RULES.find(
+    (r) => (a[r.key] ?? "").toString().trim().length < r.min,
+  );
+  if (short) {
+    return `${short.label} sepertinya belum lengkap — tulis minimal ${short.min} karakter.`;
+  }
+  return null;
+};
+
+/**
  * Satu baris ringkas alamat pengembalian yang TERSIMPAN, untuk ditampilkan apa adanya.
  * null = belum ada alamat (bukan "alamat kosong" — dua hal yang berbeda).
  */
@@ -802,6 +948,66 @@ export const commissionPct = (bps: number): number =>
 /** Perkiraan hasil bersih pemilik dari sebuah harga pajang (SEBELUM potongan lain apa pun). */
 export const estimatedPayout = (priceIdr: number, bps: number): number =>
   Math.max(0, priceIdr - Math.floor((priceIdr * Math.min(Math.max(bps, 0), BPS_DENOMINATOR)) / BPS_DENOMINATOR));
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   DUA ANGKA YANG TIDAK BOLEH TERTUKAR — dan yang pernah tertukar, dengan akibat yang mahal.
+
+   ┌──── ANGKA DI STRUK vs ANGKA DI PAJANGAN ───────────────────────────────────────────────────┐
+   │ `askPriceIdr`      HARGA YANG DISEPAKATI. Ia tertulis di struk serah-terima bertanda tangan │
+   │                    yang DIPEGANG PEMILIKNYA. Ia tidak berubah karena apa pun yang terjadi   │
+   │                    di marketplace.                                                          │
+   │ `listing.priceIdrx` HARGA PAJANG. Admin boleh menurunkannya (mis. 20jt → 17jt), dan ia      │
+   │                    hanya berarti SELAMA PAJANGANNYA HIDUP (`status === "ACTIVE"`).          │
+   └────────────────────────────────────────────────────────────────────────────────────────────┘
+
+   KENAPA INI PUNYA FUNGSINYA SENDIRI. `Listing.consignmentId` @unique di backend: relasinya 1-1
+   dan baris listing yang SAMA dipakai ulang saat kartunya dipajang lagi. Jadi titipan yang
+   pemiliknya tarik dari pajangan TETAP menggendong baris listing CANCELLED berisi harga pajang
+   TERAKHIRNYA. `c.listing?.priceIdrx ?? c.askPriceIdr` — yang terlihat wajar — karenanya membaca
+   angka dari pajangan yang sudah mati dan menyebutnya "harga yang disepakati": pemiliknya membaca
+   angka yang LEBIH RENDAH daripada yang ada di kertas yang ia pegang, di halaman yang seluruh
+   gunanya adalah membuktikan bahwa kami memegang janji.
+
+   `listMine` di backend sekarang juga TIDAK MENGIRIM listing yang CANCELLED, jadi ini lapis
+   kedua — bukan satu-satunya. Dua lapis disengaja: yang satu menutup jalur datanya, yang satu
+   menutup kemungkinan sebuah layar menulis rumus itu lagi.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Bentuk minimum untuk menjawab "berapa harga kartu ini, dan harga yang mana". */
+export type ConsignmentPriceFacts = {
+  askPriceIdr: number;
+  listing?: { status: string; priceIdrx: number } | null;
+};
+
+/**
+ * HARGA YANG DISEPAKATI — angka di struk. SELALU `askPriceIdr`, tanpa kecuali.
+ *
+ * Sengaja sebuah fungsi meski isinya satu field: yang dijaga bukan perhitungannya, melainkan
+ * larangan menambahkan `?? listing.priceIdrx` ke dalamnya suatu hari nanti.
+ */
+export const agreedPriceIdr = (c: ConsignmentPriceFacts): number => c.askPriceIdr;
+
+/**
+ * HARGA PAJANG YANG BENAR-BENAR TAYANG, atau null kalau tidak ada pajangan hidup.
+ *
+ * null ≠ 0: "tidak sedang dipajang" bukan "dipajang nol rupiah". FAIL-CLOSED — status apa pun
+ * selain ACTIVE (CANCELLED, SOLD, PENDING_ESCROW, atau nilai baru dari server) dibaca sebagai
+ * tidak tayang.
+ */
+export const livePriceIdr = (c: ConsignmentPriceFacts): number | null =>
+  c.listing && c.listing.status === "ACTIVE" ? c.listing.priceIdrx : null;
+
+/**
+ * Pajangannya masih bisa dibuka di marketplace?
+ *
+ * Listing CANCELLED adalah JALAN BUNTU, bukan tautan — dan tautan ke jalan buntu di halaman yang
+ * sedang membuktikan bahwa barang orang aman adalah kerugian bersih. SOLD tetap boleh dibuka:
+ * itu bukti penjualannya, dan pemiliknya berhak melihat halaman yang membuat kartunya laku.
+ */
+export const hasOpenableListing = (c: {
+  listing?: { id: string; status: string } | null;
+}): boolean =>
+  !!c.listing && (c.listing.status === "ACTIVE" || c.listing.status === "SOLD");
 
 /* ─────────────────────────── harga terendah yang disepakati ─────────────────────────── */
 
@@ -1152,6 +1358,18 @@ export async function redeemClaimCode(code: string, token: string): Promise<MyCo
   });
 
   if (!res.ok) {
+    // ══ REM, BUKAN PENOLAKAN KODE — dan bedanya penting bagi orang yang membacanya ══
+    //
+    // 429 TIDAK mengatakan apa pun tentang kode yang baru diketik: ia mengatakan bahwa sudah ada
+    // terlalu banyak percobaan dari IP ini semenit terakhir. Dibiarkan lewat ke cabang di bawah,
+    // yang muncul di layar adalah `message` mentah dari Nest — "ThrottlerException: Too Many
+    // Requests" — kepada kolektor yang sedang mencoba mengklaim kartunya sendiri. Ditangkap di
+    // SINI, di atas semua cabang lain, karena ia satu-satunya kegagalan di rute ini yang BUKAN
+    // tentang kodenya, dan karena ia satu-satunya yang punya jawaban konkret: tunggu sekian detik.
+    if (res.status === 429) {
+      const wait = retryAfterSeconds(res);
+      throw new ThrottledError(claimCodeThrottledMessage(wait), wait);
+    }
     let msg: string | null = null;
     try {
       const b = (await res.json()) as { message?: string | string[] };
