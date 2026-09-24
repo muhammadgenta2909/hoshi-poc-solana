@@ -67,9 +67,39 @@ const LOCKABLE_INPUT = `${INPUT} disabled:cursor-not-allowed disabled:border-whi
 /** Komisi bawaan (5%) — nilai yang dipakai pemilik produk hari ini. Dibekukan per baris titipan. */
 const DEFAULT_COMMISSION_BPS = 500;
 
-const GRADERS = ["", "PSA", "CGC", "BGS"] as const;
+/**
+ * Pilihan dropdown Grader. "" (opsi pertama) = kartunya MENTAH, belum di-grading.
+ *
+ * Urutannya SENGAJA sama dengan enum `Grader` di backend: PSA lalu TAG — dua grader yang sungguh
+ * beredar di pasar Indonesia — baru CGC/BGS yang jarang muncul di sini. Operator yang berdiri di
+ * ruang tamu orang menemukan pilihan yang benar di dua baris pertama, bukan setelah menyusuri
+ * daftar. Nilai di luar daftar ini DITOLAK server (enum Postgres), jadi menambahnya butuh migrasi.
+ */
+const GRADERS = ["", "PSA", "TAG", "CGC", "BGS"] as const;
 const ID_KINDS = ["", "KTP", "SIM", "PASPOR"] as const;
-const RAW_CONDITIONS = ["", "NM", "LP", "MP", "HP", "DMG"] as const;
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   KONDISI KARTU MENTAH — SINGKATANNYA DIEJA, BUKAN DITAMPILKAN MENTAH.
+
+   NM/LP/MP/HP/DMG adalah skala baku dunia TCG (TCGplayer, Cardmarket, eBay). "Baku" bukan berarti
+   "diketahui semua orang": pemilik produk ini sendiri menanyakan artinya. Kalau ia tidak tahu,
+   operator yang berdiri di ruang tamu orang jelas juga tidak.
+
+   Dan salah pilih di sini mahal: ia menilai kartu MILIK ORANG LAIN, di depan orangnya, dan
+   hasilnya jadi catatan permanen di baris titipan — dasar kalau berbulan-bulan lagi ada
+   perbedaan pendapat soal kondisi. Dropdown yang menuntut orang sudah hafal singkatan hanya
+   memindahkan tebakan ke tempat yang tidak terlihat.
+
+   NILAINYA TETAP SINGKATAN ("NM", "LP", …) — itu yang dibaca server dan yang tersimpan di baris.
+   Yang berubah hanya yang TERBACA MANUSIA. Jangan pernah menukar keduanya.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+const RAW_CONDITIONS = [
+  { value: "", label: "— tidak berlaku —" },
+  { value: "NM", label: "NM — Near Mint · seperti baru, nyaris tanpa cacat" },
+  { value: "LP", label: "LP — Lightly Played · sedikit tanda pakai, sudut mulai tumpul" },
+  { value: "MP", label: "MP — Moderately Played · goresan & tanda pakai terlihat jelas" },
+  { value: "HP", label: "HP — Heavily Played · aus berat, tepi rusak, mungkin terlipat" },
+  { value: "DMG", label: "DMG — Damaged · rusak: sobek, terlipat, atau kena air" },
+] as const;
 
 /** Jawaban atas "orang ini sudah punya akun Hoshi?". "" = belum dijawab, dan itu bukan default. */
 type OwnerMode = "" | "AKUN" | "TANPA_AKUN";
@@ -1078,7 +1108,7 @@ export default function AdminTitipanBaruPage() {
         </Field>
 
         {/* ══ KARTU MENTAH: DITERIMA, DISIMPAN, TAPI BELUM BISA DIJUAL ════════════════════════
-            `Listing.grader` adalah enum NOT NULL berisi PSA/CGC/BGS saja, jadi server MENOLAK
+            `Listing.grader` adalah enum NOT NULL berisi PSA/TAG/CGC/BGS saja, jadi server MENOLAK
             memajang titipan tanpa grader — dan penolakannya benar: mengisi kolom itu berarti
             memberi label palsu pada kartu orang lain, persis hal yang seluruh fitur ini dibangun
             untuk tidak dilakukan.
@@ -1098,7 +1128,7 @@ export default function AdminTitipanBaruPage() {
               Kartu tanpa grading belum bisa dipajang di Hoshi.
             </p>
             <p className="mt-1.5 text-[12.5px] leading-relaxed text-amber-100/85">
-              Listing di Hoshi wajib menyebut grader (PSA/CGC/BGS), dan menuliskan salah satunya
+              Listing di Hoshi wajib menyebut grader (PSA/TAG/CGC/BGS), dan menuliskan salah satunya
               untuk kartu yang belum di-grade berarti memberi label palsu pada kartu orang lain.
               Jadi kartu ini <strong>akan tercatat, boleh diterima, aman di penyimpanan, dan bisa
               diminta kembali kapan saja</strong> — tapi ia akan menunggu di rak sampai di-grade,
@@ -1180,7 +1210,7 @@ export default function AdminTitipanBaruPage() {
               Keduanya satu paket, dan server menolak kombinasi ini: penjaga “satu slab tidak bisa
               dititipkan dua kali” bersandar pada pasangan grader + nomor sertifikat, dan grader
               yang kosong membuat penjaga itu tidak pernah berbunyi.{" "}
-              <strong>Pilih grader-nya (PSA/CGC/BGS) sesuai yang tertera di slab</strong>, atau —
+              <strong>Pilih grader-nya (PSA/TAG/CGC/BGS) sesuai yang tertera di slab</strong>, atau —
               kalau kartunya memang mentah — hapus isian slab-nya.
             </p>
             <button
@@ -1200,8 +1230,8 @@ export default function AdminTitipanBaruPage() {
             className={INPUT}
           >
             {RAW_CONDITIONS.map((c) => (
-              <option key={c} value={c} className="bg-[#121217]">
-                {c || "— tidak berlaku —"}
+              <option key={c.value} value={c.value} className="bg-[#121217]">
+                {c.label}
               </option>
             ))}
           </select>

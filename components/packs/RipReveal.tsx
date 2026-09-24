@@ -50,9 +50,26 @@ function parseYear(name: string): string | null {
   return /\b(?:19|20)\d{2}\b/.exec(name)?.[0] ?? null;
 }
 
-/** Grade off a CC slab name, e.g. "… PSA 10 GEM MINT" → "PSA 10". */
+/**
+ * Grade dari NAMA slab CC, mis. "… PSA 10 GEM MINT" → "PSA 10".
+ *
+ * ── KENAPA TAG DITAMBAHKAN DI SINI, dan kenapa itu BUKAN keputusan yang sama dengan enum ──
+ * Daftar ini SENGAJA lebih luas daripada enum `Grader`: ia sudah memuat SGC dan BECKETT, yang
+ * bukan (semuanya) nilai enum. Sebabnya fungsi ini tidak MEMVALIDASI apa pun — ia MEMBACA apa
+ * yang tercetak di judul katalog CC untuk satu slide teaser yang murni kosmetik. Kartunya sendiri
+ * sudah aman di Vault; yang dipertaruhkan cuma apakah slide "grade" menampilkan sesuatu atau
+ * kosong. Jadi ambang buktinya rendah, dan grader yang TIDAK dikenali berarti slide kosong —
+ * bukan data salah yang tersimpan.
+ *
+ * TAG dimasukkan karena slab TAG kini ikut masuk katalog yang kita baca; tanpa ia di daftar,
+ * pembeli kartu TAG melihat slide grade kosong padahal graden-nya tercetak jelas di judulnya.
+ *
+ * RISIKO SALAH TANGKAP kecil dan sudah dipagari bentuk polanya: "TAG" cuma cocok kalau LANGSUNG
+ * diikuti angka grade (`\s*(10|\d(?:\.\d)?)\b`), jadi kata "tag" yang kebetulan ada di judul tidak
+ * ikut tertangkap kecuali persis berbentuk "TAG 9"/"TAG 10" — yang memang artinya grade TAG.
+ */
 function parseGrade(name: string): string | null {
-  const m = /\b(PSA|CGC|BGS|SGC|BECKETT)\s*(10|\d(?:\.\d)?)\b/i.exec(name);
+  const m = /\b(PSA|TAG|CGC|BGS|SGC|BECKETT)\s*(10|\d(?:\.\d)?)\b/i.exec(name);
   if (!m) return null;
   const grader = m[1].toUpperCase() === "BECKETT" ? "BGS" : m[1].toUpperCase();
   return `${grader} ${m[2]}`;

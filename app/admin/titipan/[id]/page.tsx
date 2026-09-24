@@ -554,7 +554,7 @@ export default function AdminTitipanDetailPage() {
       c.receivedBy?.walletAddress ??
       null)
     : null;
-  /** Kartu MENTAH belum bisa dipajang di fase ini (kolom grader listing hanya kenal PSA/CGC/BGS). */
+  /** Kartu MENTAH belum bisa dipajang (kolom grader listing cuma kenal PSA/TAG/CGC/BGS). */
   const rawUnlistable = c.grader == null;
   /** SUMBU KEDUA, berdiri sendiri dari custody: sudah ada akun yang akan menerima uangnya? */
   const awaitingClaim = isAwaitingClaim(c);
@@ -562,7 +562,7 @@ export default function AdminTitipanDetailPage() {
   /* ── APA YANG SEBENARNYA TERJADI SESUDAH "TERIMA KARTU" ───────────────────────────────────
      Dialog konfirmasinya dulu berbunyi "Sesudah ini kartu boleh dipajang" dan notifikasinya
      "Sekarang boleh dipajang." — untuk SETIAP baris, termasuk dua yang server tolak memajangnya
-     dengan pasti: kartu MENTAH (kolom grader listing hanya mengenal PSA/CGC/BGS) dan titipan yang
+     dengan pasti: kartu MENTAH (kolom grader listing cuma kenal PSA/TAG/CGC/BGS) dan titipan yang
      pemiliknya belum menukarkan kode klaim (hasil penjualannya tidak punya tujuan).
 
      Operator membaca kalimat itu di teras rumah kolektor, berkata "sudah masuk, nanti kami
@@ -571,7 +571,7 @@ export default function AdminTitipanDetailPage() {
   const afterAcceptBlockers: string[] = [];
   if (rawUnlistable) {
     afterAcceptBlockers.push(
-      "kartu ini belum punya grading (kolom grader pada listing hanya mengenal PSA/CGC/BGS)",
+      "kartu ini belum punya grading (kolom grader pada listing hanya mengenal PSA/TAG/CGC/BGS)",
     );
   }
   if (awaitingClaim) {
@@ -1070,7 +1070,7 @@ export default function AdminTitipanDetailPage() {
               }`}
             >
               Kartu ini tidak punya grading, dan kartu tanpa grading belum bisa dipajang di fase
-              ini: kolom grader pada listing hanya mengenal PSA/CGC/BGS, dan mengisinya berarti
+              ini: kolom grader pada listing hanya mengenal PSA/TAG/CGC/BGS, dan mengisinya berarti
               memberi label palsu pada kartu orang lain. Titipannya tetap tercatat dan tetap bisa
               ditarik kembali kapan saja.
             </p>

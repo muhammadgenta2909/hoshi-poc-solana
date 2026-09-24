@@ -1386,7 +1386,7 @@ export type CreateConsignmentInput = {
   cardNumber?: string;
   language?: string;
   tcg?: string;
-  /** "PSA" | "CGC" | "BGS". Kosong = kartu mentah (boleh dititipkan, belum boleh dipajang). */
+  /** "PSA" | "TAG" | "CGC" | "BGS". Kosong = kartu mentah (boleh dititipkan, belum dipajang). */
   grader?: string;
   certNumber?: string;
   gradeLabel?: string;
@@ -1583,7 +1583,7 @@ export const acceptConsignmentCustody = (
  * dengan klaim IN_CUSTODY→LISTED — jadi listing titipan tidak bisa lahir sebelum custody tercatat.
  *
  * BATAS SLICE 1: kartu MENTAH (tanpa grader) ditolak, karena kolom grader pada listing hanya
- * mengenal PSA/CGC/BGS dan mengisinya berarti memberi label palsu pada kartu orang lain.
+ * mengenal PSA/TAG/CGC/BGS dan mengisinya berarti memberi label palsu pada kartu orang lain.
  */
 export const listAdminConsignment = (
   id: string,
@@ -1809,7 +1809,7 @@ export type CorrectConsignmentLabelInput = {
   gradeLabel?: string;
   /** 0–10. Tidak ada cara mengosongkannya lewat rute ini. */
   gradeScore?: number;
-  /** "PSA" | "CGC" | "BGS", atau "" = kartunya ternyata MENTAH (kosongkan kolomnya). */
+  /** "PSA" | "TAG" | "CGC" | "BGS", atau "" = kartunya ternyata MENTAH (kosongkan kolomnya). */
   grader?: string;
   /** WAJIB, minimal 10 karakter: APA yang salah dan DARI MANA tahu nilai yang benar. */
   note: string;

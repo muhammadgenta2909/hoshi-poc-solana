@@ -48,10 +48,17 @@ const INPUT =
 /** Sama dengan NOTE_MIN di DTO backend. Alasan yang lebih pendek ditolak server. */
 const NOTE_MIN = 10;
 
-/** Grader yang dikenal kolom listing. Kosong = kartunya MENTAH (kolomnya dikosongkan). */
+/**
+ * Grader yang dikenal kolom listing. Kosong = kartunya MENTAH (kolomnya dikosongkan).
+ *
+ * Urutannya mengikuti enum `Grader` backend: PSA lalu TAG (dua grader yang sungguh beredar di
+ * pasar Indonesia), baru CGC/BGS. Nilai di luar daftar ini DITOLAK server — daftar ini bukan
+ * saran, ia cermin dari enum Postgres.
+ */
 const GRADER_OPTIONS = [
   { value: "", label: "Kartu mentah — tanpa grading" },
   { value: "PSA", label: "PSA" },
+  { value: "TAG", label: "TAG" },
   { value: "CGC", label: "CGC" },
   { value: "BGS", label: "BGS" },
 ];
@@ -228,9 +235,9 @@ export default function LabelCorrectionPanel({
   if (graderChanged && patch.grader === "" && listingActive) {
     blockers.push(
       "Grader tidak bisa dikosongkan selagi kartunya TAYANG: kolom grader pada listing hanya " +
-        "mengenal PSA/CGC/BGS dan tidak punya nilai yang jujur untuk kartu mentah. Turunkan dulu " +
-        "pajangannya lewat “Pemilik minta kartunya kembali”, baru koreksi labelnya — kartunya " +
-        "tetap di rak Hoshi selama itu.",
+        "mengenal PSA/TAG/CGC/BGS dan tidak punya nilai yang jujur untuk kartu mentah. Turunkan " +
+        "dulu pajangannya lewat “Pemilik minta kartunya kembali”, baru koreksi labelnya — " +
+        "kartunya tetap di rak Hoshi selama itu.",
     );
   }
   /* Kunci anti-dobel-titip adalah PASANGAN (grader, certNumber): di Postgres grader NULL membuat

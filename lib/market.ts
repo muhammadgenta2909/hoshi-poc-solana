@@ -19,9 +19,20 @@ export const MARKET_SETS: MarketSet[] = ["Classic", "Jungle", "Promo", "Rare", "
 
 /* ---------- Figma filter taxonomy ---------- */
 
-/** Grading company shown on the slab badge and in the Grade & Grader filter. */
-export type Grader = "PSA" | "CGC" | "BGS";
-export const GRADERS: Grader[] = ["PSA", "CGC", "BGS"];
+/**
+ * Lembaga grading yang tercetak di badge slab dan dipakai filter Grade & Grader.
+ *
+ * URUTANNYA MENCERMINKAN enum `Grader` di backend (prisma/schema.prisma), dan itu disengaja:
+ * Postgres mengurutkan nilai enum menurut posisi deklarasinya, jadi urutan di sini adalah urutan
+ * yang sama yang dipakai API saat menyortir. TAG duduk TEPAT SETELAH PSA karena keduanya yang
+ * sungguh beredar di pasar Indonesia — dua grader yang paling sering ditemui operator ada
+ * berdampingan, bukan terpisah oleh nama yang jarang muncul.
+ *
+ * Menambah nilai di sini SAJA tidak cukup: backend menolak grader yang tidak ada di enum-nya,
+ * jadi nilai baru harus lebih dulu masuk schema.prisma + migrasi.
+ */
+export type Grader = "PSA" | "TAG" | "CGC" | "BGS";
+export const GRADERS: Grader[] = ["PSA", "TAG", "CGC", "BGS"];
 
 /** Segmented grade floor (Figma: All / 8+ / 9+ / 9.5+ / 10). */
 export const GRADE_TIERS = ["All", "8+", "9+", "9.5+", "10"] as const;

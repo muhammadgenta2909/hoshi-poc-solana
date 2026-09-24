@@ -20,6 +20,8 @@ import Pagination from "@/components/admin/Pagination";
 import Thumb from "@/components/admin/Thumb";
 import type { Tier } from "@/lib/packs";
 import { TIER_COLOR } from "@/lib/packs";
+// Satu-satunya daftar grader di frontend — cermin enum `Grader` backend, termasuk urutannya.
+import { GRADERS } from "@/lib/market";
 import { formatIdr } from "@/components/packs/ui";
 
 const statusColor = (s?: string) => {
@@ -541,12 +543,10 @@ export default function AdminListingsPage() {
                     </div>
                     <div className="flex-1">
                       <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Grader</label>
+                      {/* Daftar grader = cermin enum `Grader` backend (PSA, TAG, CGC, BGS), dengan
+                          urutan yang sama. Nilai di luar enum itu ditolak server. */}
                       <Select value={addForm.grader} onChange={(v) => setAddForm((p) => ({ ...p, grader: v }))}
-                        options={[
-                          { label: "PSA", value: "PSA" },
-                          { label: "CGC", value: "CGC" },
-                          { label: "BGS", value: "BGS" },
-                        ]}
+                        options={GRADERS.map((g) => ({ label: g, value: g }))}
                       />
                     </div>
                     <div className="flex-1">
@@ -727,12 +727,10 @@ export default function AdminListingsPage() {
                   </div>
                   <div className="flex-1">
                       <label className="mb-1.5 block text-[13px] font-medium text-zinc-300">Grader</label>
+                      {/* Sama dengan dropdown di form TAMBAH di atas — satu sumber (`GRADERS`),
+                          supaya "edit" tidak pernah mengenal grader yang berbeda dari "tambah". */}
                       <Select value={editForm.grader} onChange={(v) => setEditForm((p) => ({ ...p, grader: v }))}
-                        options={[
-                          { label: "PSA", value: "PSA" },
-                          { label: "CGC", value: "CGC" },
-                          { label: "BGS", value: "BGS" },
-                        ]}
+                        options={GRADERS.map((g) => ({ label: g, value: g }))}
                       />
                   </div>
                   <div className="flex-1">

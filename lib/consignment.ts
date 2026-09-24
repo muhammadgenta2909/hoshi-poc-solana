@@ -1124,6 +1124,15 @@ export function certLookupUrl(grader: string | null, certNumber: string | null):
   switch ((grader ?? "").toUpperCase()) {
     case "PSA":
       return `https://www.psacard.com/cert/${n}`;
+    case "TAG":
+      // TAG (Technical Authentication & Grading) menyediakan halaman CERT SEARCH resmi di
+      // domainnya sendiri: nomor sertifikat diketik di situ untuk membuka DIG Report kartunya.
+      // SENGAJA TIDAK deep-link per-sertifikat: tautan "DIG Report" yang bisa dibagikan hidup di
+      // pemendek `tagd.co`, bukan di taggrading.com, dan kita belum memverifikasinya. Mengikuti
+      // aturan berkas ini — menebak URL lalu mengirim pemilik kartu ke halaman 404 lebih buruk
+      // daripada memberinya halaman pencarian yang PASTI ada. Sama persis dengan cara BGS di
+      // bawah ditangani.
+      return "https://taggrading.com/pages/cert-search";
     case "CGC":
       return `https://www.cgccards.com/certlookup/${n}/`;
     case "BGS":
@@ -1181,7 +1190,7 @@ export type ConsignmentBase = {
   cardNumber: string | null;
   language: string | null;
   tcg: string | null;
-  /** "PSA" | "CGC" | "BGS"; null = kartu MENTAH (belum di-grade). */
+  /** "PSA" | "TAG" | "CGC" | "BGS"; null = kartu MENTAH (belum di-grade). */
   grader: string | null;
   certNumber: string | null;
   gradeLabel: string | null;
