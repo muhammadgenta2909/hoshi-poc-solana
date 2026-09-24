@@ -79,6 +79,28 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 const TERMINAL: string[] = ["RELEASED", "LOST", "CANCELLED"];
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   TAB DISIMPAN DI URL, BUKAN HANYA DI STATE REACT.
+
+   Dulu tab yang dipilih hidup di `useState` saja, jadi setiap refresh melemparnya kembali ke
+   "Perlu tindakan". Itu terasa seperti kerusakan kecil, tapi akibatnya nyata di layar ini:
+   operator membuka satu titipan dari tab "Menunggu diklaim", menekan kembali atau me-refresh
+   setelah bertindak, dan mendapati dirinya di tab lain — lalu harus mencari lagi barisnya di
+   antara yang lain. Di layar yang dipakai sambil mengejar orang lewat telepon, itu mahal.
+
+   Sekarang pilihannya ikut di `?tab=`, jadi refresh, tombol kembali, dan tautan yang di-share
+   sama-sama mendarat di tempat yang sama.
+
+   DIBACA LEWAT `window.location`, BUKAN `useSearchParams` — konvensi yang sudah dipakai
+   app/marketplace, app/messages, dan app/admin/login di repo ini: `useSearchParams` memaksa
+   halaman punya Suspense boundary, dan tidak ada yang mau ditukar dengan itu demi satu tab.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+const TAB_PARAM = "tab";
+
+/** Nilai dari URL hanya diterima kalau ia benar-benar salah satu tab — bukan apa pun yang diketik. */
+const parseTab = (raw: string | null): Filter | null =>
+  raw && FILTERS.some((f) => f.key === raw) ? (raw as Filter) : null;
+
 /** Foto yang mewakili satu baris: gambar listing kalau sudah dipajang, kalau belum foto DEPAN. */
 const thumbOf = (c: AdminConsignment): string | null =>
   c.listing?.image ?? c.photos?.find((p) => p.kind === "FRONT")?.url ?? c.photos?.[0]?.url ?? null;
@@ -99,7 +121,46 @@ export default function AdminTitipanPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("PERLU_TINDAKAN");
+  /** Gerbang: jangan menulis URL sebelum URL-nya sempat DIBACA, kalau tidak tab dari tautan
+   *  langsung tertimpa nilai bawaan pada render pertama. */
+  const [urlRead, setUrlRead] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Baca ?tab= SEKALI saat halaman dibuka. Nilai yang tidak dikenal diabaikan diam-diam —
+  // tautan lama atau URL yang diketik tangan tidak boleh membuat layar ini kosong tanpa sebab.
+  useEffect(() => {
+    try {
+      const fromUrl = parseTab(
+        new URLSearchParams(window.location.search).get(TAB_PARAM),
+      );
+      /* eslint-disable-next-line react-hooks/set-state-in-effect */
+      if (fromUrl) setFilter(fromUrl);
+    } catch {
+      /* URL tak terbaca — halaman tetap jalan, cuma mulai dari tab bawaan */
+    }
+    setUrlRead(true);
+  }, []);
+
+  // Tulis balik setiap kali tab berganti, supaya refresh dan tombol kembali mendarat di tempat
+  // yang sama. `replaceState`, bukan `pushState`: berpindah tab bukan navigasi, dan menumpuk
+  // riwayat membuat tombol kembali menyusuri tab satu per satu alih-alih keluar dari layar ini.
+  useEffect(() => {
+    if (!urlRead) return;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (filter === "PERLU_TINDAKAN") sp.delete(TAB_PARAM);
+      else sp.set(TAB_PARAM, filter);
+      const qs = sp.toString();
+      window.history.replaceState(
+        null,
+        "",
+        qs ? `${window.location.pathname}?${qs}` : window.location.pathname,
+      );
+    } catch {
+      /* history tak bisa ditulis — tab tetap jalan, cuma tak bertahan saat refresh */
+    }
+  }, [filter, urlRead]);
+
   /** Kode klaim yang baru saja terbit dari layar ini dan belum diberikan ke pemiliknya. */
   const [handover, setHandover] = useState<{
     code: string;
@@ -412,6 +473,24 @@ export default function AdminTitipanPage() {
                   <p className="mt-0.5 text-[11px] text-zinc-500">
                     komisi {commissionPct(c.commissionBps)}%
                   </p>
+                  {/* ── JALAN KE FOTO, DARI DAFTAR ────────────────────────────────────────────
+                      Baris berstatus INTAKE artinya kesepakatannya sudah tercatat tapi kartunya
+                      BELUM diserahkan — dan yang membuka langkah berikutnya adalah FOTO (depan,
+                      belakang, sertifikat, struk bertanda tangan) lalu "Terima kartu".
+
+                      Sebelum ini satu-satunya tombol di baris seperti itu adalah "Kirim kode
+                      lagi", jadi jalan menuju foto sama sekali tidak terlihat dari sini: ia cuma
+                      ada di balik nama kartunya, atau di layar yang muncul tepat setelah
+                      menyimpan. Operator yang kembali ke daftar keesokan harinya wajar menyimpulkan
+                      unggah fotonya memang tidak ada — dan itu memang yang terjadi. */}
+                  {c.status === "INTAKE" && (
+                    <Link
+                      href={`/admin/titipan/${c.id}`}
+                      className="mt-2 block rounded-lg border border-[#F2C101]/40 bg-[#F2C101]/10 px-3 py-1.5 text-center text-[12px] font-semibold text-[#F2C101] transition hover:bg-[#F2C101]/20"
+                    >
+                      Foto &amp; terima kartu →
+                    </Link>
+                  )}
                   {awaitingClaim && nudgeId !== c.id && (
                     <button
                       type="button"
