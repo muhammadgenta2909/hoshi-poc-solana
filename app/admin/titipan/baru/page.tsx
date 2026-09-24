@@ -943,7 +943,12 @@ export default function AdminTitipanBaruPage() {
           required
           hint="Ditulis apa adanya hari ini. Nama akun bisa diganti pemiliknya kapan saja; yang ini tidak."
         >
-          <input value={nameAtIntake} onChange={(e) => setNameAtIntake(e.target.value)} className={INPUT} />
+          <input
+            value={nameAtIntake}
+            onChange={(e) => setNameAtIntake(e.target.value)}
+            placeholder="mis. Budi Santoso"
+            className={INPUT}
+          />
         </Field>
 
         <Field
@@ -994,7 +999,12 @@ export default function AdminTitipanBaruPage() {
             required
             hint="mis. “Rumah pemilik, Bandung” atau “Kantor Hoshi, Jakarta”."
           >
-            <input value={place} onChange={(e) => setPlace(e.target.value)} className={INPUT} />
+            <input
+              value={place}
+              onChange={(e) => setPlace(e.target.value)}
+              placeholder="mis. Rumah pemilik, Bandung"
+              className={INPUT}
+            />
           </Field>
         </div>
       </Section>
@@ -1014,11 +1024,28 @@ export default function AdminTitipanBaruPage() {
           </Field>
         </div>
 
+        {/* Contohnya diambil dari data katalog CollectorCrypt yang SUNGGUHAN, bukan dikarang:
+            di sana bentuknya memang "<set> - <edisi/kode> - <bahasa>" (mis. "Skyridge - English",
+            "Double Blaze - SM10 - Japanese"). Menunjukkan bentuk yang sudah dipakai jauh lebih
+            berguna daripada contoh rapi yang tidak menyerupai data mana pun. */}
         <Field label="Set / seri">
-          <input value={cardSet} onChange={(e) => setCardSet(e.target.value)} className={INPUT} />
+          <input
+            value={cardSet}
+            onChange={(e) => setCardSet(e.target.value)}
+            placeholder="mis. Base Set - 1st Edition - English"
+            className={INPUT}
+          />
         </Field>
+        {/* Nomor kartu TIDAK punya contoh nyata di katalog CC — kolomnya kosong di seluruh baris
+            yang tersinkron. Jadi contohnya memakai konvensi TCG yang umum ("nomor/total"), dan
+            kolom ini memang sering kosong untuk kartu Jepang; biarkan kosong kalau tidak ada. */}
         <Field label="Nomor kartu">
-          <input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} className={INPUT} />
+          <input
+            value={cardNumber}
+            onChange={(e) => setCardNumber(e.target.value)}
+            placeholder="mis. 4/102"
+            className={INPUT}
+          />
         </Field>
         <Field label="Bahasa">
           <input
@@ -1190,6 +1217,7 @@ export default function AdminTitipanBaruPage() {
               value={conditionNote}
               onChange={(e) => setConditionNote(e.target.value)}
               rows={3}
+              placeholder="mis. Slab utuh, tidak retak, label lurus dan terbaca. Sudut tajam, tidak ada goresan di permukaan."
               className={`${INPUT} resize-y leading-relaxed`}
             />
           </Field>
@@ -1231,6 +1259,7 @@ export default function AdminTitipanBaruPage() {
             value={reservePrice}
             onChange={(e) => setReservePrice(e.target.value.replace(/[^\d]/g, ""))}
             inputMode="numeric"
+            placeholder="2000000"
             className={INPUT}
           />
         </Field>
@@ -1243,6 +1272,7 @@ export default function AdminTitipanBaruPage() {
             value={commissionBps}
             onChange={(e) => setCommissionBps(e.target.value.replace(/[^\d]/g, ""))}
             inputMode="numeric"
+            placeholder="500"
             className={INPUT}
           />
         </Field>
@@ -1268,7 +1298,12 @@ export default function AdminTitipanBaruPage() {
         </div>
 
         <Field label="Nomor / arsip perjanjian" hint="Opsional: penanda dokumen yang ditandatangani.">
-          <input value={agreementRef} onChange={(e) => setAgreementRef(e.target.value)} className={INPUT} />
+          <input
+            value={agreementRef}
+            onChange={(e) => setAgreementRef(e.target.value)}
+            placeholder="mis. PKS-2026-014"
+            className={INPUT}
+          />
         </Field>
         <Field
           label="Nomor / arsip tanda terima"
@@ -1277,6 +1312,7 @@ export default function AdminTitipanBaruPage() {
           <input
             value={intakeReceiptRef}
             onChange={(e) => setIntakeReceiptRef(e.target.value)}
+            placeholder="mis. TT-2026-0007"
             className={INPUT}
           />
         </Field>
