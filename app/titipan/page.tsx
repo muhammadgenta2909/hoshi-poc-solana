@@ -64,11 +64,30 @@ const dt = (s: string | null | undefined) =>
     ? new Date(s).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })
     : "—";
 
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+/**
+ * Satu baris fakta. `hint` opsional — dipakai untuk angka yang gampang DISALAHARTIKAN sebagai
+ * janji yang lebih keras daripada yang sistem benar-benar lakukan (lihat harga dasar di bawah).
+ * Label yang butuh penjelasan lebih baik membawanya sendiri daripada mengandalkan pembacanya
+ * menebak dengan benar.
+ */
+function Fact({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+}) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-white/[0.05] py-2 first:border-t-0">
-      <span className="text-[12px] text-zinc-500">{label}</span>
-      <span className="text-right text-[13px] text-zinc-200">{value}</span>
+    <div className="border-t border-white/[0.05] py-2 first:border-t-0">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-[12px] text-zinc-500">{label}</span>
+        <span className="text-right text-[13px] text-zinc-200">{value}</span>
+      </div>
+      {hint && (
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">{hint}</p>
+      )}
     </div>
   );
 }
@@ -320,11 +339,31 @@ function ConsignmentCard({
                 )
               }
             />
-            {/* Lantai harga yang disepakati saat serah terima. Ditampilkan ke PEMILIKNYA karena
-                itu janji yang diucapkan kepadanya — janji yang cuma bisa dibaca sebelah pihak
-                bukan janji, melainkan catatan internal yang kebetulan berbunyi seperti janji. */}
+            {/* ── HARGA DASAR: DITAMPILKAN, TAPI TIDAK BOLEH DISEBUT KUNCI ────────────────────
+                Ditampilkan ke PEMILIKNYA karena itu angka yang disepakati dengannya — janji yang
+                cuma bisa dibaca sebelah pihak bukan janji, melainkan catatan internal yang
+                kebetulan berbunyi seperti janji.
+
+                TAPI LABELNYA DULU BERBUNYI "Tidak dijual di bawah", DAN ITU TIDAK BENAR.
+                `reservePriceIdr` tidak menolak apa pun: `createListingFor` dan `updatePrice`
+                hanya menempelkan `belowReserveWarning` lalu tetap menjalankan perubahannya. Tidak
+                ada satu baris kode pun yang memblokir harga di bawahnya.
+
+                Yang membaca kalimat ini adalah orang yang kartunya sedang kita pegang. Menjanjikan
+                kunci otomatis yang tidak ada adalah kesalahan yang sama persis dengan yang sudah
+                dibetulkan di struk serah terima — dan di sini lebih buruk, karena di struk ia
+                setidaknya menandatangani sesuatu yang bisa ia bawa pulang dan bandingkan.
+
+                Yang BENAR-BENAR dijamin, dan itulah yang sekarang tertulis: angkanya muncul lagi
+                setiap kali harga kartunya diubah atau dipajang, alasan melepas di bawahnya wajib
+                diketik operator, dan alasan itu tersimpan permanen di riwayat yang pemiliknya
+                sendiri bisa baca di halaman ini. */}
             {c.reservePriceIdr != null && c.reservePriceIdr > 0 && (
-              <Fact label="Tidak dijual di bawah" value={rp(c.reservePriceIdr)} />
+              <Fact
+                label="Harga dasar yang disepakati"
+                value={rp(c.reservePriceIdr)}
+                hint="Acuan, bukan kunci otomatis. Kalau Hoshi perlu melepas di bawah angka ini, alasannya wajib dicatat dan muncul di riwayat titipan ini."
+              />
             )}
             <Fact label="Komisi yang disepakati" value={`${commissionPct(c.commissionBps)}%`} />
             {c.intakeReceiptRef && <Fact label="Tanda terima" value={c.intakeReceiptRef} />}
