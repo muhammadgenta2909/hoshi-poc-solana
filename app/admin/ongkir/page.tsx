@@ -206,12 +206,25 @@ export default function AdminOngkirPage() {
     <div className="space-y-6">
       <header className="mb-2">
         <h1 className="text-2xl font-bold tracking-tight text-white">Ongkir Kirim Domestik</h1>
-        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-zinc-500">
-          Tarif kirim kartu <b>stok Hoshi</b> lewat kurir lokal. Berlaku untuk tagihan{" "}
-          <b>berikutnya</b> — tagihan yang sudah terbit memakai nominal yang di-snapshot di baris
-          pembayarannya. Nol dana treasury: yang ditetapkan di sini hanya nominal Rupiah yang
-          ditagihkan ke pembeli.
+        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-zinc-400">
+          Berapa Rupiah yang ditagihkan ke pembeli untuk ongkos kirim.
         </p>
+        {/* Sisanya BUKAN yang perlu dibaca untuk mengisi form ini — ia jawaban atas pertanyaan
+            yang baru muncul kemudian ("kenapa tagihan kemarin beda?"). Ditaruh di balik satu
+            klik supaya halaman ini bisa dibaca sekali lewat oleh orang yang baru pertama
+            membukanya. Dibuang sama sekali juga salah: keduanya pertanyaan yang benar-benar
+            ditanyakan orang. */}
+        <details className="mt-2 max-w-3xl">
+          <summary className="cursor-pointer text-[12px] text-zinc-500 hover:text-zinc-300">
+            Detail: kapan berlakunya, dan apa yang TIDAK diatur di sini
+          </summary>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-500">
+            Perubahan di sini berlaku untuk tagihan <b>berikutnya</b>. Tagihan yang sudah terbit
+            memakai nominal yang disimpan di baris pembayarannya sendiri, jadi mengubah tarif
+            tidak pernah mengubah tagihan yang sudah diterima orang. Dan nol dana treasury
+            tersentuh: yang ditetapkan di sini murni angka Rupiah yang ditagihkan ke pembeli.
+          </p>
+        </details>
       </header>
 
       {/* ╔═══ YANG MASIH HARUS DIPUTUSKAN ═══╗
@@ -244,16 +257,44 @@ export default function AdminOngkirPage() {
                   bawah.
                 </p>
               )}
-              <ul className="mt-2.5 flex flex-col gap-2">
-                {data.actionRequired.map((a) => (
-                  <li
-                    key={a}
-                    className="rounded-xl border border-rose-400/20 bg-black/25 px-3.5 py-2.5 text-[13px] leading-relaxed text-rose-100/90"
-                  >
-                    {a}
-                  </li>
-                ))}
-              </ul>
+              {/* ── DUA KALI KALIMAT YANG SAMA = DUA-DUANYA BERHENTI DIBACA ──────────────────
+                  Saat `usingDefaults`, paragraf di atas SUDAH menyatakan masalahnya lengkap
+                  dengan angkanya, sementara `actionRequired` dari server mengulanginya dengan
+                  kata lain. Kotak peringatan yang mengatakan hal sama dua kali melatih orang
+                  melewatinya — dan yang dilewati di sini adalah "pembeli sungguhan sedang
+                  ditagih angka yang tidak pernah kamu putuskan".
+
+                  Jadi rinciannya disembunyikan satu klik HANYA ketika ia redundan. Kalau
+                  `usingDefaults` false, daftar ini justru satu-satunya yang bicara — dan ia
+                  tampil apa adanya. */}
+              {usingDefaults ? (
+                <details className="mt-2.5">
+                  <summary className="cursor-pointer text-[12px] text-rose-200/80 hover:text-rose-100">
+                    Rincian ({data.actionRequired.length})
+                  </summary>
+                  <ul className="mt-2 flex flex-col gap-2">
+                    {data.actionRequired.map((a) => (
+                      <li
+                        key={a}
+                        className="rounded-xl border border-rose-400/20 bg-black/25 px-3.5 py-2.5 text-[12px] leading-relaxed text-rose-100/80"
+                      >
+                        {a}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : (
+                <ul className="mt-2.5 flex flex-col gap-2">
+                  {data.actionRequired.map((a) => (
+                    <li
+                      key={a}
+                      className="rounded-xl border border-rose-400/20 bg-black/25 px-3.5 py-2.5 text-[13px] leading-relaxed text-rose-100/90"
+                    >
+                      {a}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {placeholderCount > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
@@ -325,10 +366,17 @@ export default function AdminOngkirPage() {
           Bukan isi tabel, tapi apa yang BENAR-BENAR dipakai jalur bayar hari ini — termasuk saat
           tabelnya kosong dan resolusinya jatuh ke penampung di kode. */}
       <section>
-        <h2 className="text-[15px] font-bold text-white">Tier yang sedang berlaku</h2>
-        <p className="mt-1 text-[12px] text-zinc-500">
-          Inilah angka yang jalur bayar pakai saat ini. Baris ber-label <b>PENAMPUNG</b> belum
-          pernah ditetapkan manusia.
+        <h2 className="text-[15px] font-bold text-white">Yang dipakai sekarang</h2>
+        {/* Judul lamanya "Tier yang sedang berlaku" — akurat, tapi orang membacanya sebagai
+            "isi tabel tarifku". Padahal saat tabelnya kosong, yang tampil di sini justru
+            penampung DI KODE. Salah baca itu berujung kesimpulan "sudah ada isinya, berarti
+            beres", dan pembeli terus ditagih angka yang tidak pernah diputuskan siapa pun.
+            Kolom SUMBER-lah yang membedakan keduanya, jadi ia disebut di kalimat pembuka. */}
+        <p className="mt-1 text-[12px] leading-relaxed text-zinc-400">
+          Angka yang <b>benar-benar ditagihkan</b> hari ini — belum tentu isi tabelmu. Lihat kolom{" "}
+          <b>Sumber</b>: <span className="text-zinc-300">baris tarif</span> = kamu yang menetapkan,{" "}
+          <span className="text-amber-300">penampung di kode</span> = belum pernah ditetapkan siapa
+          pun dan perlu kamu isi.
         </p>
         {loading ? (
           <p className="py-10 text-center text-sm text-zinc-500">Memuat…</p>
@@ -392,23 +440,50 @@ export default function AdminOngkirPage() {
             </table>
           </div>
         )}
-        {data?.resolution && (
-          <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">{data.resolution}</p>
-        )}
-        {data?.note && (
-          <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-600">{data.note}</p>
+        {/* Urutan resolusi tujuh lapis dan aturan alamat luar negeri: jawaban yang BENAR dan
+            kadang sangat dibutuhkan ("kenapa provinsi ini kena tarif itu?"), tapi bukan yang
+            perlu dibaca untuk mengisi satu tarif. Dulu keduanya tercetak sejajar dengan tabel,
+            dan hasilnya halaman yang orang berhenti baca sejak paragraf ketiga. */}
+        {(data?.resolution || data?.note) && (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[11px] text-zinc-600 hover:text-zinc-400">
+              Kenapa sebuah alamat dapat tarif tertentu?
+            </summary>
+            {data?.resolution && (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+                {data.resolution}
+              </p>
+            )}
+            {data?.note && (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">{data.note}</p>
+            )}
+          </details>
         )}
       </section>
 
       {/* ─────────────── EDITOR SATU TIER ─────────────── */}
       <section className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
         <h2 className="text-[15px] font-bold text-white">Tetapkan / ubah satu tier</h2>
-        <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
-          Kuncinya <b>scope</b> (upsert). <span className="font-mono">TIER:&lt;NAMA&gt;</span> = tier
-          wilayah (pakai daftar provinsi), <span className="font-mono">STATE:&lt;provinsi&gt;</span>{" "}
-          = harga khusus satu provinsi, <span className="font-mono">*</span> = flat nasional.
-          Scope baru = tier baru: tidak perlu deploy, migrasi, atau restart.
-        </p>
+        {/* Tiga bentuk scope dijelaskan sebagai TIGA PILIHAN, bukan satu kalimat berisi tiga
+            sintaks. Operator yang pertama kali membuka layar ini sedang memilih, bukan membaca
+            spesifikasi — dan "upsert" adalah kata yang tidak berarti apa pun baginya. */}
+        <div className="mt-1.5 space-y-1 text-[12px] leading-relaxed text-zinc-400">
+          <p>
+            <span className="font-mono text-zinc-200">TIER:JAWA</span> — satu harga untuk
+            sekelompok provinsi <span className="text-zinc-500">(isi daftar provinsinya)</span>
+          </p>
+          <p>
+            <span className="font-mono text-zinc-200">STATE:papua</span> — harga khusus SATU
+            provinsi <span className="text-zinc-500">(menang atas tier)</span>
+          </p>
+          <p>
+            <span className="font-mono text-zinc-200">*</span> — satu harga untuk seluruh Indonesia
+          </p>
+          <p className="pt-0.5 text-zinc-500">
+            Menyimpan scope yang sudah ada = mengubahnya. Scope baru = tier baru. Langsung
+            berlaku, tanpa deploy.
+          </p>
+        </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
