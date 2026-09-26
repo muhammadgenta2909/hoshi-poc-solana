@@ -805,6 +805,18 @@ export type SetDomesticRateResult = {
   /** Peringatan konfigurasi yang dihitung SESUDAH tulisannya (mis. penampung bukan yang termahal). */
   warnings: string[];
   warning: string;
+  /* ── KENAPA PUT IKUT MENGEMBALIKAN KEADAAN SESUDAHNYA ────────────────────────────────────
+     Ketiga field di bawah datang dari `domesticRateState()` yang SAMA dengan GET, dihitung
+     SESUDAH tulisannya. Layar ongkir memakainya untuk memeriksa hasil simpan sebelum berani
+     mengucapkan "beres": tanpa ini, satu-satunya cara memverifikasi adalah GET susulan, dan
+     di antara keduanya ada jendela di mana layar memamerkan keadaan basi. Bentuknya IDENTIK
+     dengan field bernama sama di GET, jadi satu perhitungan klien melayani keduanya.
+
+     Opsional demi respons backend lama yang belum mengirimnya — pemanggil WAJIB menangani
+     `undefined` dengan tidak mengklaim apa pun, bukan dengan menganggapnya lulus. */
+  effective?: AdminDomesticEffectiveTier[];
+  actionRequired?: string[];
+  usingDefaults?: boolean;
 };
 
 /**
