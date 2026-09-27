@@ -1322,6 +1322,13 @@ export type ConsignmentListingRef = {
   status: string;
   priceIdrx: number;
   image?: string | null;
+  /**
+   * OPSIONAL, dan ketidaksimetrisannya disengaja: rute ADMIN (`byId`) memakai `listing: true`
+   * sehingga seluruh kolom ikut, sementara rute PEMILIK (`listMine`) memilih kolomnya satu per
+   * satu dan tidak menyertakan ini. Ditandai `?` supaya layar admin bisa membacanya tanpa
+   * memaksa rute pemilik mengirim kolom yang tidak ia butuhkan.
+   */
+  imageBack?: string | null;
   listedAt?: string | null;
   soldAt?: string | null;
   buyerId?: string | null;

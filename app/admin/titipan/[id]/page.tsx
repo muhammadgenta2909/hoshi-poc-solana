@@ -168,6 +168,7 @@ export default function AdminTitipanDetailPage() {
   const [acceptNote, setAcceptNote] = useState("");
   const [receiptRef, setReceiptRef] = useState("");
   const [listImage, setListImage] = useState("");
+  const [listImageBack, setListImageBack] = useState("");
   const [listPrice, setListPrice] = useState("");
   const [newPrice, setNewPrice] = useState("");
   const [priceNote, setPriceNote] = useState("");
@@ -240,10 +241,25 @@ export default function AdminTitipanDetailPage() {
       setStorageLocation(row.storageLocation ?? "");
       setListPrice(String(row.askPriceIdr ?? ""));
       setNewPrice(String(row.listing?.priceIdrx ?? row.askPriceIdr ?? ""));
+      /* Gambar listing diambil dari foto yang SUDAH bertanda jenis saat serah terima. Operator
+         tidak perlu memilih apa pun di jalur normal — jawabannya sudah ada sejak fotonya
+         diunggah, dan menyuruhnya memilih ulang cuma menambah satu kesempatan salah.
+
+         Urutan `listing?.image` dulu: kalau kartunya sudah pernah dipajang, yang dipakai adalah
+         gambar yang MEMANG SEDANG TAYANG — memuat ulang layar tidak boleh diam-diam mengusulkan
+         gambar lain. */
       setListImage(
         row.listing?.image ??
           row.photos?.find((p) => p.kind === "FRONT")?.url ??
           row.photos?.[0]?.url ??
+          "",
+      );
+      /* Belakang TIDAK jatuh ke `photos[0]`: kalau tidak ada foto bertanda BACK, biarkan kosong.
+         Menebak di sini berarti memajang sertifikat atau struk serah terima sebagai "punggung
+         kartu" ke pembeli — dan struk itu memuat nama serta nomor telepon pemiliknya. */
+      setListImageBack(
+        row.listing?.imageBack ??
+          row.photos?.find((p) => p.kind === "BACK")?.url ??
           "",
       );
       /* Rencana pengembalian yang SUDAH tersimpan mengisi formulirnya kembali — supaya
@@ -1107,9 +1123,27 @@ export default function AdminTitipanDetailPage() {
                     </span>
                   )}
                 </label>
+                {/* ══════════════════════════════════════════════════════════════════════════
+                    DUA GAMBAR, BUKAN SATU — DAN KEDUANYA TERISI SENDIRI.
+
+                    Sebelum ini layar hanya meminta SATU gambar dan hanya mengirim `image`.
+                    `imageBack` tidak pernah dikirim, jadi ia selalu null di baris listing.
+
+                    Akibatnya kelihatan di halaman pembeli: halaman detail marketplace SUDAH
+                    punya kontrol membalik kartu, tapi ia cuma muncul kalau `imageBack` ada —
+                    jadi kartu titipan selalu tampil satu sisi. Operator sudah memotret bagian
+                    belakangnya saat serah terima, fotonya tersimpan rapi sebagai bukti, dan
+                    tidak pernah sampai ke pembeli.
+
+                    Fotonya SUDAH bertanda jenis (FRONT/BACK/CERT/HANDOVER) sejak diunggah, jadi
+                    menyuruh operator memilih ulang adalah pekerjaan yang jawabannya sudah kita
+                    punya. Keduanya dipilih otomatis; strip di bawah hanya untuk menimpa kalau
+                    fotonya tertukar. Belakang boleh kosong — ada kartu yang memang tidak
+                    dipotret belakangnya, dan itu bukan kesalahan. */}
                 <div>
                   <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
-                    Gambar listing
+                    Gambar depan{" "}
+                    <span className="font-normal text-zinc-500">— yang dilihat pembeli lebih dulu</span>
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {photos.map((p) => (
@@ -1132,6 +1166,46 @@ export default function AdminTitipanDetailPage() {
                     <p className="text-[12px] text-zinc-500">Belum ada foto untuk dipakai.</p>
                   )}
                 </div>
+
+                <div>
+                  <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
+                    Gambar belakang{" "}
+                    <span className="font-normal text-zinc-500">
+                      — pembeli bisa membalik kartunya. Boleh dikosongkan.
+                    </span>
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {photos.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() =>
+                          setListImageBack((prev) => (prev === p.url ? "" : p.url))
+                        }
+                        className={`overflow-hidden rounded-lg border-2 transition ${
+                          listImageBack === p.url
+                            ? "border-yellow-400"
+                            : "border-white/10 hover:border-white/30"
+                        }`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.url} alt="" className="h-16 w-12 object-cover" />
+                      </button>
+                    ))}
+                    {listImageBack && (
+                      <button
+                        type="button"
+                        onClick={() => setListImageBack("")}
+                        className="rounded-lg border border-white/12 px-3 py-1.5 text-[12px] text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200"
+                      >
+                        Kosongkan
+                      </button>
+                    )}
+                  </div>
+                  {photos.length === 0 && (
+                    <p className="text-[12px] text-zinc-500">Belum ada foto untuk dipakai.</p>
+                  )}
+                </div>
               </div>
 
               <button
@@ -1143,6 +1217,10 @@ export default function AdminTitipanDetailPage() {
                         c.id,
                         {
                           image: listImage,
+                          // Hanya dikirim kalau memang ada. Mengirim string kosong akan
+                          // ditolak validator server (`@IsImageRef` menolak nilai kosong),
+                          // dan kartu yang belakangnya tidak dipotret itu wajar.
+                          ...(listImageBack ? { imageBack: listImageBack } : {}),
                           ...(listPrice ? { priceIdrx: Number(listPrice) } : {}),
                         },
                         token ?? "",
