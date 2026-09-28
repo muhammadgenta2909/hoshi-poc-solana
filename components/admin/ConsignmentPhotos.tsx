@@ -147,10 +147,24 @@ export default function ConsignmentPhotos({
                       : "border-white/12 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.07]"
                 }`}
               >
-                <span className="text-[15px] leading-none">📷</span>
-                {PHOTO_KIND_LABEL[k]}
-                {n > 0 && <span className="text-[11px] opacity-80">×{n}</span>}
-                {missing && <span className="text-[11px] font-bold uppercase">wajib</span>}
+                {/* ══ UNGGAHAN YANG SEDANG BERJALAN HARUS TERLIHAT DI TOMBOL YANG BARU DITEKAN ══
+                    Dulu satu-satunya tandanya adalah baris abu-abu 12px di bawah daftar tombol —
+                    jauh dari jari operator, dan mudah terlewat sama sekali. Yang terjadi
+                    berikutnya bisa ditebak: dia mengira tekanannya tidak masuk, menekan lagi,
+                    dan foto yang sama masuk dua kali ke arsip bukti yang tidak bisa dihapus. */}
+                {busyKind === k ? (
+                  <span
+                    aria-hidden
+                    className="h-[15px] w-[15px] shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70"
+                  />
+                ) : (
+                  <span className="text-[15px] leading-none">📷</span>
+                )}
+                {busyKind === k ? (progress ?? "Mengunggah…") : PHOTO_KIND_LABEL[k]}
+                {busyKind !== k && n > 0 && <span className="text-[11px] opacity-80">×{n}</span>}
+                {busyKind !== k && missing && (
+                  <span className="text-[11px] font-bold uppercase">wajib</span>
+                )}
               </button>
               <input
                 ref={(el) => {
@@ -177,7 +191,15 @@ export default function ConsignmentPhotos({
           Simpan catatan kesepakatan dulu, baru foto bisa ditempelkan ke baris titipannya.
         </p>
       )}
-      {progress && <p className="text-[12px] text-zinc-400">{progress}</p>}
+      {progress && (
+        <p className="flex items-center gap-2 rounded-xl border border-yellow-400/25 bg-yellow-400/10 px-3.5 py-2.5 text-[12.5px] font-medium text-yellow-100">
+          <span
+            aria-hidden
+            className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70"
+          />
+          {progress} Jangan tutup halamannya dulu.
+        </p>
+      )}
       {error && <p className="text-[12px] text-red-400">{error}</p>}
 
       <PhotoGrid photos={photos} />

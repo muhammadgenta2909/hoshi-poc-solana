@@ -1624,6 +1624,32 @@ export const listAdminConsignment = (
  * ditandatangani pemilik kartu: server menulis `askPriceIdr` di baris titipan DAN `priceIdrx` di
  * listing-nya dalam satu transaksi, dan ALASANNYA disimpan permanen sebagai baris audit.
  */
+/**
+ * Ganti gambar kartu titipan yang SUDAH tayang.
+ *
+ * Ada karena `listAdminConsignment` hanya boleh dipanggil selagi titipannya IN_CUSTODY: begitu
+ * kartunya tayang, tidak ada rute lain yang boleh menyentuh gambarnya — rute listing admin umum
+ * sengaja menolak baris titipan. Tanpa ini, foto yang terlanjur salah pilih terkunci di halaman
+ * pembeli selamanya.
+ *
+ * `imageBack: null` MENGHAPUS gambar belakangnya (kontrol balik kartu hilang dari halaman
+ * pembeli). Tidak menyebutnya sama sekali berarti biarkan seperti sekarang — dua hal yang
+ * berbeda, jadi jangan kirim `undefined` kalau maksudnya menghapus.
+ *
+ * Server menolak kalau listing-nya bukan ACTIVE lagi: baris yang sudah TERJUAL adalah catatan
+ * tentang apa yang DILIHAT pembeli saat ia membayar.
+ */
+export const setAdminConsignmentListingImages = (
+  id: string,
+  input: { image?: string; imageBack?: string | null },
+  token: string,
+) =>
+  api<AdminConsignment>(`/admin/consignments/${id}/listing-images`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+
 export const setAdminConsignmentPrice = (
   id: string,
   input: { askPriceIdr: number; note: string },

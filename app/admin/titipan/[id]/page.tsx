@@ -40,6 +40,7 @@ import {
   markAdminConsignmentLost,
   releaseAdminConsignment,
   requestAdminConsignmentReturn,
+  setAdminConsignmentListingImages,
   setAdminConsignmentPrice,
   type AdminConsignment,
   type ConsignmentAction,
@@ -94,6 +95,26 @@ const dt = (s: string | null | undefined) =>
     : "—";
 
 /**
+ * Foto TERBARU dengan jenis tertentu (FRONT / BACK).
+ *
+ * Server mengirim `photos` terurut `createdAt: 'asc'` — yang PALING LAMA duluan. Jadi `.find()`
+ * akan mengambil foto yang paling awal diunggah, dan setiap unggahan perbaikan (mis. operator
+ * salah foto, lalu memotret ulang) tidak akan pernah terpakai. Karena foto titipan sengaja
+ * append-only — tidak bisa dihapus, supaya tetap sah sebagai bukti untuk kedua pihak — satu-
+ * satunya cara "mengoreksi" adalah mengunggah yang baru. Maka yang dipilih harus yang TERAKHIR.
+ */
+const lastPhotoUrl = (
+  photos: { kind: string; url: string }[] | undefined,
+  kind: string,
+): string | undefined => {
+  const list = photos ?? [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i].kind === kind) return list[i].url;
+  }
+  return undefined;
+};
+
+/**
  * ╔════════════════════════════════════════════════════════════════════════════════════════════╗
  * ║ GANTI RUGI YANG DITOLAK HARUS TERBACA SEBAGAI DITOLAK.                                     ║
  * ╚════════════════════════════════════════════════════════════════════════════════════════════╝
@@ -146,6 +167,77 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
     <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-white/[0.05] py-2 first:border-t-0">
       <span className="text-[12px] text-zinc-500">{label}</span>
       <span className="text-right text-[13px] text-zinc-200">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Pemilih gambar dari foto yang SUDAH tersimpan di titipan ini.
+ *
+ * Dipakai di DUA tempat — saat memajang pertama kali, dan saat memperbaiki gambar kartu yang
+ * sudah tayang. Satu komponen, bukan dua salinan, supaya "gambar belakang boleh dikosongkan"
+ * tidak berlaku di satu layar dan diam-diam hilang di layar satunya.
+ */
+function PhotoPicker({
+  label,
+  hint,
+  photos,
+  value,
+  onChange,
+  clearable,
+}: {
+  label: string;
+  hint: string;
+  photos: { id: string; url: string; kind: string }[];
+  value: string;
+  onChange: (next: string) => void;
+  clearable?: boolean;
+}) {
+  return (
+    <div>
+      <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
+        {label} <span className="font-normal text-zinc-500">— {hint}</span>
+      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        {photos.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onChange(clearable && value === p.url ? "" : p.url)}
+            title={p.kind}
+            className={`relative overflow-hidden rounded-lg border-2 transition ${
+              value === p.url ? "border-yellow-400" : "border-white/10 hover:border-white/30"
+            }`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.url} alt="" className="h-16 w-12 object-cover" />
+            {/* Jenis foto ditulis DI ATAS gambarnya. Tanpa ini operator harus menebak mana yang
+                depan dan mana yang belakang dari petak 48px — dan menebak salah persis itulah
+                yang membuat sebuah pajangan menampilkan bagian belakang sebagai foto utama. */}
+            <span className="absolute inset-x-0 bottom-0 bg-black/65 py-px text-[8.5px] font-semibold uppercase tracking-wide text-zinc-200">
+              {p.kind === "FRONT"
+                ? "depan"
+                : p.kind === "BACK"
+                  ? "blkg"
+                  : p.kind === "CERT"
+                    ? "sert"
+                    : "srh"}
+            </span>
+          </button>
+        ))}
+        {clearable && value && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="rounded-lg border border-white/12 px-3 py-1.5 text-[12px] text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200"
+          >
+            Kosongkan
+          </button>
+        )}
+      </div>
+      {photos.length === 0 && (
+        <p className="text-[12px] text-zinc-500">Belum ada foto untuk dipakai.</p>
+      )}
     </div>
   );
 }
@@ -250,18 +342,14 @@ export default function AdminTitipanDetailPage() {
          gambar lain. */
       setListImage(
         row.listing?.image ??
-          row.photos?.find((p) => p.kind === "FRONT")?.url ??
-          row.photos?.[0]?.url ??
+          lastPhotoUrl(row.photos, "FRONT") ??
+          row.photos?.[row.photos.length - 1]?.url ??
           "",
       );
       /* Belakang TIDAK jatuh ke `photos[0]`: kalau tidak ada foto bertanda BACK, biarkan kosong.
          Menebak di sini berarti memajang sertifikat atau struk serah terima sebagai "punggung
          kartu" ke pembeli — dan struk itu memuat nama serta nomor telepon pemiliknya. */
-      setListImageBack(
-        row.listing?.imageBack ??
-          row.photos?.find((p) => p.kind === "BACK")?.url ??
-          "",
-      );
+      setListImageBack(row.listing?.imageBack ?? lastPhotoUrl(row.photos, "BACK") ?? "");
       /* Rencana pengembalian yang SUDAH tersimpan mengisi formulirnya kembali — supaya
          memperbaiki satu kode pos tidak berarti mengetik ulang seluruh alamat, dan supaya
          operator melihat apa yang sebenarnya tercatat alih-alih formulir kosong yang membuatnya
@@ -307,6 +395,17 @@ export default function AdminTitipanDetailPage() {
   }, [load]);
 
   const photos = useMemo(() => c?.photos ?? [], [c]);
+
+  /* Dua perbandingan TERPISAH, bukan satu boolean gabungan: yang satu menentukan apakah tombol
+     boleh ditekan, yang satu lagi menentukan apakah `imageBack` ikut dikirim. Menggabungkannya
+     akan membuat penekanan yang hanya mengganti gambar depan ikut menulis ulang gambar
+     belakang — dan baris auditnya ikut berbohong tentang apa yang berubah.
+
+     `|| null` di kedua sisi: state halaman memakai string kosong untuk "tidak ada", baris
+     listing memakai null. Tanpa penyamaan ini, kartu yang memang tidak punya gambar belakang
+     akan selalu terbaca "berubah". */
+  const backChanged = (listImageBack || null) !== (c?.listing?.imageBack ?? null);
+  const imagesChanged = listImage !== (c?.listing?.image ?? "") || backChanged;
 
   /**
    * Bukti yang WAJIB sebelum kartu boleh dinyatakan diterima — cermin gerbang di server, dan
@@ -1140,72 +1239,22 @@ export default function AdminTitipanDetailPage() {
                     punya. Keduanya dipilih otomatis; strip di bawah hanya untuk menimpa kalau
                     fotonya tertukar. Belakang boleh kosong — ada kartu yang memang tidak
                     dipotret belakangnya, dan itu bukan kesalahan. */}
-                <div>
-                  <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
-                    Gambar depan{" "}
-                    <span className="font-normal text-zinc-500">— yang dilihat pembeli lebih dulu</span>
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {photos.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setListImage(p.url)}
-                        className={`overflow-hidden rounded-lg border-2 transition ${
-                          listImage === p.url
-                            ? "border-yellow-400"
-                            : "border-white/10 hover:border-white/30"
-                        }`}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.url} alt="" className="h-16 w-12 object-cover" />
-                      </button>
-                    ))}
-                  </div>
-                  {photos.length === 0 && (
-                    <p className="text-[12px] text-zinc-500">Belum ada foto untuk dipakai.</p>
-                  )}
-                </div>
+                <PhotoPicker
+                  label="Gambar depan"
+                  hint="yang dilihat pembeli lebih dulu"
+                  photos={photos}
+                  value={listImage}
+                  onChange={setListImage}
+                />
 
-                <div>
-                  <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
-                    Gambar belakang{" "}
-                    <span className="font-normal text-zinc-500">
-                      — pembeli bisa membalik kartunya. Boleh dikosongkan.
-                    </span>
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {photos.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() =>
-                          setListImageBack((prev) => (prev === p.url ? "" : p.url))
-                        }
-                        className={`overflow-hidden rounded-lg border-2 transition ${
-                          listImageBack === p.url
-                            ? "border-yellow-400"
-                            : "border-white/10 hover:border-white/30"
-                        }`}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.url} alt="" className="h-16 w-12 object-cover" />
-                      </button>
-                    ))}
-                    {listImageBack && (
-                      <button
-                        type="button"
-                        onClick={() => setListImageBack("")}
-                        className="rounded-lg border border-white/12 px-3 py-1.5 text-[12px] text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200"
-                      >
-                        Kosongkan
-                      </button>
-                    )}
-                  </div>
-                  {photos.length === 0 && (
-                    <p className="text-[12px] text-zinc-500">Belum ada foto untuk dipakai.</p>
-                  )}
-                </div>
+                <PhotoPicker
+                  label="Gambar belakang"
+                  hint="pembeli bisa membalik kartunya. Boleh dikosongkan."
+                  photos={photos}
+                  value={listImageBack}
+                  onChange={setListImageBack}
+                  clearable
+                />
               </div>
 
               <button
@@ -1343,6 +1392,80 @@ export default function AdminTitipanDetailPage() {
                 Harga adalah bagian dari perjanjian yang ditandatangani pemilik kartu — beri tahu
                 dia sebelum mengubahnya. Alasannya disimpan permanen.
               </p>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════════════════════
+              GAMBAR KARTU YANG SUDAH TAYANG MASIH BISA DIPERBAIKI.
+
+              Sebelum ini tidak bisa sama sekali. Layar "Pajang" di atas hanya muncul selagi
+              titipannya IN_CUSTODY, jadi ia menghilang tepat setelah kartunya tayang — dan rute
+              listing admin umum sengaja menolak baris titipan. Foto yang terlanjur salah pilih
+              terkunci di halaman pembeli selamanya, dan bagian belakang yang lupa dipasang tidak
+              akan pernah bisa dipasang.
+
+              Hanya untuk listing ACTIVE. Baris yang sudah TERJUAL adalah catatan tentang apa yang
+              DILIHAT pembeli saat ia membayar — server menolaknya juga, ini bukan satu-satunya
+              penjaga. */}
+          {c.listing && c.listing.status === "ACTIVE" && (
+            <div className="mt-5 border-t border-white/[0.07] pt-4">
+              <h3 className="text-[13.5px] font-semibold text-zinc-200">
+                Gambar yang dilihat pembeli
+              </h3>
+              <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
+                Ini yang muncul di halaman kartu. Kalau ada gambar belakang, pembeli dapat tombol
+                untuk membalik kartunya — tanpa itu dia cuma lihat satu sisi. Salah pilih foto
+                bisa diperbaiki di sini, dan foto serah terimanya tidak ikut berubah.
+              </p>
+
+              <div className="mt-3 grid gap-4">
+                <PhotoPicker
+                  label="Gambar depan"
+                  hint="yang dilihat pembeli lebih dulu"
+                  photos={photos}
+                  value={listImage}
+                  onChange={setListImage}
+                />
+                <PhotoPicker
+                  label="Gambar belakang"
+                  hint="pembeli bisa membalik kartunya. Boleh dikosongkan."
+                  photos={photos}
+                  value={listImageBack}
+                  onChange={setListImageBack}
+                  clearable
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void run(
+                    () =>
+                      setAdminConsignmentListingImages(
+                        c.id,
+                        {
+                          // HANYA yang benar-benar berubah yang dikirim — supaya baris audit di
+                          // server tidak berbunyi "gambar diganti" untuk sisi yang tidak disentuh.
+                          ...(listImage !== c.listing?.image ? { image: listImage } : {}),
+                          // `null` (bukan string kosong) adalah perintah HAPUS yang dikenal
+                          // server; `@IsImageRef` menolak string kosong.
+                          ...(backChanged ? { imageBack: listImageBack || null } : {}),
+                        },
+                        token ?? "",
+                      ),
+                    "Gambar di halaman pembeli sudah diganti.",
+                  )
+                }
+                disabled={busy || !listImage || !imagesChanged}
+                className="mt-4 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? "Memproses…" : "Simpan gambar"}
+              </button>
+              {!imagesChanged && (
+                <span className="ml-3 text-[12px] text-zinc-500">
+                  Belum ada yang diubah.
+                </span>
+              )}
             </div>
           )}
         </Card>
