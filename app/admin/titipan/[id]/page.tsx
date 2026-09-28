@@ -171,6 +171,20 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+/** Jenis foto dalam bahasa yang dibaca operator — bukan FRONT/BACK/CERT/HANDOVER. */
+const kindLabel = (k: string): string =>
+  k === "FRONT"
+    ? "Bagian depan kartu"
+    : k === "BACK"
+      ? "Bagian belakang kartu"
+      : k === "CERT"
+        ? "Nomor sertifikat"
+        : "Struk serah terima";
+
+/** Versi pendek untuk ditempel di petak 48px. */
+const kindShort = (k: string): string =>
+  k === "FRONT" ? "depan" : k === "BACK" ? "blkg" : k === "CERT" ? "sert" : "struk";
+
 /**
  * Pemilih gambar dari foto yang SUDAH tersimpan di titipan ini.
  *
@@ -204,7 +218,7 @@ function PhotoPicker({
             key={p.id}
             type="button"
             onClick={() => onChange(clearable && value === p.url ? "" : p.url)}
-            title={p.kind}
+            title={kindLabel(p.kind)}
             className={`relative overflow-hidden rounded-lg border-2 transition ${
               value === p.url ? "border-yellow-400" : "border-white/10 hover:border-white/30"
             }`}
@@ -215,13 +229,7 @@ function PhotoPicker({
                 depan dan mana yang belakang dari petak 48px — dan menebak salah persis itulah
                 yang membuat sebuah pajangan menampilkan bagian belakang sebagai foto utama. */}
             <span className="absolute inset-x-0 bottom-0 bg-black/65 py-px text-[8.5px] font-semibold uppercase tracking-wide text-zinc-200">
-              {p.kind === "FRONT"
-                ? "depan"
-                : p.kind === "BACK"
-                  ? "blkg"
-                  : p.kind === "CERT"
-                    ? "sert"
-                    : "srh"}
+              {kindShort(p.kind)}
             </span>
           </button>
         ))}
