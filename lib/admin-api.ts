@@ -655,6 +655,21 @@ export const getAdminRedemptions = (token: string) =>
     headers: { authorization: `Bearer ${token}` },
   });
 
+/**
+ * Berapa paket yang ongkirnya sudah beres dan belum dikemas — angka untuk lencana sidebar admin.
+ *
+ * Dipanggil ulang tiap 15 detik dari SETIAP halaman /admin/*, jadi ia sengaja satu `count` di
+ * server dan bukan `getAdminRedemptions` (rute itu `take: 200` tanpa `where`, sehingga paket yang
+ * paling LAMA tertunggak justru yang pertama jatuh keluar jendelanya).
+ *
+ * Hanya rail DOMESTIK. Baris CollectorCrypt juga boleh duduk di PACKING, tapi nol Rupiah pernah
+ * masuk ke sana — memanggil admin untuk mengemasnya adalah panggilan palsu.
+ */
+export const getAdminRedemptionsPendingPack = (token: string) =>
+  api<{ pendingPack: number }>("/admin/redemptions/pending-count", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
 /** Tagihan ongkir yang terdampak saat baris DOMESTIK dibatalkan admin (selalu ada, bisa []). */
 export type AdminShippingRefundDebt = {
   merchantOrderId: string;

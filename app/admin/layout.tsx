@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ADMIN_BG, ADMIN_PANEL } from "@/lib/theme";
 import { useAdminAuth } from "@/lib/adminAuth";
 import { getAdminSupportUnread } from "@/lib/support";
+import { getAdminRedemptionsPendingPack } from "@/lib/admin-api";
 import { Img } from "@/components/packs/ui";
 
 type AdminLink = {
@@ -47,6 +48,14 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { token, isAdmin, hydrated, logout } = useAdminAuth();
   const [unread, setUnread] = useState(0);
+  /**
+   * Paket yang ongkirnya sudah dibayar pembeli (atau ditanggung Hoshi) dan belum dikemas.
+   *
+   * Hidup DI SINI, di layout, dan bukan di halaman Kirim Kartu: justru admin yang TIDAK
+   * membuka halaman itu hari ini yang perlu diberi tahu. Sidebar dirender di setiap halaman
+   * /admin/*, jadi angkanya ikut ke mana pun dia bekerja.
+   */
+  const [pendingPack, setPendingPack] = useState(0);
   // Laci nav untuk layar sempit. Ada karena satu layar admin memang dipakai DI LUAR meja: serah
   // terima kartu titipan dilakukan di rumah pemiliknya, dari ponsel. Sidebar tetap 240px di ≥lg
   // (desktop tidak berubah sama sekali); di bawah itu ia jadi laci supaya konten punya lebar penuh.
@@ -78,6 +87,12 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const load = () => {
       getAdminSupportUnread(token)
         .then((r) => { if (alive) setUnread(r.unread); })
+        .catch(() => {});
+      // `.catch` kosong WAJIB, dan bukan kemalasan: backend di droplet bisa lebih tua
+      // daripada frontend di Vercel, dan rute ini menjawab 404 sampai droplet-nya ikut
+      // ter-deploy. Sidebar tidak boleh ikut rusak karenanya: angkanya tinggal 0.
+      getAdminRedemptionsPendingPack(token)
+        .then((r) => { if (alive) setPendingPack(r.pendingPack); })
         .catch(() => {});
     };
     load();
@@ -132,11 +147,31 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3">
           {ADMIN_NAV.map((n) => {
             const active = pathname === n.href || (n.href !== "/admin" && pathname.startsWith(n.href));
-            const showBadge = n.href === "/admin/messages" && unread > 0;
+            // Satu nilai per item, bukan boolean per lencana: menambah lencana ketiga nanti
+            // tidak boleh berarti menambah cabang render ketiga.
+            const badge =
+              n.href === "/admin/messages"
+                ? unread
+                : n.href === "/admin/redemptions"
+                  ? pendingPack
+                  : 0;
+            // Lencana yang mendaratkan admin di tab KOSONG adalah pekerjaan yang terlihat tapi
+            // tetap tidak bisa dikerjakan: tab bawaan halaman Kirim Kartu adalah "Diminta", yang
+            // tidak memuat satu pun baris siap-kemas. `active` tetap dihitung dari `n.href`
+            // karena rumusnya `pathname.startsWith(...)` dan pathname tidak pernah memuat "?".
+            const linkHref =
+              n.href === "/admin/redemptions" && pendingPack > 0
+                ? "/admin/redemptions?status=PACKING"
+                : n.href;
             return (
               <Link
                 key={n.href}
-                href={n.href}
+                href={linkHref}
+                title={
+                  n.href === "/admin/redemptions" && pendingPack > 0
+                    ? `${pendingPack} paket ongkirnya sudah beres dan belum dikemas.`
+                    : undefined
+                }
                 className={`group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-[14px] font-medium transition ${
                   active
                     ? "bg-yellow-400/10 text-yellow-200 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.28)]"
@@ -145,9 +180,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
               >
                 <span className="text-[15px] leading-none">{n.icon}</span>
                 <span className="flex-1">{n.label}</span>
-                {showBadge && (
+                {badge > 0 && (
                   <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold text-[#171717]">
-                    {unread > 99 ? "99+" : unread}
+                    {badge > 99 ? "99+" : badge}
                   </span>
                 )}
               </Link>
@@ -220,10 +255,24 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <span className="rounded-md bg-yellow-400/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-yellow-300">
             Admin
           </span>
+          {/* DUA pil terpisah, SENGAJA tidak dijumlahkan jadi satu angka: "pesan belum dibaca"
+              dan "paket belum dikemas" dua pekerjaan berbeda dengan dua tujuan berbeda, dan satu
+              angka gabungan menghapus keduanya. Ada di sini karena di ponsel seluruh sidebar
+              tersembunyi di balik tombol laci, dan layar admin ini memang dipakai di luar meja. */}
           {unread > 0 && (
             <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold text-[#171717]">
               {unread > 99 ? "99+" : unread}
             </span>
+          )}
+          {pendingPack > 0 && (
+            <Link
+              href="/admin/redemptions?status=PACKING"
+              title={`${pendingPack} paket ongkirnya sudah beres dan belum dikemas.`}
+              className={`${unread > 0 ? "ml-1.5" : "ml-auto"} inline-flex h-5 items-center justify-center gap-1 rounded-full bg-yellow-400 px-1.5 text-[11px] font-bold text-[#171717]`}
+            >
+              <span aria-hidden>&#128230;</span>
+              {pendingPack > 99 ? "99+" : pendingPack}
+            </Link>
           )}
         </header>
 

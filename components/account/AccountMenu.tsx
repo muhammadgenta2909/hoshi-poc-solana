@@ -78,8 +78,8 @@ export default function AccountMenu() {
   const CARDS_NAV: NavItem[] = [
     { label: "Titipan Saya", href: "/titipan", icon: <BoxIcon className={iconCls} />, tint: "text-sky-400" },
     { label: "Klaim Kode Titipan", href: "/titipan/klaim", icon: <BoxIcon className={iconCls} />, tint: "text-violet-400" },
-    { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
-    { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Minta Kartu Dikirim", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Riwayat Pengiriman", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];
 
   const { disconnect } = useWallet();

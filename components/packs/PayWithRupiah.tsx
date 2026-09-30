@@ -20,6 +20,7 @@ import {
   createPackOrder,
   createListingOrder,
   createOfferOrder,
+  getMyPurchases,
   getPaymentOrder,
   isTerminalPaymentStatus,
   type PaymentOrder,
@@ -28,6 +29,7 @@ import {
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
+import { isDomesticShippableListing } from "@/lib/market";
 import { GOLD_GRADIENT } from "./ui";
 
 const POLL_MS = 4_000;
@@ -207,6 +209,38 @@ export function PayModal({
   // MARKETPLACE (listingId) / OFFER (offerId) beli SATU kartu, bukan pack — copy modal menyesuaikan
   // supaya tidak menjanjikan "animasi pack" / "pack berhasil" untuk kartu.
   const isListing = !!listingId || !!offerId;
+
+  /**
+   * Kartu yang barusan dibeli fisiknya ADA DI GUDANG HOSHI (stok Hoshi atau titipan)?
+   *
+   * `isListing` TIDAK BISA menjawab ini: ia menyatukan stok Hoshi, titipan, katalog CollectorCrypt
+   * dan P2P jadi satu boolean. Padahal kalimat yang benar untuk keempatnya berbeda — untuk kartu
+   * gudang, “sudah dikirim ke wallet-mu” bukan cuma kabur, ia SALAH: settlement-nya cuma baris
+   * database, tidak ada satu pun NFT yang berpindah, dan kartunya masih di rak di Indonesia.
+   *
+   * Dibaca dari `getMyPurchases`, yaitu serializer yang SAMA dengan yang memberi makan /vault —
+   * jadi layar sukses dan spanduk Vault mustahil berbeda pendapat. Diambil SESUDAH uangnya beres
+   * supaya tidak pernah bisa mengganggu jalur bayar, dan GAGAL-TERTUTUP: kalau fetch-nya gagal
+   * pembeli dapat kalimat lama, bukan ajakan yang salah sasaran.
+   */
+  const [warehouseCard, setWarehouseCard] = useState(false);
+
+  useEffect(() => {
+    // Dikaitkan ke `stage`, bukan ke salah satu penulis `setStage("done")`: ada DUA jalan masuk
+    // ke layar sukses (resume sepulang bayar, dan poll yang mencapai FULFILLED), dan menambal
+    // salah satunya saja akan meninggalkan jalur yang bocor.
+    if (stage !== "done" || !listingId || !token) return;
+    let alive = true;
+    getMyPurchases(token)
+      .then((rows) => {
+        const bought = rows.find((r) => r.id === listingId);
+        if (alive && bought) setWarehouseCard(isDomesticShippableListing(bought));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [stage, listingId, token]);
 
   // Token disimpan di ref supaya effect pembuat-order (once-only, dijaga startedRef) TIDAK
   // dibongkar-pasang saat login() membalik token null→jwt di tengah pembuatan order. Kalau
@@ -690,7 +724,7 @@ export function PayModal({
               <span className="font-semibold text-zinc-200">1–3 menit</span>. Tunggu
               sebentar ya
               {isListing
-                ? ", kartunya bakal langsung dikirim ke wallet-mu. ✨"
+                ? ", kartunya lagi disiapkan. ✨"
                 : ", animasi pack-nya bakal main otomatis di sini. 🎬"}
             </p>
             <p className="text-[11px] text-zinc-500">Jangan tutup halaman ini.</p>
@@ -783,18 +817,42 @@ export function PayModal({
             <p className="text-base font-semibold text-white">
               {isListing ? "Kartu berhasil dibeli!" : "Pack berhasil dibeli!"}
             </p>
-            <p className="max-w-[18rem] text-[13px] text-zinc-400">
-              {successHref
-                ? "Kartu sudah jadi milikmu — lihat detailnya."
-                : "Kartu sudah dikirim ke wallet-mu. Cek di Vault."}
+            {/* Cabang kartu-gudang didahulukan. Dulu pembeli kartu titipan membaca “Kartu sudah
+                dikirim ke wallet-mu” — kalimat yang menyuruhnya BERHENTI, padahal kartunya masih
+                di rak dan masih harus diminta — lalu tombolnya membawanya ke halaman produk,
+                menjauh dari satu-satunya tombol kirim yang ada. */}
+            <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
+              {warehouseCard
+                ? "Kartunya ada di gudang Hoshi di Indonesia — belum di tanganmu. Minta dikirim kapan pun kamu siap; kamu cuma bayar ongkir kurirnya."
+                : successHref
+                  ? "Kartu sudah jadi milikmu — lihat detailnya."
+                  : "Kartu sudah dikirim ke wallet-mu. Cek di Vault."}
             </p>
             <button
               type="button"
-              onClick={successHref ? () => router.push(successHref) : onClose}
+              // `onClose()` dipanggil lebih dulu karena di jalur uang sungguhan modal ini hidup
+              // DI ATAS /vault: di sana `onClose` membersihkan pending lalu memuat ulang koleksi,
+              // dan pemuatan itulah yang memunculkan kartu barunya beserta spanduknya. Tanpa itu,
+              // `router.push("/vault")` di halaman yang sama tidak melakukan apa pun dan modalnya
+              // menggantung.
+              onClick={
+                warehouseCard
+                  ? () => {
+                      onClose();
+                      router.push("/vault");
+                    }
+                  : successHref
+                    ? () => router.push(successHref)
+                    : onClose
+              }
               className="mt-1 w-full rounded-xl px-4 py-3 text-[15px] font-semibold text-[#171717] transition hover:brightness-105"
               style={{ backgroundImage: GOLD_GRADIENT }}
             >
-              {successHref ? "Lihat Kartu →" : "Selesai"}
+              {warehouseCard
+                ? "Lihat kartuku di Vault →"
+                : successHref
+                  ? "Lihat Kartu →"
+                  : "Selesai"}
             </button>
           </Center>
         )}

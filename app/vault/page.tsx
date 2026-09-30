@@ -280,12 +280,28 @@ export default function VaultPage() {
     ];
     // Sembunyikan kartu yang SUDAH KELUAR vault (burn tersubmit / dikirim). Status pra-burn
     // (REQUESTED/AWAITING_PAYMENT/READY_TO_FUND/FUNDING/FUNDED/PACKING) tetap tampil dengan badge.
+    /* Keadaan kirim dihitung DI SINI, sekali, lalu dibawa tiap baris — bukan dihitung ulang di
+       badan render. Spanduk di atas grid dan tombol di dalam kartu WAJIB tidak bisa berbeda
+       pendapat: kalau angkanya dihitung terpisah, suatu hari aturan titipan berubah dan spanduk
+       berbunyi "1 kartu menunggu" sementara tidak ada satu tombol pun di grid — pembeli dikirim
+       mencari sesuatu yang tidak ada. Satu perhitungan, dua pembaca. */
     return rows
       .filter((r) => {
         const nft =
           r.kind === "pull" ? r.pull.nftAddress : shipKeyForListing(r.listing);
         const st = nft ? redemptionByNft.get(nft) : undefined;
         return !(st && SHIPPED_OUT.has(st));
+      })
+      .map((r) => {
+        const nft =
+          r.kind === "pull" ? r.pull.nftAddress : shipKeyForListing(r.listing);
+        const ship = nft ? redemptionByNft.get(nft) : undefined;
+        const shipActive = !!ship && !SHIPPED_OUT.has(ship);
+        // RAIL saja (fisiknya di rak Hoshi di Indonesia), TANPA syarat sudah/belum diminta —
+        // `canContinue` di bawah membutuhkan rail-nya apa adanya.
+        const domesticRail =
+          r.kind === "bought" && isDomesticShippableListing(r.listing);
+        return { ...r, ship, shipActive, domesticRail, canShipDomestic: domesticRail && !shipActive };
       })
       .sort((a, b) => b.at - a.at);
   }, [pulls, items, redemptionByNft]);
@@ -359,18 +375,44 @@ export default function VaultPage() {
         ) : items.length === 0 && pulls.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <>
+            {/* ╔═══ KARTU YANG SUDAH DIBAYAR TAPI BELUM DIMINTA KIRIM ═══╗
+
+                Lubang yang ditutupnya: pembeli melunasi kartu titipan, kartunya jadi miliknya —
+                lalu TIDAK ADA apa pun yang memberi tahu bahwa fisiknya masih di gudang Hoshi dan
+                harus DIMINTA. Layar sukses membawanya ke halaman produk, dan satu-satunya pintu
+                adalah satu menu yang harus ia temukan sendiri. Kartunya bisa duduk di rak
+                selamanya sementara pembelinya mengira semuanya sudah beres.
+
+                Diletakkan di /vault, bukan hanya di layar sukses, karena backend memulangkan
+                SETIAP pembeli kartu ke halaman ini sepulang bayar — termasuk pembeli yang
+                localStorage-nya hilang (browser dalam aplikasi e-wallet, mode privat, ganti HP)
+                dan karena itu tidak pernah melihat modal apa pun.
+
+                TIDAK digerbang flag pengiriman CollectorCrypt: rail domestik memang sengaja hidup
+                di luar flag itu, dan di produksi flag itu mati — ikut menggerbangnya berarti
+                lubang ini kembali utuh. */}
+            {collection.some((e) => e.canShipDomestic) && (
+              <div className="mb-4 rounded-2xl border border-[#F2C101]/35 bg-[#F2C101]/[0.08] px-4 py-3.5">
+                <p className="text-[13.5px] font-semibold text-[#FFE27A]">
+                  {collection.filter((e) => e.canShipDomestic).length} kartumu masih ada di gudang
+                  Hoshi — belum kamu minta kirim.
+                </p>
+                <p className="mt-1 text-[12px] leading-relaxed text-zinc-400">
+                  Kartunya sudah jadi milikmu. Kalau mau dikirim ke rumah, tekan tombol
+                  {" "}
+                  <span className="font-semibold text-zinc-200">
+                    “📦 Kirim ke rumah — bayar ongkir”
+                  </span>{" "}
+                  di kartunya. Kamu cuma bayar ongkir kurirnya.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {collection.map((e) => {
-              const nft =
-                e.kind === "pull" ? e.pull.nftAddress : shipKeyForListing(e.listing);
               // Status pra-burn → badge (kartu keluar-vault sudah difilter keluar di atas).
-              const ship = nft ? redemptionByNft.get(nft) : undefined;
-              const shipActive = !!ship && !SHIPPED_OUT.has(ship);
-              // RAIL DOMESTIK (kurir lokal): stok Hoshi ATAU kartu TITIPAN — dua-duanya fisiknya
-              // ada di rak Hoshi di Indonesia. Dibaca dari flag yang DITURUNKAN SERVER, bukan
-              // ditebak dari "tidak punya alamat NFT", karena tebakan itu ikut menyapu baris
-              // seed/placeholder.
-              const domesticRow = e.kind === "bought" && isDomesticShippableListing(e.listing);
+              // Ketiganya datang dari memo `collection`, bukan dihitung ulang di sini.
+              const { ship, shipActive, domesticRail } = e;
               /* Bisa dilanjutkan sendiri oleh user?
                  • rail DOMESTIK → ya selama ongkirnya belum lunas, dan SENGAJA TIDAK digerbang
                    CC_SHIPPING_ENABLED: rail ini tidak menyentuh CollectorCrypt sama sekali.
@@ -380,7 +422,7 @@ export default function VaultPage() {
                    "Sedang dikirim" yang tidak bisa diklik — salah DAN buntu. */
               const canContinue =
                 !!ship &&
-                (domesticRow
+                (domesticRail
                   ? isDomesticActionableStatus(ship)
                   : CC_SHIPPING_ENABLED &&
                     (isActionableShipStatus(ship) || isResignShipStatus(ship)));
@@ -406,7 +448,7 @@ export default function VaultPage() {
                       // permintaan aktif. Tanpa ini pembeli yang baru saja membayar mendarat di
                       // /vault dan tidak punya satu pun tombol yang meminta kartunya — persis
                       // keadaan yang membuat pekerjaan ini ada.
-                      canShipDomestic={domesticRow && !shipActive}
+                      canShipDomestic={e.canShipDomestic}
                     />
                   )}
                   {shipActive &&
@@ -419,7 +461,7 @@ export default function VaultPage() {
                         href="/withdraw"
                         className="absolute left-2 top-2 z-10 rounded-full border border-yellow-400/50 bg-yellow-500/90 px-2 py-0.5 text-[10px] font-bold text-[#171717] shadow transition hover:brightness-110"
                       >
-                        {domesticRow
+                        {domesticRail
                           ? "📦 Bayar ongkir"
                           : isResignShipStatus(ship)
                             ? "📦 Tanda tangani"
@@ -437,6 +479,7 @@ export default function VaultPage() {
               );
             })}
           </div>
+          </>
         )}
       </main>
 

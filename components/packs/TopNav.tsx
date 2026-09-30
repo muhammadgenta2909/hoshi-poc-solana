@@ -285,8 +285,8 @@ function MobileMenuSheet({ onClose, active }: { onClose: () => void; active?: Na
   // Physical Cards = kirim/redeem KARTU FISIK ke rumah (bukan duit) — grup sendiri,
   // persis seperti di dropdown desktop, biar "tarik DUIT" vs "tarik KARTU" tak ketuker.
   const CARDS_NAV = [
-    { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
-    { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Minta Kartu Dikirim", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Riwayat Pengiriman", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];
 
   const offersCount =

@@ -421,10 +421,24 @@ export default function AdminRedemptionsPage() {
         </p>
       </header>
 
+      {/* Spanduk ini DULU cuma menyebut angkanya dan tidak membawa siapa pun ke barisnya — dan tab
+          bawaan halaman ini "Diminta", yang tidak memuat satu pun baris siap-kemas. Jadi admin
+          membaca "3 paket siap dikemas" sambil menatap daftar yang tidak memuat ketiganya.
+
+          Diklik-kan DI SINI, bukan cuma lewat tautan sidebar ber-?status=PACKING: `useTabParam`
+          membaca URL sekali saja saat mount, jadi menekan menu sidebar selagi SUDAH berada di
+          halaman ini tidak memindahkan tabnya. */}
       {readyCount > 0 && (
-        <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2.5 text-[12px] font-semibold text-emerald-200">
-          {readyCount} paket domestik ongkirnya LUNAS — siap dikemas.
-        </div>
+        <button
+          type="button"
+          onClick={() => setFilter("PACKING")}
+          className="w-full rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2.5 text-left text-[12px] font-semibold text-emerald-200 transition hover:bg-emerald-400/15"
+        >
+          {readyCount} paket domestik ongkirnya LUNAS — siap dikemas.{" "}
+          <span className="font-normal underline decoration-emerald-300/40">
+            Klik untuk lihat daftarnya.
+          </span>
+        </button>
       )}
 
       {/* ╔═══ YANG MASIH HARUS DIPUTUSKAN MANUSIA ═══╗
