@@ -415,6 +415,39 @@ export default function AdminTitipanDetailPage() {
   const backChanged = (listImageBack || null) !== (c?.listing?.imageBack ?? null);
   const imagesChanged = listImage !== (c?.listing?.image ?? "") || backChanged;
 
+  /* ══ FOTO BARU YANG BELUM TAYANG ══
+     Foto BUKTI dan foto yang DIPAJANG itu dua hal terpisah, dengan sengaja: bukti append-only,
+     pajangan dipilih. Tapi layar ini dulu tidak pernah mengatakannya. Operator mengunggah foto
+     depan & belakang yang benar di kartu Bukti, membuka halaman pembeli, dan melihat foto lama
+     masih di sana — padahal yang kurang cuma satu tekanan di panel yang letaknya jauh di bawah.
+
+     Jadi selisihnya dihitung di sini dan diumumkan TEPAT di bawah tempat foto diunggah. Hanya
+     untuk listing ACTIVE: listing yang sudah terjual adalah catatan apa yang dilihat pembelinya. */
+  const liveListing = c?.listing?.status === "ACTIVE" ? c.listing : null;
+  const newestFront = lastPhotoUrl(photos, "FRONT");
+  const newestBack = lastPhotoUrl(photos, "BACK");
+  const frontStale = !!liveListing && !!newestFront && newestFront !== liveListing.image;
+  const backStale =
+    !!liveListing && !!newestBack && newestBack !== (liveListing.imageBack ?? null);
+  // Kunci penolakan = PASANGAN foto terbaru. Kalau operator menekan "biarkan", kotaknya diam
+  // sampai ada foto yang LEBIH baru lagi — bukan muncul terus untuk keputusan yang sudah diambil.
+  const staleKey = `${frontStale ? newestFront : ""}|${backStale ? newestBack : ""}`;
+  const [staleDismissed, setStaleDismissed] = useState("");
+  const showStale = (frontStale || backStale) && staleDismissed !== staleKey;
+
+  /* Panel "Gambar yang dilihat pembeli" mengikuti apa yang BENAR-BENAR tayang setiap kali
+     tayangannya berubah. Tanpa ini, sesudah tombol cepat di kotak atas dipakai, panel di bawah
+     masih memegang pilihan LAMA dan tombol "Simpan gambar"-nya menyala — satu tekanan iseng di
+     sana akan mengembalikan foto yang barusan diganti. */
+  const liveImage = liveListing?.image ?? null;
+  const liveImageBack = liveListing?.imageBack ?? null;
+  useEffect(() => {
+    if (!liveImage) return;
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    setListImage(liveImage);
+    setListImageBack(liveImageBack ?? "");
+  }, [liveImage, liveImageBack]);
+
   /**
    * Bukti yang WAJIB sebelum kartu boleh dinyatakan diterima — cermin gerbang di server, dan
    * daftarnya hidup di SATU tempat (`lib/consignment.ts`) supaya kedua sisi tidak bisa melenceng.
@@ -1081,6 +1114,89 @@ export default function AdminTitipanDetailPage() {
           required={c.custodyAcceptedAt ? [] : requiredKinds}
           onUpdated={setC}
         />
+        {showStale && liveListing && (
+          <div className="mt-4 rounded-xl border border-yellow-400/35 bg-yellow-400/[0.08] p-4">
+            <p className="text-[13.5px] font-semibold text-yellow-100">
+              Foto baru ini belum tampil di halaman pembeli
+            </p>
+            <p className="mt-1 text-[12px] leading-relaxed text-zinc-400">
+              Foto bukti dan foto yang dipajang itu terpisah. Foto bukti tersimpan selamanya,
+              sedangkan yang dilihat pembeli baru berubah kalau kamu memakainya.
+            </p>
+
+            <div className="mt-3 flex flex-wrap gap-5">
+              {(
+                [
+                  frontStale && { label: "Depan", now: liveListing.image ?? null, next: newestFront },
+                  backStale && { label: "Belakang", now: liveListing.imageBack ?? null, next: newestBack },
+                ].filter(Boolean) as { label: string; now: string | null; next?: string }[]
+              ).map((s) => (
+                <div key={s.label}>
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                    {s.label}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="text-center">
+                      {s.now ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img src={s.now} alt="" className="h-20 w-14 rounded-md object-cover opacity-60" />
+                      ) : (
+                        <div className="grid h-20 w-14 place-items-center rounded-md border border-dashed border-white/15 text-[10px] text-zinc-500">
+                          kosong
+                        </div>
+                      )}
+                      <p className="mt-1 text-[10px] text-zinc-500">sekarang</p>
+                    </div>
+                    <span className="text-zinc-500">→</span>
+                    <div className="text-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={s.next}
+                        alt=""
+                        className="h-20 w-14 rounded-md object-cover ring-2 ring-yellow-400"
+                      />
+                      <p className="mt-1 text-[10px] text-yellow-200">baru</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void run(
+                    () =>
+                      setAdminConsignmentListingImages(
+                        c.id,
+                        {
+                          // Hanya sisi yang memang berubah — supaya baris audit di server tidak
+                          // mencatat "diganti" untuk sisi yang tidak disentuh.
+                          ...(frontStale && newestFront ? { image: newestFront } : {}),
+                          ...(backStale && newestBack ? { imageBack: newestBack } : {}),
+                        },
+                        token ?? "",
+                      ),
+                    "Halaman pembeli sekarang memakai foto terbaru.",
+                  )
+                }
+                className="rounded-xl px-4 py-2.5 text-[13px] font-semibold text-[#171717] transition hover:brightness-105 disabled:opacity-50"
+                style={{ backgroundImage: "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)" }}
+              >
+                {busy ? "Memproses…" : "Pakai di halaman pembeli"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setStaleDismissed(staleKey)}
+                className="rounded-xl border border-white/12 px-4 py-2.5 text-[13px] text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200"
+              >
+                Biarkan yang sekarang
+              </button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* ── TERIMA KARTU (hanya sebelum custody ada) ── */}
