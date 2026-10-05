@@ -31,6 +31,7 @@ import MarketCard from "@/components/packs/MarketCard";
 import { useCardActions, DarkPill } from "@/lib/useCardActions";
 import { PayModal } from "@/components/packs/PayWithRupiah";
 import { GOLD_GRADIENT, Img, formatIdr } from "@/components/packs/ui";
+import { chargeablePriceRange, isChargeablePrice } from "@/lib/consignment";
 import {
   Badge,
   CONTRACT_YELLOW,
@@ -445,6 +446,20 @@ function OwnerPanel({
   );
 }
 
+/**
+ * Penjelasan untuk kartu yang harganya di luar rentang yang bisa dibayar. Tanpa ini pembeli cuma
+ * melihat tombol mati tanpa alasan. Diarahkan ke tim Hoshi (bukan ke tombol "Message Seller", yang
+ * tidak ada untuk stok Hoshi) karena untuk kartu semahal ini itu satu-satunya jalan sekarang.
+ */
+function OverLimitNote() {
+  return (
+    <p className="mt-2 text-center text-[12px] leading-relaxed text-zinc-400">
+      Harga kartu ini di luar batas pembayaran online. Kartu yang bisa dibayar lewat QRIS harganya{" "}
+      {chargeablePriceRange()}. Untuk membeli kartu ini, hubungi tim Hoshi.
+    </p>
+  );
+}
+
 /** Lencana "Titipan".
  *
  *  Kalimat pada `title` dipilih hati-hati: kartu ini BUKAN milik Hoshi. Hoshi menyimpannya dan
@@ -616,6 +631,10 @@ function RightColumn({
   const standardBuyable = !owned && !isCatalogCc;
   // Titipan ikut di sini TANPA flag P2P: jalurnya Rupiah → saldo penjual, nol escrow, nol USDC.
   const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory || isConsigned);
+  // Harga di luar rentang yang bisa DIBAYAR: tagihannya ditolak server, dan di atas Rp 10 juta tidak
+  // ada satu cara bayar pun yang bisa dipakai pembeli (QRIS maks Rp 10 juta; VA IDRX hanya untuk
+  // pemilik akun). Tombol yang menyala untuk kartu seperti ini adalah janji yang pasti dilanggar.
+  const overLimit = !isChargeablePrice(listing.price);
   // Inventaris Hoshi tak punya penjual eksternal → tak bisa dichat/ditawar. Titipan PUNYA penjual
   // (pemilik kartunya), jadi chat tetap masuk akal…
   const showMessageSeller = standardBuyable && !isHoshiInventory;
@@ -787,7 +806,7 @@ function RightColumn({
               <button
                 type="button"
                 onClick={onBuyRupiah}
-                disabled={unavailable}
+                disabled={unavailable || overLimit}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-3.5 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101" }}
               >
@@ -795,9 +814,10 @@ function RightColumn({
                   Rp
                 </span>
                 <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
-                  {unavailable ? "Sold" : "Beli via Rupiah"}
+                  {unavailable ? "Sold" : overLimit ? "Belum bisa dibeli online" : "Beli via Rupiah"}
                 </span>
               </button>
+              {!unavailable && overLimit && <OverLimitNote />}
               <p className="mb-4 mt-2 text-center text-[12px] text-zinc-500">
                 Bayar rupiah (QRIS / e-wallet / VA) di harga tertera. Kartu dikirim ke wallet-mu —
                 tak perlu punya USDC atau SOL.
@@ -903,7 +923,7 @@ function RightColumn({
               <button
                 type="button"
                 onClick={onBuyRupiah}
-                disabled={unavailable}
+                disabled={unavailable || overLimit}
                 className="flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
               >
@@ -911,9 +931,10 @@ function RightColumn({
                   Rp
                 </span>
                 <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
-                  {unavailable ? "Sold" : "Beli via Rupiah"}
+                  {unavailable ? "Sold" : overLimit ? "Belum bisa dibeli online" : "Beli via Rupiah"}
                 </span>
               </button>
+              {!unavailable && overLimit && <OverLimitNote />}
               <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
                 {isConsigned
                   ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS / e-wallet / VA), lalu minta dikirim lewat kurir lokal."
@@ -1027,7 +1048,7 @@ function RightColumn({
             <button
               type="button"
               onClick={canRupiah ? onBuyRupiah : onBuy}
-              disabled={unavailable || (!canRupiah && buying)}
+              disabled={unavailable || (!canRupiah && buying) || (canRupiah && overLimit)}
               className="flex items-center justify-center gap-2 rounded-2xl px-4 py-3.5 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
               style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101" }}
             >
@@ -1039,7 +1060,7 @@ function RightColumn({
                 <Img src="/icon-buy.png" alt="" className="h-5 w-5" />
               )}
               <span className="text-lg leading-none text-[#171717]" style={JERSEY}>
-                {unavailable ? "Sold" : canRupiah ? "Beli via Rupiah" : buying ? "Processing…" : "Buy Card"}
+                {unavailable ? "Sold" : canRupiah ? (overLimit ? "Belum bisa dibeli" : "Beli via Rupiah") : buying ? "Processing…" : "Buy Card"}
               </span>
             </button>
           </div>
@@ -1106,6 +1127,10 @@ function RightColumnDesktop({
   const actions = useCardActions(listing, onOffer);
   const standardBuyable = !owned && !isCatalogCc;
   const canRupiah = PAYMENTS_ENABLED && (P2P_ENABLED || isHoshiInventory || isConsigned);
+  // Harga di luar rentang yang bisa DIBAYAR: tagihannya ditolak server, dan di atas Rp 10 juta tidak
+  // ada satu cara bayar pun yang bisa dipakai pembeli (QRIS maks Rp 10 juta; VA IDRX hanya untuk
+  // pemilik akun). Tombol yang menyala untuk kartu seperti ini adalah janji yang pasti dilanggar.
+  const overLimit = !isChargeablePrice(listing.price);
   const showMessageSeller = standardBuyable && !isHoshiInventory;
   const showMakeOffer = showMessageSeller && !isConsigned;
   // Lihat catatan di RightColumn: kartu titipan tak punya jalur beli cadangan.
@@ -1206,7 +1231,7 @@ function RightColumnDesktop({
                 <button
                   type="button"
                   onClick={onBuyRupiah}
-                  disabled={unavailable}
+                  disabled={unavailable || overLimit}
                   className="flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-3.5 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101" }}
                 >
@@ -1214,9 +1239,10 @@ function RightColumnDesktop({
                     Rp
                   </span>
                   <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
-                    {unavailable ? "Sold" : "Beli via Rupiah"}
+                    {unavailable ? "Sold" : overLimit ? "Belum bisa dibeli online" : "Beli via Rupiah"}
                   </span>
                 </button>
+                {!unavailable && overLimit && <OverLimitNote />}
                 <p className="mb-4 mt-2 text-center text-[12px] text-zinc-500">
                   Bayar rupiah (QRIS / e-wallet / VA) di harga tertera. Kartu dikirim ke wallet-mu —
                   tak perlu punya USDC atau SOL.
@@ -1318,7 +1344,7 @@ function RightColumnDesktop({
                 <button
                   type="button"
                   onClick={onBuyRupiah}
-                  disabled={unavailable}
+                  disabled={unavailable || overLimit}
                   className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-2xl px-6 py-4 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ backgroundImage: GOLD_GRADIENT, border: "1px solid #F2C101", boxShadow: "0 10px 12.9px 0 rgba(255,246,0,0.25)" }}
                 >
@@ -1326,9 +1352,10 @@ function RightColumnDesktop({
                     Rp
                   </span>
                   <span className="text-2xl leading-none text-[#171717]" style={JERSEY}>
-                    {unavailable ? "Sold" : "Beli via Rupiah"}
+                    {unavailable ? "Sold" : overLimit ? "Belum bisa dibeli online" : "Beli via Rupiah"}
                   </span>
                 </button>
+                {!unavailable && overLimit && <OverLimitNote />}
                 <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
                   {isConsigned
                     ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS / e-wallet / VA), lalu minta dikirim lewat kurir lokal."
