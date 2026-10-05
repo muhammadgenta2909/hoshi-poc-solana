@@ -1264,7 +1264,7 @@ export default function AdminTitipanBaruPage() {
         <Field
           label="Harga jual (Rp)"
           required
-          hint={`Yang bisa ditagihkan ke pembeli: ${chargeablePriceRange()}. Di luar itu tagihannya tidak bisa terbit — biaya layanan ~0,7% ditambahkan di atas harga, dan hasilnya harus tetap di dalam batas penerbitan tagihan IDRX.`}
+          hint={`Harga yang bisa dibayar pembeli: ${chargeablePriceRange()}. Batas atasnya datang dari QRIS, satu-satunya cara bayar pembeli, yang maksimal Rp 10 juta per pembayaran (sudah termasuk biaya 0,7%). Kartu di atas itu belum bisa dijual lewat Hoshi, jadi jangan dijanjikan ke pemiliknya.`}
         >
           <input
             value={askPrice}
