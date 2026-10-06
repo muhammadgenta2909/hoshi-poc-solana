@@ -45,6 +45,7 @@ import { useAuth } from "@/lib/useAuth";
 import { GOLD } from "@/components/account/ui";
 import { formatIdr } from "@/components/packs/ui";
 import { STATUS_LABEL } from "@/components/packs/ShippingFlowModal";
+import { QrisPayHint } from "./QrisPayHint";
 
 /* ───────────────────────── sesi tertunda (sepulang dari halaman bayar) ─────────────────────────
    KUNCI TERPISAH dari `hoshi_pending_ship` milik jalur CC — DENGAN SENGAJA. Dua rail punya alur
@@ -360,6 +361,9 @@ export default function DomesticShipModal({
                   menyebut kota tujuanmu — jangan bayar dulu.
                 </p>
               )}
+            </div>
+            <div className="mt-4">
+              <QrisPayHint />
             </div>
             {error && (
               <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-[13px] text-red-400">

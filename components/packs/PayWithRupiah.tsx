@@ -31,6 +31,7 @@ import { useAuth } from "@/lib/useAuth";
 import { useWalletConnect } from "@/lib/useWalletConnect";
 import { isDomesticShippableListing } from "@/lib/market";
 import { GOLD_GRADIENT } from "./ui";
+import { QrisPayHint } from "./QrisPayHint";
 
 const POLL_MS = 4_000;
 const idr = new Intl.NumberFormat("id-ID");
@@ -669,7 +670,7 @@ export function PayModal({
               {/* Kejelasan harga: total = harga tertera + biaya layanan pembayaran (QRIS 0,7%),
                   supaya user tidak bingung kenapa nominalnya sedikit lebih tinggi dari harga kartu. */}
               <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
-                Sudah termasuk biaya layanan pembayaran (QRIS/e-wallet ~0,7%).
+                Sudah termasuk biaya layanan pembayaran QRIS (~0,7%).
               </p>
             </div>
             {demo ? (
@@ -696,9 +697,10 @@ export function PayModal({
             ) : (
               <>
                 <p className="max-w-[18rem] text-[13px] leading-relaxed text-zinc-400">
-                  Klik tombol di bawah untuk membuka halaman pembayaran IDRX (QRIS, e-wallet,
-                  atau virtual account). Setelah bayar, jendela ini otomatis update.
+                  Klik tombol di bawah untuk membuka halaman pembayaran. Setelah bayar, jendela
+                  ini otomatis update.
                 </p>
+                <QrisPayHint />
                 <button
                   type="button"
                   onClick={openHostedPage}
