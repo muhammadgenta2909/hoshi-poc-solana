@@ -171,7 +171,7 @@ const dt = (s: string) =>
 const METHOD_LABEL: Record<string, string> = {
   QRIS: "QRIS",
   VA: "Virtual account",
-  HOSTED: "QRIS / e-wallet / VA",
+  HOSTED: "QRIS",
 };
 
 /** Endpoint-nya TIDAK berhalaman (findMany tanpa take/skip): satu respons memuat SELURUH order

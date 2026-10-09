@@ -819,7 +819,7 @@ function RightColumn({
               </button>
               {!unavailable && overLimit && <OverLimitNote />}
               <p className="mb-4 mt-2 text-center text-[12px] text-zinc-500">
-                Bayar rupiah (QRIS / e-wallet / VA) di harga tertera. Kartu dikirim ke wallet-mu —
+                Bayar rupiah (QRIS, scan pakai e-wallet) di harga tertera. Kartu dikirim ke wallet-mu —
                 tak perlu punya USDC atau SOL.
               </p>
             </>
@@ -937,10 +937,10 @@ function RightColumn({
               {!unavailable && overLimit && <OverLimitNote />}
               <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
                 {isConsigned
-                  ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS / e-wallet / VA), lalu minta dikirim lewat kurir lokal."
+                  ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS, scan pakai e-wallet), lalu minta dikirim lewat kurir lokal."
                   : isHoshiInventory
-                    ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
-                    : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
+                    ? "Kartu stok Hoshi. Bayar rupiah (QRIS, scan pakai e-wallet) — langsung jadi milikmu."
+                    : "Bayar rupiah (QRIS, scan pakai e-wallet). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
               </p>
             </>
           ) : (
@@ -1244,7 +1244,7 @@ function RightColumnDesktop({
                 </button>
                 {!unavailable && overLimit && <OverLimitNote />}
                 <p className="mb-4 mt-2 text-center text-[12px] text-zinc-500">
-                  Bayar rupiah (QRIS / e-wallet / VA) di harga tertera. Kartu dikirim ke wallet-mu —
+                  Bayar rupiah (QRIS, scan pakai e-wallet) di harga tertera. Kartu dikirim ke wallet-mu —
                   tak perlu punya USDC atau SOL.
                 </p>
               </>
@@ -1358,10 +1358,10 @@ function RightColumnDesktop({
                 {!unavailable && overLimit && <OverLimitNote />}
                 <p className="mb-1 mt-2 text-center text-[12px] text-zinc-500">
                   {isConsigned
-                    ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS / e-wallet / VA), lalu minta dikirim lewat kurir lokal."
+                    ? "Kartu titipan — fisiknya ada di Hoshi, Indonesia. Bayar rupiah (QRIS, scan pakai e-wallet), lalu minta dikirim lewat kurir lokal."
                     : isHoshiInventory
-                      ? "Kartu stok Hoshi. Bayar rupiah (QRIS / e-wallet / VA) — langsung jadi milikmu."
-                      : "Bayar rupiah (QRIS / e-wallet / VA). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
+                      ? "Kartu stok Hoshi. Bayar rupiah (QRIS, scan pakai e-wallet) — langsung jadi milikmu."
+                      : "Bayar rupiah (QRIS, scan pakai e-wallet). Kartu dikirim ke wallet-mu; penjual dibayar ke saldo — tak perlu USDC/SOL."}
                 </p>
               </>
             ) : (

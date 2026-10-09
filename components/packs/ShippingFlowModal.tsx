@@ -1484,7 +1484,7 @@ export default function ShippingFlowModal({
               </p>
             </div>
             <p className="text-center text-[13px] leading-relaxed text-zinc-400">
-              Bayar ongkir dulu (QRIS / e-wallet / VA). Setelah lunas, kamu tinggal tanda tangani
+              Bayar ongkir dulu (QRIS, scan pakai e-wallet). Setelah lunas, kamu tinggal tanda tangani
               pengirimannya — kartu digital-nya ditarik dan kartu fisiknya dikirim ke alamatmu.
             </p>
             <button

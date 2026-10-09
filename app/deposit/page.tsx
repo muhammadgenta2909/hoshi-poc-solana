@@ -400,7 +400,7 @@ export default function DepositPage() {
                 : `Isi Rp ${idr.format(effectiveAmount || 0)} →`}
             </PrimaryButton>
             <p className="mt-3 text-center text-[11px] leading-relaxed text-zinc-500">
-              Bayar via QRIS / e-wallet / VA. Saldo bertambah otomatis setelah pembayaran
+              Bayar via QRIS (scan pakai e-wallet). Saldo bertambah otomatis setelah pembayaran
               dikonfirmasi.
             </p>
           </>

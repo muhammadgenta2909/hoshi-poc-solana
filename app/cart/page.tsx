@@ -122,7 +122,7 @@ export default function CartPage() {
               </button>
             </div>
             <p className="mt-3 text-center text-[12px] text-zinc-600">
-              Bayar tiap kartu lewat QRIS / e-wallet / VA (sama seperti beli satu-satu).
+              Bayar tiap kartu lewat QRIS (scan pakai e-wallet) (sama seperti beli satu-satu).
             </p>
           </>
         )}
