@@ -1220,6 +1220,11 @@ export type PaymentOrder = {
   priceIdr: number;
   priceUsdc: number;
   paymentMethod: string;
+  /**
+   * Rel pembayaran order ini. OPSIONAL: backend yang lebih tua dari frontend tidak mengirimnya,
+   * dan layar harus tetap jalan dengan petunjuk netral.
+   */
+  provider?: "IDRX" | "DUITKU";
   status: PaymentStatus;
   qrContent: string | null;
   virtualAccountNo: string | null;

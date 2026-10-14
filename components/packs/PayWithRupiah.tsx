@@ -700,7 +700,7 @@ export function PayModal({
                   Klik tombol di bawah untuk membuka halaman pembayaran. Setelah bayar, jendela
                   ini otomatis update.
                 </p>
-                <QrisPayHint />
+                <QrisPayHint provider={order.provider} />
                 <button
                   type="button"
                   onClick={openHostedPage}
