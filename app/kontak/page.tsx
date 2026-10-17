@@ -12,7 +12,7 @@ export default function KontakPage() {
   return (
     <LegalPage
       title="Kontak"
-      updated="16 Oktober 2026"
+      updated="17 Oktober 2026"
       intro={
         <>
           Punya pertanyaan soal pesanan, pengiriman, titipan kartu, atau pembayaran? Hubungi kami
@@ -51,10 +51,6 @@ export default function KontakPage() {
             >
               {BUSINESS.phoneDisplay}
             </a>
-          </div>
-          <div className={row}>
-            <span className={label}>Jam layanan</span>
-            <span>{BUSINESS.hours}</span>
           </div>
         </div>
       </Section>

@@ -11,7 +11,6 @@ export const BUSINESS = {
   phoneDisplay: "+62 822-1738-4308",
   /** Untuk tautan wa.me — angka saja, tanpa + dan tanpa spasi. */
   phoneWa: "6282217384308",
-  hours: "Senin – Jumat, 09.00 – 17.00 WIB",
 } as const;
 
 export const LEGAL_LINKS = [

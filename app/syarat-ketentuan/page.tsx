@@ -17,7 +17,7 @@ export default function SyaratKetentuanPage() {
   return (
     <LegalPage
       title="Syarat & Ketentuan"
-      updated="16 Oktober 2026"
+      updated="17 Oktober 2026"
       intro={
         <>
           Halaman ini mengatur penggunaan {BUSINESS.brand}, yang dikelola oleh {BUSINESS.company}.
@@ -51,7 +51,6 @@ export default function SyaratKetentuanPage() {
         <Points
           items={[
             "Kamu masuk menggunakan wallet atau akun Google. Kamu bertanggung jawab menjaga akses ke akunmu.",
-            "Kamu harus berusia minimal 18 tahun, atau menggunakan Hoshimarket dengan izin orang tua/wali.",
             "Data yang kamu isi (terutama alamat pengiriman) harus benar dan milikmu sendiri.",
           ]}
         />
