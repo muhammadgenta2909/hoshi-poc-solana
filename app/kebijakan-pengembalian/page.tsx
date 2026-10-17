@@ -12,7 +12,9 @@ export const metadata: Metadata = {
  * dicatat sebagai utang refund (REFUND_DUE), dan kartu titipan yang hilang SESUDAH terjual
  * dipulihkan ke PEMBELI, bukan ke penitip. Pengembaliannya sendiri dikerjakan manual oleh tim —
  * tidak ada kode yang mengirim Rupiah balik otomatis — jadi halaman ini menjanjikan proses manusia,
- * bukan refund otomatis. Tenggat waktu di bagian 6 adalah keputusan bisnis, bukan sifat sistem.
+ * bukan refund otomatis. Tenggat waktu di bagian 4 dan 6 (2×24 jam + video unboxing, 3 hari kerja,
+ * 14 hari kerja) adalah KEPUTUSAN BISNIS yang sudah disetujui pemilik pada 17 Oktober 2026, bukan
+ * sifat sistem dan bukan draf. Mengubahnya berarti keputusan baru, bukan perbaikan teks.
  */
 export default function KebijakanPengembalianPage() {
   const b = "text-white";
