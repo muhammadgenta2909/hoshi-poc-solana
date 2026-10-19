@@ -137,7 +137,8 @@ export default function VaultPage() {
   const [resumePay, setResumePay] = useState<{
     orderId: string;
     packType: string;
-    listingId: string;
+    /** Tidak ada saat dilanjutkan HANYA dari nomor order di alamat kembalian gateway. */
+    listingId?: string;
   } | null>(null);
   // Resume KIRIM KARTU FISIK sepulang dari halaman bayar ongkir. returnUrl ongkir dibangun backend
   // (hoshi-backend/src/payments/payments.service.ts, createShippingOrder) dan menunjuk ke /vault —
@@ -203,6 +204,10 @@ export default function VaultPage() {
   // /vault — order pack tetap di-resume di /open-packs.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Ditangkap SEBELUM alamatnya dibersihkan: ini cadangan saat data pembayaran di browser hilang
+    // — pembeli membayar di aplikasi e-wallet lalu kembali lewat browser LAIN. Tanpa ini ia
+    // mendarat di Vault tanpa satu pun konfirmasi, mengira bayarnya gagal, dan bisa membayar lagi.
+    const urlOrderId = params.get("merchantOrderId");
     if (
       params.has("merchantOrderId") ||
       params.has("resultCode") ||
@@ -218,6 +223,11 @@ export default function VaultPage() {
         packType: pending.packType,
         listingId: pending.listingId,
       });
+    } else if (!pending && urlOrderId && !CC_SHIPPING_ENABLED) {
+      // Kartu yang ditagih tidak diketahui di sini; PayModal membacanya dari order-nya sendiri.
+      // Hanya selama kirim CollectorCrypt MATI: order ongkir CC juga kembali ke /vault, dan nomor
+      // order saja tidak cukup untuk membedakannya dari order kartu sebelum order itu diambil.
+      setResumePay({ orderId: urlOrderId, packType: "" });
     }
     // Ongkir kirim fisik punya KEY SENDIRI (hoshi_pending_ship) supaya tak bentrok dengan resume
     // pack/listing/top-up di atas — jadi keduanya boleh hidup berdampingan dan dicek berurutan.
@@ -492,7 +502,7 @@ export default function VaultPage() {
           resumeOrderId={resumePay.orderId}
           // Setelah sukses, tombol "Lihat Kartu" mengantar ke DETAIL kartu yang BARU dibeli (chip
           // "Kamu memiliki kartu ini") — bukan cuma balik ke grid /vault yang dulu bikin bingung.
-          successHref={`/marketplace/${resumePay.listingId}`}
+          successHref={resumePay.listingId ? `/marketplace/${resumePay.listingId}` : undefined}
           onFulfilled={() => {
             clearPendingPayment();
           }}

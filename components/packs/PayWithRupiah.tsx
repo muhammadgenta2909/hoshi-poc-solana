@@ -32,6 +32,8 @@ import { useWalletConnect } from "@/lib/useWalletConnect";
 import { isDomesticShippableListing } from "@/lib/market";
 import { GOLD_GRADIENT } from "./ui";
 import { QrisPayHint } from "./QrisPayHint";
+import { CheckoutClosedNotice } from "./CheckoutClosedNotice";
+import { getPaymentsConfig } from "@/lib/paymentsConfig";
 
 const POLL_MS = 4_000;
 const idr = new Intl.NumberFormat("id-ID");
@@ -150,7 +152,9 @@ type Stage =
   | "fulfilling"
   | "done"
   | "error"
-  | "expired";
+  | "expired"
+  /** Pembayaran pembeli belum dibuka (rel masih IDRX / Duitku belum lengkap). Lihat lib/paymentsConfig. */
+  | "closed";
 
 // Exported so the Rip Pack payment-method chooser can open the rupiah flow
 // directly (mounting this creates the IDRX order). The default-export button
@@ -209,7 +213,10 @@ export function PayModal({
 
   // MARKETPLACE (listingId) / OFFER (offerId) beli SATU kartu, bukan pack — copy modal menyesuaikan
   // supaya tidak menjanjikan "animasi pack" / "pack berhasil" untuk kartu.
-  const isListing = !!listingId || !!offerId;
+  // Saat DILANJUTKAN hanya dari nomor order (data di browser hilang), prop listingId tidak ada —
+  // kartu yang ditagih dibaca dari order-nya sendiri begitu order itu terambil.
+  const effectiveListingId = listingId || order?.listingId || undefined;
+  const isListing = !!effectiveListingId || !!offerId;
 
   /**
    * Kartu yang barusan dibeli fisiknya ADA DI GUDANG HOSHI (stok Hoshi atau titipan)?
@@ -230,18 +237,18 @@ export function PayModal({
     // Dikaitkan ke `stage`, bukan ke salah satu penulis `setStage("done")`: ada DUA jalan masuk
     // ke layar sukses (resume sepulang bayar, dan poll yang mencapai FULFILLED), dan menambal
     // salah satunya saja akan meninggalkan jalur yang bocor.
-    if (stage !== "done" || !listingId || !token) return;
+    if (stage !== "done" || !effectiveListingId || !token) return;
     let alive = true;
     getMyPurchases(token)
       .then((rows) => {
-        const bought = rows.find((r) => r.id === listingId);
+        const bought = rows.find((r) => r.id === effectiveListingId);
         if (alive && bought) setWarehouseCard(isDomesticShippableListing(bought));
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [stage, listingId, token]);
+  }, [stage, effectiveListingId, token]);
 
   // Token disimpan di ref supaya effect pembuat-order (once-only, dijaga startedRef) TIDAK
   // dibongkar-pasang saat login() membalik token null→jwt di tengah pembuatan order. Kalau
@@ -325,6 +332,15 @@ export function PayModal({
   const startOrder = useCallback(
     async (t: string) => {
       staleTokenRef.current = t; // token ini SUDAH dipakai mencoba
+      // Gerbang HANYA di sini, di satu-satunya tempat tagihan BARU lahir. Melanjutkan order yang
+      // sudah ada (resumeOrder) sengaja tidak digerbang: pembeli yang sudah membayar harus tetap
+      // bisa melihat kartunya diserahkan, apa pun yang terjadi pada saklar pembayaran.
+      const cfg = await getPaymentsConfig();
+      if (!mountedRef.current) return;
+      if (!cfg.buyerCheckoutOpen) {
+        setStage("closed");
+        return;
+      }
       const created = await buildOrder(t);
       if (!mountedRef.current) return;
       setOrder(created);
@@ -645,6 +661,13 @@ export function PayModal({
             ✕
           </button>
         </div>
+
+        {stage === "closed" && (
+          <CheckoutClosedNotice
+            onClose={onClose}
+            subject={isListing ? "kartu ini" : `pack ${packType}`}
+          />
+        )}
 
         {stage === "creating" && (
           <Center>

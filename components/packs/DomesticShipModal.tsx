@@ -46,6 +46,8 @@ import { GOLD } from "@/components/account/ui";
 import { formatIdr } from "@/components/packs/ui";
 import { STATUS_LABEL } from "@/components/packs/ShippingFlowModal";
 import { QrisPayHint } from "./QrisPayHint";
+import { CheckoutClosedNotice } from "./CheckoutClosedNotice";
+import { getPaymentsConfig } from "@/lib/paymentsConfig";
 
 /* ───────────────────────── sesi tertunda (sepulang dari halaman bayar) ─────────────────────────
    KUNCI TERPISAH dari `hoshi_pending_ship` milik jalur CC — DENGAN SENGAJA. Dua rail punya alur
@@ -135,7 +137,8 @@ type Phase =
   | "awaiting" // invoice terbit / kembali dari halaman bayar → poll
   | "done" // ongkir lunas, baris sudah di PACKING (atau lebih maju)
   | "stalled" // poll berhenti tanpa hasil terminal — bukan kegagalan, cuma belum kelihatan
-  | "failed"; // invoice kedaluwarsa / gagal
+  | "failed" // invoice kedaluwarsa / gagal
+  | "closed"; // pembayaran pembeli belum dibuka — lihat lib/paymentsConfig.ts
 
 export default function DomesticShipModal({
   redemptionId,
@@ -192,6 +195,13 @@ export default function DomesticShipModal({
     setPhase("creating");
     setError(null);
     try {
+      // Gerbang yang sama dengan bayar kartu: jangan terbitkan tagihan ongkir yang tidak bisa
+      // dilunasi pembeli. Melanjutkan tagihan yang SUDAH ada (resume) tidak lewat sini.
+      const cfg = await getPaymentsConfig();
+      if (!cfg.buyerCheckoutOpen) {
+        setPhase("closed");
+        return;
+      }
       const t = await auth();
       const order = await createDomesticShippingOrder(redemptionId, t);
       setPaidIdr(order.priceIdr);
@@ -405,6 +415,12 @@ export default function DomesticShipModal({
                 Status: {redStatus ? STATUS_LABEL[redStatus] : orderStatus}
               </p>
             )}
+          </div>
+        )}
+
+        {phase === "closed" && (
+          <div className="mt-4">
+            <CheckoutClosedNotice onClose={onClose} subject={`ongkir pengiriman ${cardName}`} />
           </div>
         )}
 

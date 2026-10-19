@@ -1225,6 +1225,10 @@ export type PaymentOrder = {
    * dan layar harus tetap jalan dengan petunjuk netral.
    */
   provider?: "IDRX" | "DUITKU";
+  /** Kartu / permintaan kirim yang ditagih order ini. OPSIONAL: backend lama tidak mengirimnya.
+   *  Dipakai untuk melanjutkan pembayaran HANYA dari nomor order di alamat kembalian gateway. */
+  listingId?: string | null;
+  redemptionId?: string | null;
   status: PaymentStatus;
   qrContent: string | null;
   virtualAccountNo: string | null;

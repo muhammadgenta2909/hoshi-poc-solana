@@ -35,6 +35,7 @@ import {
   CC_SHIPPING_ENABLED,
   cancelRedemption,
   getMyAddresses,
+  getPaymentOrder,
   getMyPacks,
   getMyPurchases,
   getMyRedemptions,
@@ -257,6 +258,30 @@ export default function WithdrawPage() {
       }
     | null
   >(null);
+  /**
+   * Nomor order dari alamat kembalian gateway, saat data pembayaran di browser HILANG — pembeli
+   * membayar ongkir di aplikasi e-wallet lalu kembali lewat browser lain. Tanpa cadangan ini ia
+   * mendarat di sini tanpa konfirmasi apa pun, padahal ongkirnya sudah lunas.
+   */
+  const [urlShipOrderId, setUrlShipOrderId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!urlShipOrderId || !token) return;
+    let alive = true;
+    getPaymentOrder(urlShipOrderId, token)
+      .then((o) => {
+        if (!alive || o.packType !== "SHIPPING" || !o.redemptionId) return;
+        setDomestic({ redemptionId: o.redemptionId, cardName: null, resume: true });
+      })
+      // Gagal = tidak ada modal. Ongkirnya tetap terverifikasi oleh server; statusnya tetap
+      // terlihat di daftar kiriman. Tidak ada yang lebih buruk dari keadaan tanpa cadangan.
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setUrlShipOrderId(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [urlShipOrderId, token]);
   // Redemption milik user (buat panel "Pengiriman berjalan" + resume). Dipakai KEDUA rail.
   const [redemptions, setRedemptions] = useState<CardRedemption[]>([]);
   /* ---- B1: batal-sendiri dari daftar (POST /redemptions/:id/cancel) ----
@@ -412,6 +437,9 @@ export default function WithdrawPage() {
      └──────────────────────────────────────────────────────────────────────────────────────────┘ */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Ditangkap SEBELUM alamatnya dibersihkan — cadangan saat data di browser hilang (lihat efek
+    // di bawah).
+    const urlOrderId = params.get("merchantOrderId");
     if (params.has("merchantOrderId") || params.has("resultCode") || params.has("reference")) {
       window.history.replaceState(null, "", "/withdraw");
     }
@@ -425,10 +453,15 @@ export default function WithdrawPage() {
       });
       return;
     }
+    // Hanya selama kirim CollectorCrypt MATI: dengan rel itu mati, setiap order ongkir yang
+    // kembali ke sini pasti order ongkir DOMESTIK.
+    if (urlOrderId && !CC_SHIPPING_ENABLED) {
+      setUrlShipOrderId(urlOrderId);
+      return;
+    }
     if (!CC_SHIPPING_ENABLED) return;
     const pending = readPendingShip();
     if (pending) {
-      /* eslint-disable-next-line react-hooks/set-state-in-effect */
       setShipping({ redemptionId: pending.redemptionId, card: null, resume: true });
     }
   }, []);

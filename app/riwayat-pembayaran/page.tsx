@@ -476,7 +476,9 @@ function OrderRow({ order, now }: { order: PaymentOrder; now: number | null }) {
           <p className="mt-0.5 text-[12px] text-zinc-500">
             {when.label} {when.value}
             <span className="mx-1.5 text-zinc-700">·</span>
-            {METHOD_LABEL[order.paymentMethod] ?? order.paymentMethod}
+            {order.provider === "DUITKU"
+              ? "Duitku"
+              : (METHOD_LABEL[order.paymentMethod] ?? order.paymentMethod)}
           </p>
         </div>
 
