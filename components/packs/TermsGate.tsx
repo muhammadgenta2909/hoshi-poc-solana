@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { GOLD_GRADIENT } from "./ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 export default function TermsGate({
   onAccept,
@@ -24,11 +25,10 @@ export default function TermsGate({
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, [onClose]);
 

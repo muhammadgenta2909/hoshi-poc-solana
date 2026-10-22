@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import { ACCOUNT_BG } from "@/lib/theme";
 import TopNav from "@/components/packs/TopNav";
 import { Img } from "@/components/packs/ui";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 export const GOLD = "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)";
 export const PANEL = "rounded-2xl border border-white/[0.07] bg-white/[0.03]";
@@ -534,11 +535,10 @@ export function ModalShell({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, [open, onClose]);
 
@@ -807,5 +807,13 @@ export const InboxIcon = (p: IP) => (
   <S {...p}>
     <path d="M4 13h4l2 3h4l2-3h4" />
     <path d="M5 5h14l2 8v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4L5 5z" />
+  </S>
+);
+// Struk/tagihan — dipakai "Payment History". Sengaja BUKAN HistoryIcon: ikon itu sudah dipakai
+// "Shipment History" di menu yang sama, dan dua baris berikon identik bikin user salah klik.
+export const ReceiptIcon = (p: IP) => (
+  <S {...p}>
+    <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z" />
+    <path d="M9 8h6M9 12h6" />
   </S>
 );

@@ -6,9 +6,10 @@
 // Balance reads live SOL/USDC over the wallet's RPC connection. Discoverable
 // and blocked users remain local-only POC UI.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
+import { PublicKey } from "@solana/web3.js";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
 import { useFavoriteCards } from "@/lib/favorites";
@@ -73,10 +74,24 @@ type ProfileForm = {
 };
 
 export default function SettingsPage() {
-  const { token, isAuthed, user } = useAuth();
+  const { token, isAuthed, user, activeAddress } = useAuth();
   const { connection } = useConnection();
-  const { publicKey } = useWallet();
-  const address = publicKey?.toBase58() ?? null;
+  // The SESSION's address, not the wallet-adapter key: a Google/Privy user is
+  // signed in against a real wallet address but has no adapter key, so keying
+  // this on useWallet() showed them "Guest", an empty address and a hard 0.000
+  // SOL on their own settings page. `activeAddress` is the adapter key when
+  // there is one, else the signed-in user's wallet from the JWT.
+  const address = activeAddress;
+  // Same address as a PublicKey for the on-chain reads below (mirrors
+  // <WalletIdentityPanel>); null when there is none / it can't be parsed.
+  const owner = useMemo(() => {
+    if (!address) return null;
+    try {
+      return new PublicKey(address);
+    } catch {
+      return null;
+    }
+  }, [address]);
 
   const [tab, setTab] = useTabParam<Tab>("MAIN INFO", TABS);
 
@@ -214,26 +229,27 @@ export default function SettingsPage() {
     };
   }, [token]);
 
-  // Live SOL + devnet-USDC balances for the Account Balance tab.
+  // Live SOL + devnet-USDC balances for the Account Balance tab. Read BY ADDRESS
+  // (see `owner` above) so a Google/Privy user's embedded wallet is read too.
   useEffect(() => {
-    if (!publicKey) return;
+    if (!owner) return;
     let alive = true;
-    const owner = publicKey.toBase58();
+    const ownerAddr = owner.toBase58();
     Promise.all([
-      fetchSolBalance(connection, publicKey),
-      fetchSplBalance(connection, publicKey, DEVNET_USDC_MINT),
+      fetchSolBalance(connection, owner),
+      fetchSplBalance(connection, owner, DEVNET_USDC_MINT),
     ])
       .then(([sol, usdc]) => {
-        if (alive) setBalances({ owner, sol, usdc });
+        if (alive) setBalances({ owner: ownerAddr, sol, usdc });
       })
       .catch(() => {
         // RPC hiccup — a zero reads better than an eternal spinner
-        if (alive) setBalances({ owner, sol: 0, usdc: 0 });
+        if (alive) setBalances({ owner: ownerAddr, sol: 0, usdc: 0 });
       });
     return () => {
       alive = false;
     };
-  }, [connection, publicKey]);
+  }, [connection, owner]);
 
   // In-app IDRX balance (sale proceeds ledger) for the Account Balance tab —
   // the same snapshot the "View history" modal reuses.
@@ -663,10 +679,20 @@ export default function SettingsPage() {
             </div>
           </Panel>
         ) : (
+          /* Tab ini dulu berbunyi "No activity yet — your account activity will appear here",
+             sebuah janji yang tidak pernah ditepati: tak ada satu pun sumber data yang
+             mengisinya. Aktivitas uang yang NYATA sudah ada (GET /payments/me/orders), dan
+             halamannya sekarang ada di /riwayat-pembayaran — jadi tab ini menunjuk ke sana
+             alih-alih terus menyatakan user tidak punya aktivitas apa pun. */
           <EmptyState
             icon={<InboxIcon className="h-9 w-9" />}
-            title="No activity yet"
-            sub="Your account activity will appear here."
+            title="Riwayat pembayaranmu ada di halaman sendiri"
+            sub="Semua tagihan rupiah — pack, isi saldo, kartu marketplace, dan ongkir kirim kartu — beserta statusnya."
+            action={
+              <Link href="/riwayat-pembayaran">
+                <GhostButton>Buka Riwayat Pembayaran →</GhostButton>
+              </Link>
+            }
           />
         )}
       </div>
@@ -763,10 +789,27 @@ function InfoHint({ text }: { text: string }) {
 /** Riwayat mutasi saldo in-app (IDRX): top-up (+), hasil jual (+), penarikan (−), refund (+). */
 function BalanceHistory({ ledger }: { ledger: Balance | null }) {
   const idr = new Intl.NumberFormat("id-ID");
+  /**
+   * Nama manusiawi satu `BalanceEntry.reason`.
+   *
+   * Nilainya DITULIS PERSIS seperti di backend — `'TOPUP'`, `'WITHDRAW'`, `'WITHDRAW_REFUND'`,
+   * `'P2P_SALE'`, `CONSIGNMENT_SALE_REASON`, `CONSIGNMENT_COMPENSATION_REASON`. Yang salah eja di
+   * sini tidak meledak; ia cuma menampilkan token mesin di riwayat uang seseorang.
+   *
+   * ⚠️ "WITHDRAWAL" dulu ada di sini dan TIDAK PERNAH cocok: server menulis `WITHDRAW`. Jadi
+   * setiap penarikan tampil sebagai kata "WITHDRAW" di layar pemiliknya.
+   *
+   * Dua baris titipan dipisah dari `P2P_SALE` dengan sengaja: buku besar harus menyebut rail mana
+   * yang membayar (di P2P Hoshi tidak pernah memegang kartunya; di titipan Hoshi memegangnya), dan
+   * "ganti rugi kartu yang hilang di penyimpanan kami" bukan "hasil penjualan" dengan nama lain.
+   */
   const reasonLabel = (r: string): string => {
     if (r === "TOPUP") return "Isi saldo";
-    if (r === "WITHDRAWAL") return "Penarikan";
+    if (r === "WITHDRAW") return "Penarikan";
     if (r === "WITHDRAW_REFUND") return "Refund penarikan";
+    if (r === "CONSIGNMENT_SALE") return "Hasil penjualan kartu titipan";
+    if (r === "CONSIGNMENT_COMPENSATION") return "Ganti rugi kartu titipan";
+    if (r === "P2P_SALE") return "Hasil penjualan";
     if (r.includes("SALE")) return "Hasil penjualan";
     return r;
   };

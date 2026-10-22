@@ -5,7 +5,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getMyRedemptions, type CardRedemption, type RedemptionStatus } from "@/lib/api";
+import {
+  getMyRedemptions,
+  isDomesticRedemption,
+  type CardRedemption,
+  type RedemptionStatus,
+} from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
 import {
@@ -32,7 +37,12 @@ const STATUS_UI: Record<RedemptionStatus, { label: string; cls: string }> = {
   AWAITING_PAYMENT: { label: "Menunggu bayar ongkir", cls: AMBER },
   READY_TO_FUND: { label: "Siap ditandatangani", cls: AMBER },
   FUNDING: { label: "Menyiapkan", cls: SKY },
-  FUNDED: { label: "Menyiapkan", cls: SKY },
+  // FUNDED = ongkirnya SUDAH didanai ke wallet user tapi burn-nya BELUM ditandatangani: kartunya
+  // masih utuh di vault dan yang kurang cuma satu tanda tangan. Jadi BUKAN "Menyiapkan" (yang
+  // terbaca seolah sistem sedang bekerja dan user tinggal menunggu) — labelnya disamakan PERSIS
+  // dengan STATUS_LABEL.FUNDED di ShippingFlowModal, dan warnanya AMBER seperti status lain yang
+  // menunggu aksi user, bukan SKY yang dipakai status "sedang berjalan".
+  FUNDED: { label: "Menunggu tanda tanganmu", cls: AMBER },
   BURN_SUBMITTED: { label: "Diproses", cls: SKY },
   IN_TRANSIT: { label: "Dalam perjalanan", cls: SKY },
   DELIVERED: { label: "Terkirim", cls: EMERALD },
@@ -170,10 +180,13 @@ export default function WithdrawHistoryPage() {
               sub="Coba kata kunci lain."
             />
           ) : (
+            /* Nama menunya DISALIN dari components/account/AccountMenu.tsx ("Ship Card", href
+               /withdraw). Tidak ada item bernama "Withdraw" di menu itu — menyuruh user
+               mencarinya sama saja dengan menyuruh mencari sesuatu yang tidak ada. */
             <EmptyState
               icon={<HistoryIcon className="h-9 w-9" />}
               title={view === "Active" ? "Belum ada pengiriman diproses" : "Belum ada pengiriman selesai"}
-              sub="Minta kirim kartu dari menu Withdraw, statusnya muncul di sini."
+              sub="Minta kirim kartu lewat menu Ship Card, statusnya muncul di sini."
               action={
                 <Link href="/withdraw">
                   <GhostButton>Kirim kartu →</GhostButton>
@@ -197,9 +210,35 @@ export default function WithdrawHistoryPage() {
                   <p className="truncate text-[14px] font-semibold text-white" title={r.cardName}>
                     {r.cardName}
                   </p>
-                  <p className="mt-0.5 truncate text-[12px] text-zinc-500">
-                    ke {r.city}, {r.country} · {dt(r.createdAt)}
-                  </p>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                    {/* RAIL. Riwayat ini mencampur dua alur yang sangat berbeda — satu selesai
+                        begitu ongkirnya lunas, satu masih meminta tanda tangan wallet dan
+                        membakar NFT — dan status saja tidak membedakannya (REQUESTED /
+                        AWAITING_PAYMENT / DELIVERED dipakai KEDUANYA). Dibaca dari fakta
+                        persisten `listingId`, bukan dari nama/label. */}
+                    <span
+                      title={
+                        isDomesticRedemption(r)
+                          ? "Kartu stok Hoshi: dikirim kurir domestik. Kamu cuma membayar ongkir — tanpa NFT yang dibakar dan tanpa tanda tangan wallet."
+                          : "Kartu vault CollectorCrypt: sesudah ongkirnya lunas kamu perlu menandatangani transaksi burn di wallet-mu."
+                      }
+                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                        isDomesticRedemption(r)
+                          ? "border-[#F2C101]/45 bg-[#F2C101]/[0.12] text-[#F2C101]"
+                          : "border-sky-400/40 bg-sky-400/[0.12] text-sky-300"
+                      }`}
+                    >
+                      {isDomesticRedemption(r) ? "Kurir domestik" : "Vault CollectorCrypt"}
+                    </span>
+                    <span className="truncate text-[12px] text-zinc-500">
+                      ke {r.city}, {r.country} · {dt(r.createdAt)}
+                    </span>
+                  </div>
+                  {(r.trackingIds?.length ?? 0) > 0 && (
+                    <p className="mt-0.5 truncate font-mono text-[11px] text-emerald-300/80">
+                      Resi: {r.trackingIds?.join(", ")}
+                    </p>
+                  )}
                 </div>
                 <span
                   className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_UI[r.status].cls}`}

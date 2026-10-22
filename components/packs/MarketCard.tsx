@@ -100,6 +100,18 @@ export default function MarketCard({
           {listing.grade && <Badge>{listing.grade}</Badge>}
           {listing.language && <Badge>{listing.language}</Badge>}
           {listing.era && <Badge>{listing.era}</Badge>}
+          {/* TITIPAN: kartu milik penggunanya sendiri, fisiknya disimpan Hoshi. Ditandai di kartu
+              karena tanpa itu ia tak bisa dibedakan dari stok Hoshi — dan menyebut barang orang
+              lain sebagai milik kita adalah kesalahan yang tidak boleh dibuat diam-diam. */}
+          {listing.consigned === true && (
+            <span
+              title="Kartu milik penggunanya sendiri — disimpan Hoshi dan dijualkan atas namanya."
+              className="inline-flex items-center rounded-md border border-sky-400/40 bg-sky-400/[0.14] px-2 py-[3px] text-[13px] uppercase leading-none tracking-wide text-sky-200"
+              style={{ fontFamily: "var(--font-jersey)" }}
+            >
+              Titipan
+            </span>
+          )}
         </div>
 
         {/* title + vault mark — tells WHOSE vault holds the card (PM requirement).
@@ -120,7 +132,13 @@ export default function MarketCard({
               CC
             </span>
           ) : (
-            <span className="shrink-0" title="Vault: Hoshi">
+            <span
+              className="shrink-0"
+              // Lencana ini menyatakan DI MANA kartunya disimpan, bukan siapa pemiliknya. Untuk
+              // kartu titipan keterangannya dibuat eksplisit supaya "HOSHI" tidak terbaca sebagai
+              // klaim kepemilikan atas barang orang lain.
+              title={listing.consigned === true ? "Disimpan di Hoshi — milik penjualnya" : "Vault: Hoshi"}
+            >
               <GradientText
                 className="text-lg leading-none"
                 style={{ fontFamily: "var(--font-jersey)" }}

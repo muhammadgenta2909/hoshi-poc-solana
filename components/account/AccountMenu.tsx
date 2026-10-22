@@ -31,6 +31,7 @@ import {
   DepositIcon,
   WithdrawIcon,
   HistoryIcon,
+  ReceiptIcon,
   BoxIcon,
   LogoutIcon,
 } from "./ui";
@@ -53,14 +54,32 @@ export default function AccountMenu() {
   // DUA grup terpisah biar "tarik DUIT" vs "tarik/kirim KARTU" nggak ketuker.
   // Balance = Rupiah (isi saldo + tarik saldo ke bank/e-wallet). "Cash Out" SELALU tampil (beda dari
   // chip "Tarik →" di panel saldo yang cuma muncul saat saldo>0) supaya WD duit gampang ketemu.
+  // "Payment History" duduk di grup Balance (persis seperti "Shipment History" duduk di grup
+  // Physical Cards): satu-satunya tempat user bisa melihat bukti tiap tagihan rupiah yang pernah
+  // ia bayar — pack, isi saldo, kartu marketplace, DAN ongkir. Tanpa entri ini endpoint
+  // /payments/me/orders tidak pernah dipanggil UI mana pun.
   const BALANCE_NAV: NavItem[] = [
     { label: "Deposit", href: "/deposit", icon: <DepositIcon className={iconCls} />, tint: "text-emerald-400" },
     { label: "Cash Out", href: "/tarik-saldo", icon: <WithdrawIcon className={iconCls} />, tint: "text-[#F2C101]" },
+    { label: "Payment History", href: "/riwayat-pembayaran", icon: <ReceiptIcon className={iconCls} />, tint: "text-zinc-400" },
   ];
   // Physical Cards = kirim/redeem KARTU FISIK ke rumah (bukan duit).
+  //
+  // "Titipan Saya" duduk di grup ini dan HARUS bisa ditemukan tanpa dicari: isinya barang milik
+  // user yang fisiknya sedang dipegang Hoshi. Di situ pula satu-satunya jalan untuk memintanya
+  // kembali. Penyimpan barang yang tombol "ambil kembali"-nya terkubur adalah persis alasan orang
+  // ragu menitipkan kartu mahal.
+  //
+  // "Klaim Kode Titipan" berdiri sendiri di sebelahnya, dan bukan hanya tombol di dalam halaman
+  // Titipan: orang yang dititipi kode sering belum punya satu pun titipan yang terlihat, jadi ia
+  // tidak punya alasan membuka halaman yang (dari luar) terlihat kosong. Kartunya sudah ada di rak
+  // Hoshi dan tidak bisa dipajang sampai kodenya dipakai — jalan masuknya harus kelihatan dari
+  // tempat pertama yang orang buka setelah login.
   const CARDS_NAV: NavItem[] = [
-    { label: "Ship Card", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
-    { label: "Shipment History", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Titipan Saya", href: "/titipan", icon: <BoxIcon className={iconCls} />, tint: "text-sky-400" },
+    { label: "Klaim Kode Titipan", href: "/titipan/klaim", icon: <BoxIcon className={iconCls} />, tint: "text-violet-400" },
+    { label: "Minta Kartu Dikirim", href: "/withdraw", icon: <BoxIcon className={iconCls} />, tint: "text-amber-400" },
+    { label: "Riwayat Pengiriman", href: "/withdraw/history", icon: <HistoryIcon className={iconCls} />, tint: "text-amber-400" },
   ];
 
   const { disconnect } = useWallet();

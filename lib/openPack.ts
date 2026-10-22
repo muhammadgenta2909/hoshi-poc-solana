@@ -55,6 +55,13 @@ export type OpenResult = {
    */
   real?: {
     rarityLabel: string;
+    /**
+     * Nomor undian CollectorCrypt (memo on-chain) — kunci untuk memeriksa bukti
+     * VRF lewat GET /api/gacha/verify/:memo. Opsional dengan sengaja: baris pull
+     * lama bisa saja tidak membawanya, dan jalur DEMO (openPackLocal) tidak punya
+     * `real` sama sekali, jadi kartu palsu tidak akan pernah menampilkan bukti.
+     */
+    memo?: string;
     nftAddress: string | null;
     explorerUrl: string;
     priceUsdc: number | null;

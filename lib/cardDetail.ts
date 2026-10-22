@@ -19,6 +19,18 @@ export type CardDetail = {
   /** true = stok Hoshi genuine yang boleh dibeli (jalur Hoshi-inventory). Baris seed/placeholder
    *  = false → jangan tawarkan beli. */
   sellable: boolean;
+  /**
+   * true = kartu TITIPAN: milik seorang user, fisiknya dipegang Hoshi (lihat `Listing.consigned`
+   * di lib/market.ts untuk alasan lengkapnya).
+   *
+   * Kartu titipan punya `sellerConsigned === true` (penjualnya user sungguhan) TAPI tidak punya
+   * NFT di escrow, jadi halaman detail TIDAK BOLEH memperlakukannya sebagai listing P2P biasa:
+   * jalur belinya Rupiah tanpa flag P2P, tawar-menawar dimatikan, dan panel pemilik menawarkan
+   * "minta kartu saya kembali", bukan "cancel listing".
+   *
+   * Opsional supaya respons backend lama tetap terbaca (absen ⇒ bukan titipan ⇒ perilaku hari ini).
+   */
+  consigned?: boolean;
   certificate: string | null;
   estMarketValueIdr: number;
   vaultLocation: string | null;

@@ -18,7 +18,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OpenResult } from "@/lib/openPack";
 import { packVideoSrc } from "@/lib/packVideo";
+import { lockBodyScroll } from "@/lib/scrollLock";
+import { shortMiddle } from "@/lib/vrfProof";
 import { GOLD_GRADIENT, GradientText, Img } from "./ui";
+import { VrfProofModal } from "./VrfProofPanel";
 
 type Phase = "video" | "waiting" | "reveal" | "error";
 
@@ -47,9 +50,26 @@ function parseYear(name: string): string | null {
   return /\b(?:19|20)\d{2}\b/.exec(name)?.[0] ?? null;
 }
 
-/** Grade off a CC slab name, e.g. "… PSA 10 GEM MINT" → "PSA 10". */
+/**
+ * Grade dari NAMA slab CC, mis. "… PSA 10 GEM MINT" → "PSA 10".
+ *
+ * ── KENAPA TAG DITAMBAHKAN DI SINI, dan kenapa itu BUKAN keputusan yang sama dengan enum ──
+ * Daftar ini SENGAJA lebih luas daripada enum `Grader`: ia sudah memuat SGC dan BECKETT, yang
+ * bukan (semuanya) nilai enum. Sebabnya fungsi ini tidak MEMVALIDASI apa pun — ia MEMBACA apa
+ * yang tercetak di judul katalog CC untuk satu slide teaser yang murni kosmetik. Kartunya sendiri
+ * sudah aman di Vault; yang dipertaruhkan cuma apakah slide "grade" menampilkan sesuatu atau
+ * kosong. Jadi ambang buktinya rendah, dan grader yang TIDAK dikenali berarti slide kosong —
+ * bukan data salah yang tersimpan.
+ *
+ * TAG dimasukkan karena slab TAG kini ikut masuk katalog yang kita baca; tanpa ia di daftar,
+ * pembeli kartu TAG melihat slide grade kosong padahal graden-nya tercetak jelas di judulnya.
+ *
+ * RISIKO SALAH TANGKAP kecil dan sudah dipagari bentuk polanya: "TAG" cuma cocok kalau LANGSUNG
+ * diikuti angka grade (`\s*(10|\d(?:\.\d)?)\b`), jadi kata "tag" yang kebetulan ada di judul tidak
+ * ikut tertangkap kecuali persis berbentuk "TAG 9"/"TAG 10" — yang memang artinya grade TAG.
+ */
 function parseGrade(name: string): string | null {
-  const m = /\b(PSA|CGC|BGS|SGC|BECKETT)\s*(10|\d(?:\.\d)?)\b/i.exec(name);
+  const m = /\b(PSA|TAG|CGC|BGS|SGC|BECKETT)\s*(10|\d(?:\.\d)?)\b/i.exec(name);
   if (!m) return null;
   const grader = m[1].toUpperCase() === "BECKETT" ? "BGS" : m[1].toUpperCase();
   return `${grader} ${m[2]}`;
@@ -93,14 +113,22 @@ export default function RipReveal({
   // loading state (not a black void), and we hide that loader the INSTANT playback
   // begins (onPlaying) — so the loader never lingers over a video that's running.
   const [videoReady, setVideoReady] = useState(false);
+  // Bukti undian. Dibuka MANUAL, tidak pernah otomatis: momen reveal sudah punya
+  // koreografinya sendiri, dan setelah pull yang mengecewakan sebuah panel bukti
+  // yang menyembul sendiri terbaca seperti pembelaan diri. Tombolnya ada, diam,
+  // dan menunggu — yang penting ia ADA di detik user paling ingin bertanya.
+  const [proofOpen, setProofOpen] = useState(false);
 
   // Lock the page scroll while the full-screen takeover is mounted, so the page's
   // own scrollbar doesn't sit next to the reveal's overflow scrollbar (double bar).
+  // Shared counter (lib/scrollLock), NOT a local save/restore: VrfProofModal opens
+  // INSIDE this takeover and locks too. React tears a deleted subtree down parent
+  // first, so the old pattern let this cleanup restore "" before the modal restored
+  // the "hidden" it had captured — leaving the page unscrollable until a reload.
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     return () => {
-      document.body.style.overflow = prev;
+      unlock();
     };
   }, []);
 
@@ -203,15 +231,18 @@ export default function RipReveal({
     return () => clearTimeout(t);
   }, [phase, reduced, stage, teasers.length]);
 
-  // Escape leaves the takeover — but only once there's a settled outcome shown.
+  // Escape leaves the takeover — but only once there's a settled outcome shown, and
+  // never while the proof modal is up: there, Escape belongs to the modal (it also
+  // stops the event itself, but not depending on event phases keeps this obvious).
   useEffect(() => {
+    if (proofOpen) return;
     if (!(phase === "error" || (phase === "reveal" && atFinal))) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [phase, atFinal, onClose]);
+  }, [phase, atFinal, onClose, proofOpen]);
 
   return (
     <div
@@ -356,6 +387,31 @@ export default function RipReveal({
               </a>
             )}
 
+            {/* Bukti undian — satu baris tenang, bukan spanduk. Ini detik user paling
+                ingin tahu apakah undiannya jujur (terutama setelah pull yang jelek),
+                jadi pintunya harus ada DI SINI; tapi isinya berat (JSON mentah), jadi
+                ia hidup di modal dan tidak mengganggu koreografi reveal.
+                `real.memo` hanya ada pada pull SUNGGUHAN — kartu demo (openPackLocal)
+                tidak punya `real`, jadi baris ini otomatis tidak pernah muncul di sana
+                dan kartu palsu tidak akan pernah menawarkan "bukti". */}
+            {result.real?.memo && (
+              <div className="mt-1 flex max-w-[min(92vw,28rem)] flex-col items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setProofOpen(true)}
+                  className="rounded-lg border border-white/20 bg-white/[0.06] px-4 py-2 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.12]"
+                >
+                  Lihat bukti undian
+                </button>
+                <p className="text-[11px] leading-relaxed text-white/45">
+                  Hasilnya diundi CollectorCrypt di blockchain, bukan oleh Hoshi · nomor undian{" "}
+                  <span className="font-mono text-white/60">
+                    {shortMiddle(result.real.memo, 6, 6)}
+                  </span>
+                </p>
+              </div>
+            )}
+
             {/* Actions — both Jersey (title + buttons only). */}
             <div className="mt-1 flex items-center justify-center gap-3">
               <button
@@ -382,6 +438,15 @@ export default function RipReveal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Portal ke <body> di z-[130] — di atas takeover ini (z-[110]). */}
+      {proofOpen && result?.real?.memo && (
+        <VrfProofModal
+          memo={result.real.memo}
+          cardName={result.card.name}
+          onClose={() => setProofOpen(false)}
+        />
       )}
     </div>
   );

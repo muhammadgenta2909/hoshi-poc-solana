@@ -206,11 +206,23 @@ const ccToHoshiTier = (rarity: GachaRarity | null): Tier =>
  *  change — no code edit. */
 const SOLANA_CLUSTER = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
 
+const withCluster = (base: string): string =>
+  SOLANA_CLUSTER === "mainnet-beta" ? base : `${base}?cluster=${SOLANA_CLUSTER}`;
+
 export const explorerAddressUrl = (address: string | null): string => {
   if (!address) return "";
-  const base = `https://explorer.solana.com/address/${address}`;
-  return SOLANA_CLUSTER === "mainnet-beta" ? base : `${base}?cluster=${SOLANA_CLUSTER}`;
+  return withCluster(`https://explorer.solana.com/address/${address}`);
 };
+
+/** Explorer link for a TRANSACTION signature (64 bytes → 86-88 base58 chars).
+ *  Same cluster rule as explorerAddressUrl, so a network switch stays one env
+ *  change and no link is left silently pointing at the wrong cluster. */
+export const explorerTxUrl = (signature: string): string =>
+  withCluster(`https://explorer.solana.com/tx/${signature}`);
+
+/** Explorer link for a BLOCK (slot number). */
+export const explorerBlockUrl = (slot: string | number): string =>
+  withCluster(`https://explorer.solana.com/block/${slot}`);
 
 /**
  * Adapt a REAL pull into OpenResult for RipReveal. The card's true identity
@@ -239,6 +251,10 @@ export function pullToOpenResult(
     buybackQuoteIdr: 0,
     real: {
       rarityLabel: pull.rarity ?? "Unknown",
+      // Nomor undian CC, dibawa sampai ke layar hasil supaya reveal bisa menawarkan
+      // pemeriksaan bukti VRF. Tanpa ini memo berhenti di halaman pull dan "undiannya
+      // bisa diperiksa" tinggal klaim yang tidak punya tombol.
+      memo: pull.memo,
       nftAddress: pull.nftAddress,
       explorerUrl: explorerAddressUrl(pull.nftAddress),
       priceUsdc: pull.priceUsdc,

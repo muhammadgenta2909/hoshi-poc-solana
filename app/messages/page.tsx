@@ -21,6 +21,7 @@ import {
 } from "@/components/account/ui";
 import { useAuth } from "@/lib/useAuth";
 import { useTabParam } from "@/lib/useTabParam";
+import { SUPPORT_QUERY } from "@/lib/supportLink";
 import {
   getSupportThreads,
   getSupportThread,
@@ -97,6 +98,37 @@ export default function MessagesPage() {
   const [mDetail, setMDetail] = useState<MarketThreadDetail | null>(null);
   const [mReply, setMReply] = useState("");
   const [mSending, setMSending] = useState(false);
+
+  // Deep-link dari layar lain: ?compose=1&subject=…&body=… membuka composer support yang SUDAH
+  // terisi (lib/supportLink.ts). Dipakai layar uang di alur kirim fisik, yang menyuruh user
+  // menghubungi tim dengan ID pengiriman — user tidak perlu menyalin/mengetik ulang apa pun.
+  // Client-only lewat window.location (BUKAN useSearchParams) supaya halaman ini tidak butuh
+  // Suspense boundary — sama seperti useTabParam. Query-nya dibersihkan setelah dipakai supaya
+  // refresh/back tidak membuka composer lagi dengan draft yang sama.
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get(SUPPORT_QUERY.compose) !== "1") return;
+      const s = sp.get(SUPPORT_QUERY.subject);
+      const b = sp.get(SUPPORT_QUERY.body);
+      /* eslint-disable react-hooks/set-state-in-effect */
+      if (s) setSubject(s);
+      if (b) setBody(b);
+      setComposeOpen(true);
+      /* eslint-enable react-hooks/set-state-in-effect */
+      sp.delete(SUPPORT_QUERY.compose);
+      sp.delete(SUPPORT_QUERY.subject);
+      sp.delete(SUPPORT_QUERY.body);
+      const qs = sp.toString();
+      window.history.replaceState(
+        null,
+        "",
+        qs ? `${window.location.pathname}?${qs}` : window.location.pathname,
+      );
+    } catch {
+      /* akses URL/history gagal — composer tetap bisa dibuka manual */
+    }
+  }, []);
 
   const fetchThreads = useCallback(async () => {
     if (!token) return;

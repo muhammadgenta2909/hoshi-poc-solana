@@ -4,6 +4,7 @@ import "./globals.css";
 import Providers from "./providers";
 import BgmPlayer from "@/components/BgmPlayer";
 import BackgroundLayer from "@/components/BackgroundLayer";
+import SiteFooter from "@/components/legal/SiteFooter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -60,6 +61,8 @@ export default function RootLayout({
             doesn't flash through the admin shell on refresh (see BackgroundLayer). */}
         <BackgroundLayer />
         <Providers>{children}</Providers>
+        {/* Identitas usaha + tautan kebijakan di setiap halaman: syarat verifikasi payment gateway. */}
+        <SiteFooter />
         <BgmPlayer />
       </body>
     </html>

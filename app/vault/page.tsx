@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletConnect } from "@/lib/useWalletConnect";
-import type { Listing } from "@/lib/market";
+import { isDomesticShippableListing, type Listing } from "@/lib/market";
 import type { LiveCard } from "@/lib/packs";
 import {
   ApiError,
@@ -16,6 +16,7 @@ import {
   getMyPacks,
   getMyPurchases,
   getMyRedemptions,
+  hoshiListingRef,
   relistListing,
   type CardRedemption,
   type RedemptionStatus,
@@ -34,6 +35,14 @@ import {
   readPendingPayment,
   clearPendingPayment,
 } from "@/components/packs/PayWithRupiah";
+import ShippingFlowModal, {
+  clearPendingShip,
+  isActionableShipStatus,
+  isResignShipStatus,
+  readPendingShip,
+  STATUS_LABEL,
+} from "@/components/packs/ShippingFlowModal";
+import { isDomesticActionableStatus } from "@/components/packs/DomesticShipModal";
 import { formatIdr, GOLD_GRADIENT, GradientText, Img } from "@/components/packs/ui";
 
 // Vault = every card the user owns, from BOTH sources (CC-style single collection):
@@ -49,19 +58,57 @@ function shortAsset(address: string): string {
 /** A successfully-opened pull with a minted card address is a real owned card. */
 const isOwnedPull = (p: GachaPull): boolean => p.status === "OPENED" && !!p.nftAddress;
 
+/**
+ * KUNCI untuk mencocokkan satu listing yang dimiliki user dengan baris permintaan kirimnya.
+ *
+ * Backend menulis identitas kartu ke kolom `CardRedemption.nftAddress` untuk KEDUA rail: alamat
+ * NFT untuk kartu vault CollectorCrypt, turunan `hoshi-listing:<id>` untuk kartu STOK HOSHI
+ * (yang memang tidak punya alamat NFT — settlement-nya database-only). Fungsi ini menghasilkan
+ * kunci yang SAMA dari sisi klien, jadi satu peta status melayani kedua rail.
+ *
+ * RAIL DOMESTIK DIPERIKSA DULU, dan urutan itu wajib: sebuah baris stok Hoshi bisa (dari jalur
+ * demo/warisan) punya alamat NFT, dan backend MENORMALKAN baris seperti itu ke identitas
+ * domestik. Memeriksa alamat NFT lebih dulu akan mencari dengan kunci yang tidak pernah ditulis →
+ * status kirimnya tidak pernah ketemu, badge-nya hilang, dan kartu yang sedang dikirim tetap
+ * terlihat seperti kartu yang bebas.
+ *
+ * KARTU TITIPAN IKUT DI SINI. Fisiknya ada di rak yang sama di Indonesia, jadi ia dikirim lewat
+ * kurir lokal persis seperti stok Hoshi — tapi `hoshiStock` untuknya SELALU false (predikat itu
+ * menuntut tidak ada penjual, dan kartu titipan punya penjual: pemiliknya). Membaca `hoshiStock`
+ * saja di sini berarti pembeli kartu titipan membayar penuh lalu tidak punya satu pun tombol
+ * untuk meminta kartunya. `isDomesticShippableListing` adalah predikat yang lebih luas itu, satu
+ * salinan, dipakai di sini dan di /withdraw.
+ */
+const shipKeyForListing = (l: Listing): string | null =>
+  isDomesticShippableListing(l)
+    ? hoshiListingRef(l.id)
+    : (l.nft?.assetAddress ?? l.ccNftAddress ?? null);
+
 // Redemption yang membuat kartu SUDAH keluar dari vault: begitu burn tersubmit, NFT tak lagi di
-// wallet (di prod di-burn; di staging disimulasi disembunyikan). SHIPPED = status record-only lama.
+// wallet (di prod di-burn; di staging disimulasi disembunyikan).
+//
+// FUNDED SENGAJA TIDAK di sini: di status itu ongkirnya sudah didanai ke wallet user tapi burn-nya
+// BELUM ditandatangani — kartunya masih utuh di vault.
+//
+// ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+// │ `SHIPPED` DIKELUARKAN DARI DAFTAR INI DENGAN SENGAJA.                                        │
+// │                                                                                              │
+// │ SHIPPED adalah status yang DITULIS ADMIN pada rail DOMESTIK: paketnya baru saja diserahkan   │
+// │ ke kurir, dan justru DI SITULAH pembeli paling butuh melihat kartunya — bersama resinya.     │
+// │ Selama status ini ikut menyembunyikan baris, pembeli yang sudah membayar dua kali (kartu +   │
+// │ ongkir) melihat kartunya LENYAP dari Vault pada hari pengiriman dan tidak punya satu pun     │
+// │ jejak paketnya. Rail domestik juga tidak pernah mem-burn apa pun (settlement-nya             │
+// │ database-only), jadi tidak ada aset yang benar-benar hilang dari wallet di status ini.       │
+// │                                                                                              │
+// │ Kartunya sekarang bertahan dengan badge "📦 Dikirim" sampai DELIVERED — dan DELIVERED tetap  │
+// │ di dalam daftar, karena di sana kartunya memang sudah ada di tangan pemiliknya.              │
+// │ Untuk rail CC, SHIPPED cuma status record-only warisan (alurnya BURN_SUBMITTED → IN_TRANSIT  │
+// │ → DELIVERED, ketiganya tetap di sini), jadi perubahan ini tidak menyentuh jalur itu.         │
+// └──────────────────────────────────────────────────────────────────────────────────────────────┘
 const SHIPPED_OUT = new Set<RedemptionStatus>([
   "BURN_SUBMITTED",
   "IN_TRANSIT",
   "DELIVERED",
-  "SHIPPED",
-]);
-// Redemption yang butuh AKSI user (bayar ongkir / tanda tangani) — badge diberi warna beda + ajakan.
-const NEEDS_ACTION = new Set<RedemptionStatus>([
-  "REQUESTED",
-  "AWAITING_PAYMENT",
-  "READY_TO_FUND",
 ]);
 
 export default function VaultPage() {
@@ -90,8 +137,15 @@ export default function VaultPage() {
   const [resumePay, setResumePay] = useState<{
     orderId: string;
     packType: string;
-    listingId: string;
+    /** Tidak ada saat dilanjutkan HANYA dari nomor order di alamat kembalian gateway. */
+    listingId?: string;
   } | null>(null);
+  // Resume KIRIM KARTU FISIK sepulang dari halaman bayar ongkir. returnUrl ongkir dibangun backend
+  // (hoshi-backend/src/payments/payments.service.ts, createShippingOrder) dan menunjuk ke /vault —
+  // jadi halaman INI yang harus melanjutkan sesinya. Sebelum ini hanya /withdraw yang membaca
+  // readPendingShip(), sehingga user yang baru saja membayar ongkir mendarat di grid tanpa cara
+  // apa pun untuk meneruskan ke tanda tangan. Pola & key-nya sama persis dengan /withdraw.
+  const [shipping, setShipping] = useState<{ redemptionId: string } | null>(null);
   // Saldo in-app penjual (hasil jual P2P). null = belum termuat.
   const [balanceIdrx, setBalanceIdrx] = useState<number | null>(null);
 
@@ -150,6 +204,10 @@ export default function VaultPage() {
   // /vault — order pack tetap di-resume di /open-packs.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Ditangkap SEBELUM alamatnya dibersihkan: ini cadangan saat data pembayaran di browser hilang
+    // — pembeli membayar di aplikasi e-wallet lalu kembali lewat browser LAIN. Tanpa ini ia
+    // mendarat di Vault tanpa satu pun konfirmasi, mengira bayarnya gagal, dan bisa membayar lagi.
+    const urlOrderId = params.get("merchantOrderId");
     if (
       params.has("merchantOrderId") ||
       params.has("resultCode") ||
@@ -165,6 +223,19 @@ export default function VaultPage() {
         packType: pending.packType,
         listingId: pending.listingId,
       });
+    } else if (!pending && urlOrderId && !CC_SHIPPING_ENABLED) {
+      // Kartu yang ditagih tidak diketahui di sini; PayModal membacanya dari order-nya sendiri.
+      // Hanya selama kirim CollectorCrypt MATI: order ongkir CC juga kembali ke /vault, dan nomor
+      // order saja tidak cukup untuk membedakannya dari order kartu sebelum order itu diambil.
+      setResumePay({ orderId: urlOrderId, packType: "" });
+    }
+    // Ongkir kirim fisik punya KEY SENDIRI (hoshi_pending_ship) supaya tak bentrok dengan resume
+    // pack/listing/top-up di atas — jadi keduanya boleh hidup berdampingan dan dicek berurutan.
+    // Modal-nya dibuka dalam mode resume: ia poll status sampai READY_TO_FUND lalu lanjut ke tanda
+    // tangan. Tanpa blok ini, returnUrl ongkir yang menunjuk ke /vault berujung buntu.
+    if (CC_SHIPPING_ENABLED) {
+      const pendingShip = readPendingShip();
+      if (pendingShip) setShipping({ redemptionId: pendingShip.redemptionId });
     }
   }, []);
 
@@ -219,14 +290,28 @@ export default function VaultPage() {
     ];
     // Sembunyikan kartu yang SUDAH KELUAR vault (burn tersubmit / dikirim). Status pra-burn
     // (REQUESTED/AWAITING_PAYMENT/READY_TO_FUND/FUNDING/FUNDED/PACKING) tetap tampil dengan badge.
+    /* Keadaan kirim dihitung DI SINI, sekali, lalu dibawa tiap baris — bukan dihitung ulang di
+       badan render. Spanduk di atas grid dan tombol di dalam kartu WAJIB tidak bisa berbeda
+       pendapat: kalau angkanya dihitung terpisah, suatu hari aturan titipan berubah dan spanduk
+       berbunyi "1 kartu menunggu" sementara tidak ada satu tombol pun di grid — pembeli dikirim
+       mencari sesuatu yang tidak ada. Satu perhitungan, dua pembaca. */
     return rows
       .filter((r) => {
         const nft =
-          r.kind === "pull"
-            ? r.pull.nftAddress
-            : (r.listing.nft?.assetAddress ?? r.listing.ccNftAddress);
+          r.kind === "pull" ? r.pull.nftAddress : shipKeyForListing(r.listing);
         const st = nft ? redemptionByNft.get(nft) : undefined;
         return !(st && SHIPPED_OUT.has(st));
+      })
+      .map((r) => {
+        const nft =
+          r.kind === "pull" ? r.pull.nftAddress : shipKeyForListing(r.listing);
+        const ship = nft ? redemptionByNft.get(nft) : undefined;
+        const shipActive = !!ship && !SHIPPED_OUT.has(ship);
+        // RAIL saja (fisiknya di rak Hoshi di Indonesia), TANPA syarat sudah/belum diminta —
+        // `canContinue` di bawah membutuhkan rail-nya apa adanya.
+        const domesticRail =
+          r.kind === "bought" && isDomesticShippableListing(r.listing);
+        return { ...r, ship, shipActive, domesticRail, canShipDomestic: domesticRail && !shipActive };
       })
       .sort((a, b) => b.at - a.at);
   }, [pulls, items, redemptionByNft]);
@@ -300,15 +385,57 @@ export default function VaultPage() {
         ) : items.length === 0 && pulls.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <>
+            {/* ╔═══ KARTU YANG SUDAH DIBAYAR TAPI BELUM DIMINTA KIRIM ═══╗
+
+                Lubang yang ditutupnya: pembeli melunasi kartu titipan, kartunya jadi miliknya —
+                lalu TIDAK ADA apa pun yang memberi tahu bahwa fisiknya masih di gudang Hoshi dan
+                harus DIMINTA. Layar sukses membawanya ke halaman produk, dan satu-satunya pintu
+                adalah satu menu yang harus ia temukan sendiri. Kartunya bisa duduk di rak
+                selamanya sementara pembelinya mengira semuanya sudah beres.
+
+                Diletakkan di /vault, bukan hanya di layar sukses, karena backend memulangkan
+                SETIAP pembeli kartu ke halaman ini sepulang bayar — termasuk pembeli yang
+                localStorage-nya hilang (browser dalam aplikasi e-wallet, mode privat, ganti HP)
+                dan karena itu tidak pernah melihat modal apa pun.
+
+                TIDAK digerbang flag pengiriman CollectorCrypt: rail domestik memang sengaja hidup
+                di luar flag itu, dan di produksi flag itu mati — ikut menggerbangnya berarti
+                lubang ini kembali utuh. */}
+            {collection.some((e) => e.canShipDomestic) && (
+              <div className="mb-4 rounded-2xl border border-[#F2C101]/35 bg-[#F2C101]/[0.08] px-4 py-3.5">
+                <p className="text-[13.5px] font-semibold text-[#FFE27A]">
+                  {collection.filter((e) => e.canShipDomestic).length} kartumu masih ada di gudang
+                  Hoshi — belum kamu minta kirim.
+                </p>
+                <p className="mt-1 text-[12px] leading-relaxed text-zinc-400">
+                  Kartunya sudah jadi milikmu. Kalau mau dikirim ke rumah, tekan tombol
+                  {" "}
+                  <span className="font-semibold text-zinc-200">
+                    “📦 Kirim ke rumah — bayar ongkir”
+                  </span>{" "}
+                  di kartunya. Kamu cuma bayar ongkir kurirnya.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {collection.map((e) => {
-              const nft =
-                e.kind === "pull"
-                  ? e.pull.nftAddress
-                  : (e.listing.nft?.assetAddress ?? e.listing.ccNftAddress);
               // Status pra-burn → badge (kartu keluar-vault sudah difilter keluar di atas).
-              const ship = nft ? redemptionByNft.get(nft) : undefined;
-              const shipActive = !!ship && !SHIPPED_OUT.has(ship);
+              // Ketiganya datang dari memo `collection`, bukan dihitung ulang di sini.
+              const { ship, shipActive, domesticRail } = e;
+              /* Bisa dilanjutkan sendiri oleh user?
+                 • rail DOMESTIK → ya selama ongkirnya belum lunas, dan SENGAJA TIDAK digerbang
+                   CC_SHIPPING_ENABLED: rail ini tidak menyentuh CollectorCrypt sama sekali.
+                 • rail CC       → hanya saat flag ON. isResignShipStatus(FUNDED) WAJIB ikut: uang
+                   treasury sudah keluar, kartunya masih utuh, dan yang kurang cuma satu tanda
+                   tangan; dulu status itu tidak ada di daftar mana pun sehingga jatuh ke badge
+                   "Sedang dikirim" yang tidak bisa diklik — salah DAN buntu. */
+              const canContinue =
+                !!ship &&
+                (domesticRail
+                  ? isDomesticActionableStatus(ship)
+                  : CC_SHIPPING_ENABLED &&
+                    (isActionableShipStatus(ship) || isResignShipStatus(ship)));
               const key = e.kind === "pull" ? `pull-${e.pull.memo}` : `bought-${e.listing.id}`;
               return (
                 <div key={key} className="relative">
@@ -327,27 +454,42 @@ export default function VaultPage() {
                           e.listing.ccNftAddress ?? e.listing.nft?.assetAddress ?? "",
                         ) ?? null
                       }
+                      // Jalan masuk ke permintaan kirim untuk kartu STOK HOSHI yang belum punya
+                      // permintaan aktif. Tanpa ini pembeli yang baru saja membayar mendarat di
+                      // /vault dan tidak punya satu pun tombol yang meminta kartunya — persis
+                      // keadaan yang membuat pekerjaan ini ada.
+                      canShipDomestic={e.canShipDomestic}
                     />
                   )}
-                  {shipActive && ship &&
-                    (CC_SHIPPING_ENABLED && NEEDS_ACTION.has(ship) ? (
-                      // Flag ON: status pra-bayar/ttd → ajak user menyelesaikan di /withdraw.
+                  {shipActive &&
+                    ship &&
+                    // Grid ini layar yang paling sering dilihat, jadi ia HARUS memakai helper yang
+                    // sama dengan /withdraw dan /vault/[nft] — bukan daftar status sendiri yang
+                    // bisa (dan pernah) ketinggalan satu status.
+                    (canContinue ? (
                       <Link
                         href="/withdraw"
                         className="absolute left-2 top-2 z-10 rounded-full border border-yellow-400/50 bg-yellow-500/90 px-2 py-0.5 text-[10px] font-bold text-[#171717] shadow transition hover:brightness-110"
                       >
-                        📦 Selesaikan kirim
+                        {domesticRail
+                          ? "📦 Bayar ongkir"
+                          : isResignShipStatus(ship)
+                            ? "📦 Tanda tangani"
+                            : "📦 Selesaikan kirim"}
                       </Link>
                     ) : (
-                      // Flag OFF (record-only) atau status yang sudah berjalan → badge info biasa.
+                      // Flag OFF (record-only) atau status yang sudah berjalan → badge info biasa,
+                      // teksnya diambil dari STATUS_LABEL supaya tidak ada kalimat yang cuma hidup
+                      // di file ini dan bisa bertentangan dengan layar lain.
                       <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-full border border-sky-400/40 bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                        📦 Sedang dikirim
+                        📦 {STATUS_LABEL[ship]}
                       </span>
                     ))}
                 </div>
               );
             })}
           </div>
+          </>
         )}
       </main>
 
@@ -360,13 +502,29 @@ export default function VaultPage() {
           resumeOrderId={resumePay.orderId}
           // Setelah sukses, tombol "Lihat Kartu" mengantar ke DETAIL kartu yang BARU dibeli (chip
           // "Kamu memiliki kartu ini") — bukan cuma balik ke grid /vault yang dulu bikin bingung.
-          successHref={`/marketplace/${resumePay.listingId}`}
+          successHref={resumePay.listingId ? `/marketplace/${resumePay.listingId}` : undefined}
           onFulfilled={() => {
             clearPendingPayment();
           }}
           onClose={() => {
             clearPendingPayment();
             setResumePay(null);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {/* Resume KIRIM FISIK sepulang bayar ongkir (returnUrl backend → /vault). Sama seperti di
+          /withdraw: mode resume, dan saat ditutup pending-nya dibersihkan + koleksi di-reload
+          supaya badge kirimnya (mis. "Tanda tangani") langsung sesuai status terbaru. */}
+      {CC_SHIPPING_ENABLED && shipping && (
+        <ShippingFlowModal
+          redemptionId={shipping.redemptionId}
+          resume
+          onFinished={() => setReloadKey((k) => k + 1)}
+          onClose={() => {
+            clearPendingShip();
+            setShipping(null);
             setReloadKey((k) => k + 1);
           }}
         />
@@ -394,8 +552,10 @@ function PullCard({
   const listable = pull.status === "OPENED" && !!pull.nftAddress;
 
   // Favorit (♥) — id = nftAddress; tampil di box "Your Favorite Card" di banner profil.
-  const { publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() ?? null;
+  // Key = SESSION address (adapter key, else the JWT user's wallet), sama dengan yang
+  // dibaca banner /account dan /settings — user Google tak punya publicKey adapter, jadi
+  // memakai useWallet() di sini akan menulis ♥ ke bucket "anon" yang tak pernah dibaca.
+  const { activeAddress: wallet } = useAuth();
   const { favorites, toggle } = useFavorites(wallet);
   const faved = !!pull.nftAddress && favorites.includes(pull.nftAddress);
   const [maxNote, setMaxNote] = useState(false);
@@ -546,10 +706,18 @@ function PullCard({
 function BoughtCard({
   listing,
   initialListedId,
+  canShipDomestic = false,
 }: {
   listing: Listing;
   /** listingId kalau kartu ini SUDAH dipajang lagi (dari server saat load). */
   initialListedId: string | null;
+  /**
+   * true = kartu STOK HOSHI milik user yang BELUM punya permintaan kirim aktif → tawarkan jalan
+   * masuk ke /withdraw. Diputuskan parent (ia yang memegang peta status kirim), bukan disimpulkan
+   * di sini dari `hoshiStock` saja — kalau tidak, kartu yang ongkirnya sedang dibayar akan
+   * menampilkan ajakan "minta dikirim" untuk kedua kalinya.
+   */
+  canShipDomestic?: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [listedId, setListedId] = useState<string | null>(null);
@@ -561,8 +729,8 @@ function BoughtCard({
   const pendingEscrow = listing.status === "PENDING_ESCROW";
 
   // Favorit (♥) — key = listing.id (sama dgn resolusi banner di /account). Heart di semua kartu.
-  const { publicKey } = useWallet();
-  const favWallet = publicKey?.toBase58() ?? null;
+  // Bucket-nya SESSION address, bukan publicKey adapter (lihat catatan di PullCard).
+  const { activeAddress: favWallet } = useAuth();
   const { favorites, toggle } = useFavorites(favWallet);
   const faved = favorites.includes(listing.id);
   const [maxNote, setMaxNote] = useState(false);
@@ -591,6 +759,25 @@ function BoughtCard({
       )}
       <MarketCard listing={listing} currency="IDR" showStatus />
 
+      {/* ─── MINTA DIKIRIM (kartu yang fisiknya di rak Hoshi: STOK HOSHI atau TITIPAN) ───────
+          Jalan masuk yang sebelumnya TIDAK ADA di seluruh aplikasi. Kedua jenis kartu ini settle
+          database-only (tak punya alamat NFT), jadi tanpa jalan masuk ini ia tidak pernah lolos
+          saringan pemilih kartu di /withdraw dan tidak pernah punya halaman detail vault —
+          pembeli bisa membayar penuh lalu tidak punya satu pun tombol yang meminta kartunya.
+
+          Ditaruh SEBELUM "List for Sale" dengan sengaja: pembeli kartu fisik biasanya ingin
+          kartunya, bukan menjualnya lagi. Aksen EMAS = rail kurir domestik, warna yang sama
+          dipakai lencana rail di /withdraw dan di dashboard admin. */}
+      {canShipDomestic && (
+        <Link
+          href="/withdraw"
+          className="rounded-xl border border-[#F2C101]/45 bg-[#F2C101]/[0.12] px-3 py-2 text-center text-xs font-semibold text-[#F2C101] transition hover:bg-[#F2C101]/[0.2]"
+          title="Kartu ini ada di gudang Hoshi di Indonesia — kamu cuma membayar ongkir kurir. Tidak ada NFT yang dibakar dan tidak ada tanda tangan wallet."
+        >
+          📦 Kirim ke rumah — bayar ongkir
+        </Link>
+      )}
+
       {effectiveListedId && !pendingEscrow ? (
         <Link
           href={`/marketplace/${effectiveListedId}`}
@@ -606,6 +793,14 @@ function BoughtCard({
         >
           Selesaikan escrow ke marketplace
         </button>
+      ) : listing.consigned === true ? (
+        /* KARTU TITIPAN yang sudah kamu beli. Menjualnya ulang dari sini akan menghidupkan lagi
+           baris listing yang masih terikat ke catatan titipan penjual sebelumnya — server
+           menolaknya, dan itu benar. Jadi tombolnya tidak ditawarkan, dan alasannya dikatakan. */
+        <p className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-center text-[11px] leading-relaxed text-zinc-400">
+          Kartu titipan belum bisa dijual ulang dari sini. Minta dikirim dulu, atau hubungi tim
+          Hoshi untuk menitipkannya lagi.
+        </p>
       ) : (
         <button
           type="button"
@@ -653,7 +848,7 @@ function RelistModal({
   onClose: () => void;
   onRelisted: (l: Listing) => void;
 }) {
-  const { token, login } = useAuth();
+  const { token, login, canAutoRecover } = useAuth();
   const { setVisible } = useWalletConnect();
   const finishEscrow = useFinishListingEscrow();
   // Prefill dgn harga kartu sekarang (patokan nilai) biar penjual tak mulai dari kolom kosong —
@@ -684,7 +879,20 @@ function RelistModal({
       const l = await finishEscrow(relisted, t);
       onRelisted(l);
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+      /* ── 403 TIDAK PERNAH MENYENTUH SESI, DAN 401 TIDAK MEMBUKA MODAL SENDIRI ──────────────
+         Dulu baris ini menyamakan 401 dan 403, lalu membuka modal SAMBUNGKAN WALLET untuk
+         keduanya. Dua hal salah di situ:
+
+           403 berarti "kamu memang login, tapi ini bukan hakmu". Mengajak orang menyambungkan
+           wallet di situ menyuruh ia memperbaiki hal yang tidak rusak.
+
+           401 untuk user Google membuka modal wallet kepada orang yang tidak punya wallet dan
+           tidak pernah butuh satu. Sejak `lib/api` memulihkan sesi Google di latar, yang benar
+           adalah DIAM — percobaan berikutnya berhasil sendiri.
+
+         Modal hanya untuk yang benar-benar tidak punya jalan pulih otomatis, dan pesannya
+         ditulis di `error` supaya ia tahu kenapa layarnya berubah. */
+      if (e instanceof ApiError && e.status === 401 && !canAutoRecover) {
         setVisible(true);
       }
       setError(e instanceof Error ? e.message : String(e));

@@ -6,11 +6,47 @@ import type { Listing, NewListingInput, RelistInput, UpdateListingInput } from "
 import type { CardDetail } from "./cardDetail";
 import type { ActivityQuery, ActivityRecord, OfferRecord } from "./offers";
 import type { GachaMachine, GachaPull, GachaWinner } from "./gacha";
-import { getPrivyIdentityToken } from "./privyIdentity";
-import { ensureCcSiwsToken, getCcWalletSigner } from "./ccShippingAuth";
+import {
+  CcSessionRequiredError,
+  ensureCcSiwsToken,
+  getCcSiwsTokenSilently,
+} from "./ccShippingAuth";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
+
+/* ---- 401 = SESI HOSHI SUDAH BASI (satu pintu untuk seluruh aplikasi) ---------
+
+   JWT kita berumur 7 hari. Sebelum ini, token yang lewat tanggalnya tetap duduk di
+   localStorage selamanya: tidak ada satu baris pun yang membuangnya, dan satu-satunya
+   pemanggil `setStoredToken(null)` adalah tombol Logout manual. Akibatnya pembeli yang
+   kembali di hari ke-9 menekan tombol beli dan cuma mendapat "Unauthorized".
+
+   Karena SETIAP panggilan berkumpul di fungsi ini, di sinilah tempat yang benar untuk
+   memberi tahu lapisan sesi. Yang dikirim cuma FAKTANYA ("panggilan ke path ini ditolak
+   401"); APA yang harus dilakukan diputuskan lib/useAuth, karena cuma dia yang tahu user
+   ini bisa dicetakkan sesi baru diam-diam (Google/Privy) atau harus menandatangani sendiri
+   (wallet-adapter/SIWS).
+
+   DUA PAGAR, keduanya disengaja:
+     • HANYA 401. 403 TIDAK ikut — itu "kamu login, tapi tidak berhak" (mis. rute admin,
+       atau menyentuh milik orang lain). Membuang/menyegarkan sesi di situ akan melempar
+       orang keluar gara-gara satu tombol yang memang bukan haknya.
+     • Rute /auth/* dikecualikan. Rute itulah PENCETAK sesinya; memanggil pemulih dari
+       sana berarti nonce/login yang ditolak memicu nonce/login berikutnya tanpa akhir.
+
+   Sesi ADMIN tidak lewat sini sama sekali: lib/admin-api.ts punya `api()` + fetch-nya
+   sendiri dan kunci localStorage sendiri, jadi 401 admin tidak pernah menyentuh sesi user. */
+type UnauthorizedHandler = (path: string) => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/** lib/useAuth mendaftarkan pemulih sesinya di sini. Mengembalikan pembatal pendaftaran. */
+export function registerUnauthorizedHandler(fn: UnauthorizedHandler): () => void {
+  unauthorizedHandler = fn;
+  return () => {
+    if (unauthorizedHandler === fn) unauthorizedHandler = null;
+  };
+}
 
 /** Fetch JSON with a clean backend error message (Nest returns {message}).
  *  `timeoutMs` aborts the request — use it on latency-critical calls (login)
@@ -31,15 +67,43 @@ async function api<T>(path: string, init?: RequestInit & { timeoutMs?: number })
     throw e;
   }
   if (!res.ok) {
+    // Beri tahu lapisan sesi SEBELUM error dilempar, supaya pemulihan sudah berjalan saat
+    // pemanggil menangkap ApiError-nya. Dibungkus try/catch: handler yang melempar tidak
+    // boleh menutupi error asli yang sedang kita susun di bawah.
+    if (res.status === 401 && !path.startsWith("/auth/")) {
+      try {
+        unauthorizedHandler?.(path);
+      } catch (e) {
+        console.warn("[api] pemulih sesi melempar:", e);
+      }
+    }
     let msg: string = `HTTP ${res.status}`;
+    let code: string | undefined;
+    let stage: string | undefined;
+    let retryable: boolean | undefined;
     try {
-      const body = (await res.json()) as { message?: string | string[] };
+      const body = (await res.json()) as {
+        message?: string | string[];
+        code?: unknown;
+        stage?: unknown;
+        retryable?: unknown;
+      };
       if (body?.message)
         msg = Array.isArray(body.message) ? body.message.join(", ") : body.message;
+      // `code`/`stage`/`retryable` = VERDICT MESIN dari backend. Alur money-critical (kirim kartu
+      // fisik) memakainya untuk membedakan kegagalan yang aman diulang dari yang tidak. Bentuk
+      // kontraknya: { statusCode, error, code, message, stage, retryable, redemptionId? } —
+      // hoshi-backend/src/collectorcrypt/cc-shipping.errors.ts. Endpoint LAIN tidak mengirimnya,
+      // jadi ketiganya opsional dan pemanggil TIDAK BOLEH bergantung padanya sendirian: lihat
+      // resolveSignFailure() di ShippingFlowModal, yang keputusan akhirnya selalu diambil dari
+      // status baris yang DIBACA ULANG. Jangan pernah menebak verdict dari teks `message`.
+      if (typeof body?.code === "string" && body.code) code = body.code;
+      if (typeof body?.stage === "string" && body.stage) stage = body.stage;
+      if (typeof body?.retryable === "boolean") retryable = body.retryable;
     } catch {
       /* non-JSON response — fall back to the status */
     }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, code, stage, retryable);
   }
   return res.json() as Promise<T>;
 }
@@ -48,6 +112,18 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    /** Kode mesin dari body error backend (field `code`), bila backend mengirimkannya.
+     *  `undefined` = backend tidak memberi verdict, jadi pemanggil harus memutuskan dari fakta
+     *  lain (untuk kirim fisik: status baris redemption yang dibaca ulang). */
+    public code?: string,
+    /** DI MANA UANGNYA saat error terbit (field `stage`): NO_EFFECT | PRE_FUND | FUNDED |
+     *  POST_FUND | UNKNOWN. Backend menyebut ini field yang WAJIB dipakai untuk bercabang —
+     *  bukan teks pesan dan bukan status HTTP saja. Lebih tahan lama dari `code`: kode BARU yang
+     *  belum dikenal frontend tetap membawa stage yang benar. */
+    public stage?: string,
+    /** `retryable` dari backend — DITURUNKAN dari stage di sana, jadi tidak bisa dilebih-lebihkan.
+     *  `false` adalah LARANGAN: pemanggil tidak boleh menaikkannya jadi "aman diulang". */
+    public retryable?: boolean,
   ) {
     super(message);
     this.name = "ApiError";
@@ -67,7 +143,26 @@ export function warmBackend() {
 
 /* ---------------- marketplace ---------------- */
 
-export const getListings = () => api<Listing[]>("/marketplace");
+/**
+ * Feed marketplace (GET /marketplace). `search` adalah param milik BACKEND sendiri —
+ * `QueryListingDto.search` (hoshi-backend/src/marketplace/dto/query-listing.dto.ts) yang
+ * di `MarketplaceService.list()` menjadi `where.name = { contains, mode: 'insensitive' }`.
+ *
+ * Semantiknya sempit dan perlu diketahui sebelum dipakai: yang dicocokkan HANYA `name`
+ * kartu — bukan set/seri, bukan penjual, bukan grader — sebagai substring tanpa peduli
+ * besar-kecil huruf, dan di server ia di-AND dengan filter query lain. Backend juga tidak
+ * memberi paginasi: ia mengembalikan SEMUA listing ACTIVE yang cocok.
+ *
+ * Kosong/whitespace ⇒ param tidak dikirim ⇒ feed penuh, sama persis dengan panggilan
+ * tanpa argumen yang lama. `signal` dipakai pemanggil untuk membatalkan pencarian yang
+ * sudah didahului ketikan berikutnya — AbortError-nya naik ke pemanggil, jadi pemanggil
+ * yang harus menelannya.
+ */
+export const getListings = (search?: string, signal?: AbortSignal) => {
+  const term = search?.trim();
+  const qs = term ? `?search=${encodeURIComponent(term)}` : "";
+  return api<Listing[]>(`/marketplace${qs}`, signal ? { signal } : undefined);
+};
 
 export const getListingDetail = (id: string) =>
   api<CardDetail>(`/marketplace/${encodeURIComponent(id)}`);
@@ -373,7 +468,22 @@ export type RedemptionStatus =
 
 export type CardRedemption = {
   id: string;
+  /**
+   * IDENTITAS kartu. Jalur CC Vault: alamat NFT sungguhan. Jalur DOMESTIK (stok Hoshi):
+   * turunan `hoshi-listing:<listingId>` — kartu itu memang TIDAK punya alamat NFT
+   * (settlement-nya database-only di backend). Pakai `hoshiListingRef()` di bawah untuk
+   * mencocokkannya dari sisi klien; JANGAN parse prefixnya sendiri di banyak tempat.
+   */
   nftAddress: string;
+  /**
+   * NON-NULL = jalur kirim DOMESTIK (stok fisik Hoshi, kurir lokal Indonesia): bayar ongkir
+   * Rupiah, lalu Hoshi mengemas & mengirim. NOL NFT, NOL burn, NOL USDC, NOL tanda tangan
+   * wallet, dan TIDAK digerbang CC_SHIPPING_ENABLED.
+   * NULL = jalur CC Vault (pack / katalog CC / P2P): ongkir → danai USDC → TTD burn → CC kirim.
+   *
+   * INI diskriminator rail-nya. JANGAN pakai `cardSet`/nama/heuristik lain.
+   */
+  listingId?: string | null;
   cardName: string;
   cardImage: string | null;
   cardSet: string | null;
@@ -381,42 +491,66 @@ export type CardRedemption = {
   city: string;
   country: string;
   status: RedemptionStatus;
-  /** Nomor resi CC (baru terisi setelah dikirim). Opsional: /redemptions/me record-only bisa
-   *  mengabaikannya; /redemptions/:id/status yang mengembalikannya saat IN_TRANSIT/DELIVERED. */
+  /**
+   * Nomor resi kurir. SEJAK PERBAIKAN INI `/redemptions/me` IKUT MEMBAWANYA — dulu tidak, dan
+   * itulah kenapa baris "Resi: …" di /withdraw selalu kosong meski resinya tersimpan rapi di
+   * database. Dua penulisnya: admin (rail DOMESTIK, saat menandai SHIPPED) dan poll shipment CC
+   * (rail CC, saat IN_TRANSIT/DELIVERED).
+   *
+   * Tetap OPSIONAL di tipe ini supaya respons backend LAMA (yang belum membawanya) tidak
+   * membuat layar gagal render — array kosong dan `undefined` sama-sama berarti "belum ada resi".
+   */
   trackingIds?: string[];
-  /** Link lacak resi (sejajar dengan trackingIds). */
+  /** Link lacak resi (sejajar indeksnya dengan trackingIds). */
   trackingUrls?: string[];
   createdAt: string;
 };
 
-/** Header untuk endpoint kirim-fisik CC: JWT wallet kita PLUS satu token identitas yang
- *  dibawa di header X-Privy-Identity-Token (backend merelaikannya apa adanya ke CC sebagai
- *  Authorization: Bearer). Dua jalur menyuplai token itu:
- *   - TRACK A (user Google/Privy): identity token Privy — membuktikan user Google MANA yang memanggil.
- *   - TRACK B (user wallet mentah, mis. Phantom, tanpa identitas Privy): token CC hasil SIWS —
- *     wallet menandatangani pesan SIWS lalu backend menukarnya jadi token CC (lib/ccShippingAuth).
- *  Header-nya SAMA untuk keduanya; backend tak peduli asalnya. Kalau tak ada Privy dan tak ada
- *  wallet yang bisa SIWS, lempar pesan ramah (bukan error mentah server). */
+/** Header untuk endpoint kirim-fisik CC: JWT wallet kita PLUS token akses CC hasil SIWS
+ *  (`cca_…`), yang backend teruskan APA ADANYA ke CC sebagai `Authorization: Bearer`.
+ *
+ *  SATU kredensial saja, untuk SEMUA user. Dokumen CC Vault Shipping cuma mengenal dua
+ *  kredensial — token wallet sign-in (`cca_…`) dan API key partner (`ccsk_…`, EVM saja:
+ *  "Solana redemptions still need a wallet sign-in session"). TIDAK ADA jalur identity
+ *  token Privy; mengirimnya = 401. Karena burn-nya ditandatangani wallet PEMILIK kartu,
+ *  wallet itu juga yang menandatangani pesan SIWS: wallet-adapter (Phantom) untuk user
+ *  wallet, embedded wallet Privy untuk user Google — keduanya didaftarkan lewat
+ *  lib/ccShippingAuth, yang memilih berdasarkan wallet di JWT kita.
+ *
+ *  Nama header KANONIK: `x-cc-access-token` — itu yang dibaca @CcAccessToken di backend
+ *  (src/auth/cc-access-token.decorator.ts). Nama lama `X-Privy-Identity-Token` masih
+ *  diterima di sana HANYA sebagai fallback legacy dan tidak dipakai lagi dari sini: ia
+ *  salah kaprah (tidak pernah ada jalur identity token Privy), isinya selalu token `cca_`
+ *  yang sama. `ensureCcSiwsToken` melempar pesan ramah (bukan error mentah server) kalau
+ *  wallet pemilik kartu tak tersedia. */
 async function shippingHeaders(token: string): Promise<Record<string, string>> {
-  // Track A — Google/Privy user: their Privy identity token names which user calls.
-  const privy = await getPrivyIdentityToken();
-  // Track B — raw-wallet user with no Privy identity: mint a CC token via SIWS.
-  const shipToken = privy ?? (getCcWalletSigner() ? await ensureCcSiwsToken(token) : null);
-  if (!shipToken)
-    throw new Error(
-      "Hubungkan wallet atau login Google dulu untuk kirim kartu fisik. / Connect a wallet or sign in with Google to ship your card.",
-    );
+  const ccAccessToken = await ensureCcSiwsToken(token);
   return {
     authorization: `Bearer ${token}`,
-    "X-Privy-Identity-Token": shipToken,
+    "x-cc-access-token": ccAccessToken,
   };
 }
 
-/* --- CC SIWS (Track B): tukar tanda-tangan wallet → token CC untuk kirim fisik --------------
-   Untuk user wallet mentah (Phantom dll.) yang TIDAK punya identitas Privy. Ketiga endpoint di
-   bawah ada di controller redemption kita dan DIJAGA JwtAuthGuard → semuanya Bearer JWT kita.
-   Backend meneruskan ke CC (/auth/wallet/nonce|verify|refresh). Handshake dijalankan oleh
-   lib/ccShippingAuth.ensureCcSiwsToken; header pengirimannya sama dengan Track A. ------------- */
+/** Same headers, but NEVER pops a wallet signature: cached token, or a silent refresh,
+ *  or `CcSessionRequiredError`. For calls that fire on a TIMER — the backend's
+ *  @CcAccessToken decorator 400s without the header, so we cannot simply omit it, but a
+ *  poller must not mint one either: CC rate limits sign-in per wallet AND per network
+ *  address (429 + retryAfter), so a 4s poll that re-signs would lock the user out of
+ *  shipping. Signature prompts belong to deliberate user actions. */
+async function shippingHeadersSilent(token: string): Promise<Record<string, string>> {
+  const ccAccessToken = await getCcSiwsTokenSilently(token);
+  if (!ccAccessToken) throw new CcSessionRequiredError();
+  return {
+    authorization: `Bearer ${token}`,
+    "x-cc-access-token": ccAccessToken,
+  };
+}
+
+/* --- CC SIWS: tukar tanda-tangan wallet → token CC (`cca_…`) untuk kirim fisik ---------------
+   Jalur SATU-SATUNYA, dipakai user wallet (Phantom) MAUPUN user Google (embedded wallet Privy).
+   Ketiga endpoint di bawah ada di controller redemption kita dan DIJAGA JwtAuthGuard → semuanya
+   Bearer JWT kita. Backend meneruskan ke CC (/auth/wallet/nonce|verify|refresh). Handshake
+   dijalankan oleh lib/ccShippingAuth.ensureCcSiwsToken. ---------------------------------------- */
 
 /** Balasan nonce SIWS. `message` = teks SIWS kanonik yang HARUS ditandatangani VERBATIM. */
 export type SiwsNonceResponse = { nonce: string; expiresAt: number; message: string };
@@ -460,7 +594,18 @@ export const siwsRefresh = (input: { refreshToken: string }, token: string) =>
 /** Minta kirim kartu fisik ke rumah (POST /redemptions). RECORD-ONLY di server: mencatat
  *  permintaan + tujuan, TIDAK burn/transfer NFT — kartu tetap di wallet sampai admin proses. */
 export const requestRedemption = (
-  input: { nftAddress: string; shippingAddressId: string },
+  /**
+   * SEBUTKAN TEPAT SATU. Backend menolak (400 HOSHI_DOMESTIC_TARGET_REQUIRED) kalau keduanya
+   * kosong ATAU keduanya diisi — kedua field ini memilih RAIL PENGIRIMAN, dan rail adalah
+   * keputusan SERVER (ia menentukan apakah ada NFT yang dibakar dan USDC treasury yang
+   * berpindah). Klien tidak boleh bisa memilihnya lewat urutan pembacaan kode backend.
+   *
+   *   nftAddress → jalur CC Vault (kartu hasil pack / pembelian ber-NFT)
+   *   listingId  → jalur DOMESTIK (kartu STOK HOSHI yang kamu beli; kurir lokal)
+   */
+  input:
+    | { nftAddress: string; listingId?: undefined; shippingAddressId: string }
+    | { listingId: string; nftAddress?: undefined; shippingAddressId: string },
   token: string,
 ) =>
   api<CardRedemption>("/redemptions", {
@@ -469,16 +614,205 @@ export const requestRedemption = (
     body: JSON.stringify(input),
   });
 
+/* ─────────── KIRIM DOMESTIK (stok fisik Hoshi, kurir lokal Indonesia) ───────────
+
+   Kartu stok Hoshi disimpan FISIK oleh Hoshi di Indonesia — TIDAK dititipkan di vault
+   CollectorCrypt. Pengirimannya paket domestik biasa:
+
+     NOL NFT · NOL burn · NOL USDC treasury · NOL CollectorCrypt · NOL tanda tangan wallet
+
+   Konsekuensinya untuk frontend, dan ini yang membuat alurnya JAUH lebih pendek dari alur CC:
+     • TIDAK butuh sesi SIWS CC (tidak ada header x-cc-access-token, tidak ada shippingHeaders).
+     • TIDAK digerbang CC_SHIPPING_ENABLED — jalur ini hidup walau flag CC mati, dan ia tidak
+       ikut menunggu kredensial CC.
+     • TIDAK ADA langkah tanda tangan. Sesudah ongkir Rupiah lunas, urusannya selesai dari
+       sisi user: Hoshi mengemas (PACKING) → kirim (SHIPPED) → sampai (DELIVERED).
+     • Satu-satunya uang yang bergerak adalah ongkir Rupiah, dan ongkir itu SELALU aman
+       di-refund kalau ada yang gagal — tidak ada langkah pasca-belanja di jalur ini.
+   ------------------------------------------------------------------------------------ */
+
+/**
+ * Prefix identitas kartu stok Hoshi pada `CardRedemption.nftAddress`. Dipilih supaya TIDAK
+ * MUNGKIN bentrok dengan alamat NFT: alfabet base58 Solana tidak memuat '-' maupun ':'.
+ * Sinkron dengan HOSHI_LISTING_REF_PREFIX di backend (src/common/hoshi-domestic-shipping.ts).
+ */
+export const HOSHI_LISTING_REF_PREFIX = "hoshi-listing:";
+
+/**
+ * Identitas yang dipakai baris redemption DOMESTIK untuk sebuah listing. Dipakai layar-layar
+ * koleksi untuk mencocokkan kartu ↔ status kirimnya dengan kunci yang SAMA dengan kartu
+ * ber-NFT, jadi tidak ada peta status kedua yang bisa ketinggalan satu kasus.
+ */
+export const hoshiListingRef = (listingId: string) =>
+  `${HOSHI_LISTING_REF_PREFIX}${listingId}`;
+
+/**
+ * DISKRIMINATOR RAIL sisi klien: true ⇔ baris redemption ini jalur DOMESTIK (stok Hoshi).
+ *
+ * Dua fakta dibaca, dan urutannya disengaja:
+ *   1. `listingId` — kolom persisten & immutable yang backend pakai sebagai gerbang rail.
+ *   2. prefix `hoshi-listing:` pada `nftAddress` — turunan MURNI dari (1), dipakai sebagai jaring
+ *      kalau respons lama tidak membawa `listingId`. Prefix ini tidak bisa salah-positif: alfabet
+ *      base58 Solana tidak memuat ':' maupun '-'.
+ *
+ * `cardSet`, nama kartu, atau `source` TIDAK BOLEH dipakai. Menebak rail dari label adalah cara
+ * paling mudah untuk menyodorkan prompt tanda tangan wallet kepada orang yang cuma membeli kartu
+ * dari rak Hoshi — atau sebaliknya, menagih ongkir kurir lokal untuk kartu yang fisiknya di
+ * gudang CollectorCrypt.
+ */
+export const isDomesticRedemption = (r: {
+  listingId?: string | null;
+  nftAddress?: string;
+}): boolean =>
+  r.listingId != null ||
+  (typeof r.nftAddress === "string" &&
+    r.nftAddress.startsWith(HOSHI_LISTING_REF_PREFIX));
+
+/**
+ * Ongkir domestik yang dihitung server. READ-ONLY: nol uang, nol order, nol efek samping.
+ *
+ * ONGKIRNYA BERTINGKAT PER WILAYAH (Jawa vs luar Jawa, bisa diperhalus kapan saja tanpa deploy:
+ * tier-nya baris DB, bukan kode). Angkanya SELALU dari server — UI tidak pernah menghitung,
+ * membulatkan, atau menambah apa pun ke `priceIdr`, karena angka yang ditampilkan dan angka yang
+ * ditagihkan HARUS lahir dari satu perhitungan yang sama.
+ */
+export type DomesticShippingQuote = {
+  /** Ongkir Rupiah UTUH yang akan ditagihkan. */
+  priceIdr: number;
+  /** Kunci tier/baris tarif yang menang, mis. "TIER:JAWA" / "STATE:bali" / "*". */
+  scope: string;
+  /** Dari mana angkanya: "DB" (tarif admin) | "ENV" | "DEFAULT_TIER" | "PLACEHOLDER". */
+  source: string;
+  /** Nama manusiawi tier yang menang ("Jawa", "Luar Jawa"). Opsional — baris lama tak punya. */
+  label?: string | null;
+  /** Provinsi tujuan yang dibaca server dari alamat, sudah dinormalkan. */
+  province?: string;
+  /** Cara wilayahnya ketemu: "STATE" | "TIER" | "FALLBACK_TIER" | "NATIONWIDE". */
+  region?: string;
+  /**
+   * true = provinsi tujuan tidak terpetakan ke tier mana pun (atau alamatnya tidak menyebut
+   * provinsi), jadi yang dipakai TARIF PENAMPUNG. Bukan error, dan BUKAN alasan memblokir
+   * pembayaran — tapi UI menyebutkannya supaya user tidak merasa ditipu kalau angkanya terasa
+   * tinggi, dan supaya laporan "ongkir saya kemahalan" datang dengan petunjuk penyebabnya.
+   */
+  regionUnresolved?: boolean;
+};
+
+/**
+ * Taksir ongkir kirim DOMESTIK (GET /redemptions/:id/domestic-quote).
+ *
+ * Sumber angkanya PERSIS sama dengan yang ditagihkan createDomesticShippingOrder, jadi yang
+ * dilihat user dan yang ditagihkan tidak bisa lahir dari dua kalkulasi berbeda. Baris jalur
+ * CollectorCrypt ditolak 400 HOSHI_DOMESTIC_WRONG_RAIL.
+ */
+export const getDomesticShippingQuote = (redemptionId: string, token: string) =>
+  api<DomesticShippingQuote>(
+    `/redemptions/${encodeURIComponent(redemptionId)}/domestic-quote`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+
+/**
+ * Terbitkan tagihan Rupiah ongkir kirim DOMESTIK (POST /payments/shipping/domestic).
+ *
+ * TANPA header CC: rute ini sengaja terpisah dari /payments/shipping justru supaya ia tidak
+ * butuh sesi SIWS CollectorCrypt (rute CC 400 kalau header itu kosong). Nominalnya dihitung
+ * SERVER dari tarif admin — tidak pernah dari body.
+ */
+export const createDomesticShippingOrder = (
+  redemptionId: string,
+  token: string,
+) =>
+  api<PaymentOrder>("/payments/shipping/domestic", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ redemptionId }),
+  });
+
 /** Riwayat permintaan kirim kartu fisik milik user (GET /redemptions/me). */
 export const getMyRedemptions = (token: string) =>
   api<CardRedemption[]>("/redemptions/me", {
     headers: { authorization: `Bearer ${token}` },
   });
 
-/* --- kirim-fisik REAL (butuh JWT + header X-Privy-Identity-Token; hanya saat backend di-arm) ---
+/**
+ * Satu TAGIHAN ONGKIR yang terdampak pembatalan permintaan kirim. Bentuknya DISALIN PERSIS dari
+ * backend `ShippingRefundDebt` (src/payments/shipping-refund-debt.ts).
+ *
+ * KENAPA INI ADA DI FRONTEND. Baris redemption dan tagihan ongkirnya adalah DUA baris berbeda:
+ * membatalkan redemption TIDAK ikut membatalkan tagihan ongkirnya. Kalau Rupiah-nya sudah/mungkin
+ * mendarat, backend memindahkan uangnya menjadi UTANG YANG TERCATAT di tagihan itu sendiri dan
+ * MELAPORKANNYA di sini. Layar yang membuang array ini membuat user diberi tahu kartunya bebas,
+ * tanpa pernah tahu ada uangnya yang tertahan — dan karena itu tidak akan pernah menagihnya.
+ */
+export type ShippingRefundDebt = {
+  /** Nomor tagihan ongkirnya. INI rujukan yang dipakai user & tim untuk menunjuk uang ini. */
+  merchantOrderId: string;
+  /** Nominal tagihan, dalam Rupiah (bilangan bulat). */
+  priceIdr: number;
+  /** Status tagihan SEBELUM pembatalan diproses. */
+  statusBefore: PaymentStatus;
+  /** Status SESUDAHNYA — sama dengan `statusBefore` kecuali backend sendiri yang memindahkannya. */
+  statusAfter: PaymentStatus;
+  /** DIBACA backend dari baris, tidak pernah ditulis. false = jangan refund sebelum dicek manual. */
+  refundSafe: boolean;
+  /** true = pembatalan INI yang baru saja mencatat utangnya (FULFILLING → REFUND_DUE). */
+  recordedNow: boolean;
+  /**
+   * Kalimat untuk OPERATOR, bukan untuk user — isinya instruksi internal ("KEMBALIKAN Rupiah
+   * ongkir ini ke user…"). JANGAN ditampilkan mentah ke user: dibaca sebagai janji refund
+   * otomatis, padahal jalur ini diselesaikan manual oleh tim.
+   */
+  operatorAction: string;
+};
+
+/**
+ * Respons POST /redemptions/:id/cancel — baris redemption yang sudah CANCELED PLUS pengungkapan
+ * uangnya. `warning` dan `shippingDebts` adalah SATU-SATUNYA tempat user bisa tahu ada ongkir yang
+ * tertahan, jadi keduanya WAJIB ditampilkan, bukan dibuang.
+ *
+ * Keduanya ditandai opsional HANYA karena frontend & backend dideploy terpisah (Vercel vs droplet):
+ * frontend yang lebih baru bisa berbicara dengan backend yang belum mengirim field ini. Backend
+ * saat ini SELALU mengirim keduanya (`shippingDebts: []` kalau tidak ada tagihan terdampak).
+ */
+export type CancelRedemptionResult = CardRedemption & {
+  /** Kalimat DARI backend. Tampilkan apa adanya; jangan diganti janji refund otomatis. */
+  warning?: string;
+  /** Tagihan ongkir terdampak. `[]` = tidak ada uang yang tertahan di tagihan mana pun. */
+  shippingDebts?: ShippingRefundDebt[];
+};
+
+/**
+ * BATALKAN permintaan kirim sendiri (POST /redemptions/:id/cancel).
+ *
+ * Kontraknya DISALIN dari backend (redemption.controller.ts + redemption.service.ts, B1):
+ *  - JWT Hoshi SAJA — TIDAK butuh token CC/SIWS, dan SENGAJA tidak digerbang flag shipping:
+ *    baris record-only pun harus bisa dibatalkan. Jadi jangan pakai shippingHeaders() di sini.
+ *  - Yang dijamin backend cuma ini: BARIS REDEMPTION-nya nol uang (status REQUESTED /
+ *    AWAITING_PAYMENT, fundingSignature null, refundSafe true). Itu TIDAK sama dengan "nol ongkir
+ *    pernah dibayar".
+ *  - TAGIHAN ONGKIR-nya baris terpisah, dan pagarnya SENGAJA SEMPIT: hanya order PAID (pemenuhan
+ *    otomatis masih berjalan) dan FULFILLED yang MENOLAK pembatalan. Order yang macet di
+ *    FULFILLING atau sudah REFUND_DUE TIDAK menghalangi — pembatalannya BERHASIL, dan Rupiah yang
+ *    sudah mendarat dicatat sebagai utang refund di tagihannya sendiri lalu dilaporkan di
+ *    `shippingDebts`. Jadi JANGAN ada layar yang menulis "belum ada ongkir yang kami terima":
+ *    klien tidak bisa tahu itu, dan untuk baris FULFILLING/REFUND_DUE kalimat itu justru terbalik.
+ *  - Penolakannya memakai kontrak error yang sama: `REDEMPTION_CANCEL_NOT_ALLOWED` (400),
+ *    `REDEMPTION_CANCEL_PAYMENT_LANDED` (400), `REDEMPTION_CANCEL_RACE` (409) — semuanya stage
+ *    NO_EFFECT (nol efek, nol dana), jadi aman ditampilkan apa adanya ke user.
+ *  - `warning` + `shippingDebts` DITULIS backend. Tampilkan; jangan diganti janji refund otomatis,
+ *    dan jangan dibuang — tidak ada layar lain yang menampilkan uang itu.
+ */
+export const cancelRedemption = (id: string, token: string, reason?: string) =>
+  api<CancelRedemptionResult>(`/redemptions/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+
+/* --- kirim-fisik REAL (butuh JWT + token CC SIWS di header; hanya saat backend di-arm) --------
    Alur: estimate ongkir Rupiah → bayar (order IDRX hosted) → danai+siapkan tx → user TTD →
-   submit burn → lacak resi. Kelima call di bawah melampirkan identity token Privy lewat
-   shippingHeaders() (lempar pesan ramah kalau user belum login Google/Privy). ---------------- */
+   submit burn → lacak resi. Kelima call di bawah melampirkan token akses CC lewat
+   shippingHeaders() (lempar pesan ramah kalau wallet pemilik kartu belum siap). -------------- */
 
 /** Estimasi ongkir kirim fisik yang dihitung server (POST /redemptions/:id/estimate). */
 export type RedemptionEstimate = {
@@ -524,11 +858,50 @@ export const fundAndPrepareRedemption = async (id: string, token: string) =>
     headers: await shippingHeaders(token),
   });
 
+/** Hasil RE-PREPARE: bentuknya SAMA dengan fund-and-prepare (tahap TTD memakai `transactions` +
+ *  `delistTransactions` yang identik) PLUS `fundedUsdc` — USDC yang SUDAH terlanjur dikirim
+ *  treasury ke wallet user waktu status jadi FUNDED. Backend: `ReprepareResult`
+ *  (src/collectorcrypt/cc-shipping.service.ts) = { transactions, delistTransactions,
+ *  outboundShipmentId, fundedUsdc, totalCostUsdc }. */
+export type ReprepareBurnResult = FundAndPrepareResult & {
+  /** USDC (base unit) yang SUDAH didanai sebelumnya — TIDAK didanai ulang oleh rute ini. */
+  fundedUsdc: number;
+};
+
+/** Terbitkan ULANG transaksi burn untuk redemption yang ongkirnya SUDAH didanai
+ *  (POST /redemptions/:id/re-prepare) — pemulihan resmi saat batch transaksi 15 menit CC
+ *  kedaluwarsa atau user menolak prompt tanda tangan yang pertama.
+ *
+ *  UANGNYA SUDAH PINDAH. Rute ini SENGAJA tidak mendanai apa pun: backend hanya menerima status
+ *  FUNDED (400 untuk status lain, termasuk READY_TO_FUND yang itu milik fund-and-prepare), tidak
+ *  pernah memanggil treasury lagi, dan tidak mengklaim/menggeser status — jadi memanggilnya
+ *  berulang kali AMAN (idempoten) dan tidak bisa double-fund. Jangan pernah memakai
+ *  fundAndPrepareRedemption untuk memulihkan baris FUNDED.
+ *
+ *  Request: POST tanpa body, header = shippingHeaders() (JWT + x-cc-access-token) — persis sama
+ *  dengan fund-and-prepare (controller: `reprepare(@Param('id'), @CurrentUser(), @CcAccessToken())`,
+ *  tanpa @Body). */
+export const reprepareRedemptionBurn = async (id: string, token: string) =>
+  api<ReprepareBurnResult>(`/redemptions/${encodeURIComponent(id)}/re-prepare`, {
+    method: "POST",
+    headers: await shippingHeaders(token),
+  });
+
 /** Kirim transaksi yang sudah ditandatangani user (POST /redemptions/:id/submit-burn).
- *  NB: gabungan delistTransactions (dulu) + transactions, semuanya sudah ditandatangani. */
+ *  DUA array TERPISAH sampai ke CC: setiap entri dari prepare harus dikembalikan dalam array
+ *  ASALNYA. Menggabungkannya jadi satu daftar membuat CC menolak 403 "The transactions submitted
+ *  are not the complete set this server issued"; leg de-list yang tidak ikut dikirim membuat burn
+ *  GAGAL on-chain. Array de-list boleh [] (kartu tidak sedang terpajang/escrow).
+ *
+ *  NAMA FIELD BODY — ke BACKEND KITA, bukan ke CC: `signedTransactions` /
+ *  `signedDelistTransactions` (src/redemption/dto/submit-burn.dto.ts). Nama wire CC memang
+ *  `transactions` / `delistTransactions`, tapi BACKEND yang memetakannya saat meneruskan. Backend
+ *  memasang ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }), jadi nama yang meleset
+ *  ditolak 400 SEBELUM controller — dan pada titik ini treasury USDC SUDAH keluar lewat
+ *  fund-and-prepare, jadi salah nama = uang keluar tanpa burn. Jangan ubah tanpa mengubah DTO. */
 export const submitRedemptionBurn = async (
   id: string,
-  signedTransactions: string[],
+  signed: { transactions: string[]; delistTransactions: string[] },
   token: string,
 ) =>
   api<{ status: RedemptionStatus; burnSignature: string }>(
@@ -536,15 +909,30 @@ export const submitRedemptionBurn = async (
     {
       method: "POST",
       headers: await shippingHeaders(token),
-      body: JSON.stringify({ signedTransactions }),
+      body: JSON.stringify({
+        signedTransactions: signed.transactions,
+        signedDelistTransactions: signed.delistTransactions,
+      }),
     },
   );
 
 /** Status + resi satu permintaan kirim fisik (GET /redemptions/:id/status). Dipakai untuk polling
- *  tahap "Dalam perjalanan" — menampilkan status & trackingUrls saat IN_TRANSIT/DELIVERED. */
-export const getRedemptionStatus = async (id: string, token: string) =>
+ *  tahap "Dalam perjalanan" — menampilkan status & trackingUrls saat IN_TRANSIT/DELIVERED.
+ *
+ *  DEFAULT = SENYAP: token CC diambil dari cache / refresh saja, TIDAK PERNAH memicu prompt tanda
+ *  tangan (ini dipanggil tiap beberapa detik oleh poller; lihat shippingHeadersSilent). Kalau sesi
+ *  CC-nya habis, call ini melempar CcSessionRequiredError — pemanggil menampilkannya sebagai aksi
+ *  yang bisa ditekan user, bukan diam-diam membuka wallet. `allowSignIn: true` HANYA untuk aksi
+ *  yang memang dipicu user (tombol "muat ulang status"). */
+export const getRedemptionStatus = async (
+  id: string,
+  token: string,
+  opts: { allowSignIn?: boolean } = {},
+) =>
   api<CardRedemption>(`/redemptions/${encodeURIComponent(id)}/status`, {
-    headers: await shippingHeaders(token),
+    headers: opts.allowSignIn
+      ? await shippingHeaders(token)
+      : await shippingHeadersSilent(token),
   });
 
 /* ---------------- swap: tukar kartu antar kolektor ---------------- */
@@ -629,6 +1017,109 @@ export const openPackByMemo = (memo: string, token: string) =>
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
+
+/* ---------------- bukti undian VRF (PUBLIK — tanpa token) --------------------
+
+   GET /api/gacha/verify/:memo
+     hoshi-backend: @Controller('gacha') + @Get('verify/:memo')  (gacha.controller.ts)
+     + app.setGlobalPrefix('api') di main.ts  →  /api/gacha/verify/:memo
+     → gacha.service.vrfVerify → cc-gacha.client → CC GET /api/vrf/verify?memo=
+
+   Route itu TIDAK punya @UseGuards: undiannya tercatat on-chain dan memang dibuat
+   supaya siapa pun bisa mengauditnya, jadi kita juga TIDAK mengirim Authorization
+   header di sini. (ThrottlerGuard global tetap berlaku — 60 request / 60 detik per
+   IP — jadi jangan dipanggil dalam loop.)
+
+   Fungsi ini sengaja TIDAK ikut konvensi throw-ApiError file ini. Layar bukti wajib
+   membedakan "memo tidak dikenali" dari "verifikatornya sedang tak bisa dihubungi",
+   dan yang kedua BUKAN pertanda undiannya bermasalah — satu Error bertext bebas
+   membuat beda itu gampang hilang. Union di bawah memaksa pemanggil menuliskannya.
+
+   Isi `raw` TIDAK dienumerasi kontrak CC (backend mengetiknya Record<string, unknown>
+   dan meneruskan apa adanya), jadi ia `unknown`: perlakukan sebagai JSON asing yang
+   tidak dipercaya, jangan pernah di-cast ke bentuk yang kita karang sendiri. ------- */
+
+export type VrfProofFailure =
+  /** 404 — verifikator tidak mengenali memo ini. */
+  | "NOT_FOUND"
+  /** Jawaban tidak datang sebelum batas waktu. */
+  | "TIMEOUT"
+  /** Permintaannya tidak sampai sama sekali (jaringan / CORS / backend mati). */
+  | "UNREACHABLE"
+  /** Status 200 tapi badannya bukan JSON yang bisa dibaca. */
+  | "NOT_JSON"
+  /** 5xx atau status lain dari backend kita / CC. */
+  | "SERVER";
+
+/**
+ * Hasil satu pemeriksaan. `reason` untuk UI, `detail` UNTUK LOG SAJA.
+ *
+ * `detail` berisi teks dari HULU — pesan galat backend kita (yang sudah lewat pemeta
+ * pesan ramah milik klien gacha, jadi bisa berbunyi hal seperti "mesin pack ini sedang
+ * tidak tersedia" atau "saldo treasury demo habis (USDC devnet)"), atau potongan badan
+ * balasan yang bukan JSON (yang bisa memuat URL hulu internal dan memo user). Tidak satu
+ * pun dari itu boleh sampai ke layar bukti: di sana kalimat seperti itu bukan cuma salah
+ * konteks, ia berbohong ke pembeli mainnet dan membocorkan jeroan kita. VrfProofPanel
+ * karena itu menulis kalimatnya sendiri per `reason` dan hanya meneruskan `detail` ke
+ * console. Jangan pernah merendernya.
+ */
+export type VrfProofResult =
+  | { ok: true; raw: unknown }
+  | { ok: false; reason: VrfProofFailure; detail?: string };
+
+/** Batas waktu: cukup longgar untuk hop Hoshi→CC, cukup pendek supaya tombolnya
+ *  tidak menggantung tanpa kabar. */
+const VRF_VERIFY_TIMEOUT_MS = 15_000;
+
+/** Ambil bukti VRF satu memo. TIDAK PERNAH throw — setiap kegagalan pulang sebagai
+ *  `{ ok: false, reason }` supaya UI-nya menulis kalimat yang benar untuk tiap sebab. */
+export async function verifyVrf(
+  memo: string,
+  timeoutMs: number = VRF_VERIFY_TIMEOUT_MS,
+): Promise<VrfProofResult> {
+  const trimmed = memo.trim();
+  if (!trimmed) return { ok: false, reason: "NOT_FOUND" };
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/gacha/verify/${encodeURIComponent(trimmed)}`, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    const timedOut =
+      e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+    return { ok: false, reason: timedOut ? "TIMEOUT" : "UNREACHABLE" };
+  }
+
+  // Dibaca sebagai TEKS dulu, baru di-parse sendiri: `res.json()` menggabungkan
+  // "badannya bukan JSON" dengan kegagalan jaringan jadi satu lemparan, padahal
+  // dua-duanya butuh kalimat yang berbeda di layar bukti.
+  const body = await res.text().catch(() => "");
+
+  if (!res.ok) {
+    let detail: string | undefined;
+    try {
+      const parsed = JSON.parse(body) as { message?: string | string[] };
+      if (parsed?.message)
+        detail = Array.isArray(parsed.message) ? parsed.message.join(", ") : String(parsed.message);
+    } catch {
+      /* badan error bukan JSON → status saja yang kita punya */
+    }
+    return {
+      ok: false,
+      reason: res.status === 404 ? "NOT_FOUND" : "SERVER",
+      detail: detail ?? `HTTP ${res.status}`,
+    };
+  }
+
+  try {
+    return { ok: true, raw: JSON.parse(body) as unknown };
+  } catch {
+    return { ok: false, reason: "NOT_JSON", detail: body.slice(0, 200) };
+  }
+}
 
 /* ---------------- buyback (CollectorCrypt's 72-hour window) ------------------
    Two steps, because this is the ONE flow the treasury cannot sign for us:
@@ -729,6 +1220,15 @@ export type PaymentOrder = {
   priceIdr: number;
   priceUsdc: number;
   paymentMethod: string;
+  /**
+   * Rel pembayaran order ini. OPSIONAL: backend yang lebih tua dari frontend tidak mengirimnya,
+   * dan layar harus tetap jalan dengan petunjuk netral.
+   */
+  provider?: "IDRX" | "DUITKU";
+  /** Kartu / permintaan kirim yang ditagih order ini. OPSIONAL: backend lama tidak mengirimnya.
+   *  Dipakai untuk melanjutkan pembayaran HANYA dari nomor order di alamat kembalian gateway. */
+  listingId?: string | null;
+  redemptionId?: string | null;
   status: PaymentStatus;
   qrContent: string | null;
   virtualAccountNo: string | null;

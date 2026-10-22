@@ -30,7 +30,7 @@ const dt = (s: string | null) =>
   s ? new Date(s).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
 export default function TarikSaldoPage() {
-  const { token, login, hydrated } = useAuth();
+  const { token, login, hydrated, canAutoRecover } = useAuth();
   const { setVisible } = useWalletConnect();
 
   const [balance, setBalance] = useState<number | null>(null);
@@ -94,7 +94,13 @@ export default function TarikSaldoPage() {
       setAmount("");
       setReloadKey((k) => k + 1);
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) setVisible(true);
+      /* Alasan yang sama persis dengan app/vault/page.tsx: 403 berarti "login, tapi bukan hakmu"
+         — menyuruh menyambungkan wallet di situ memperbaiki hal yang tidak rusak. Dan 401 untuk
+         user Google kini dipulihkan di latar oleh `lib/api`, jadi modal wallet cuma menakut-nakuti
+         orang yang tidak punya wallet. Modal hanya untuk yang memang tidak punya jalan pulih. */
+      if (e instanceof ApiError && e.status === 401 && !canAutoRecover) {
+        setVisible(true);
+      }
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
