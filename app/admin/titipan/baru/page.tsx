@@ -68,6 +68,19 @@ const LOCKABLE_INPUT = `${INPUT} disabled:cursor-not-allowed disabled:border-whi
 const DEFAULT_COMMISSION_BPS = 500;
 
 /**
+ * Admin mengetik komisi dalam PERSEN ("5", "7,5"), server tetap menerima basis poin (500, 750).
+ * Draf & payload tetap menyimpan bps supaya draf lama tetap terbaca. Maksimal 2 desimal = 1 bps.
+ * Isian kosong/tidak sah → "" (bukan 0), supaya tidak diam-diam jadi komisi 0%.
+ */
+const pctInputToBps = (pct: string): string => {
+  const t = pct.trim().replace(",", ".");
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return "";
+  return String(Math.round(Number(t) * 100));
+};
+const bpsToPctInput = (bps: string): string =>
+  bps === "" || !Number.isFinite(Number(bps)) ? "" : String(Number(bps) / 100).replace(".", ",");
+
+/**
  * Pilihan dropdown Grader. "" (opsi pertama) = kartunya MENTAH, belum di-grading.
  *
  * Urutannya SENGAJA sama dengan enum `Grader` di backend: PSA lalu TAG — dua grader yang sungguh
@@ -304,6 +317,9 @@ export default function AdminTitipanBaruPage() {
   const [askPrice, setAskPrice] = useState("");
   const [reservePrice, setReservePrice] = useState("");
   const [commissionBps, setCommissionBps] = useState(String(DEFAULT_COMMISSION_BPS));
+  const [commissionPctInput, setCommissionPctInput] = useState(
+    bpsToPctInput(String(DEFAULT_COMMISSION_BPS)),
+  );
   const [agreementRef, setAgreementRef] = useState("");
   const [intakeReceiptRef, setIntakeReceiptRef] = useState("");
 
@@ -374,6 +390,7 @@ export default function AdminTitipanBaruPage() {
       setAskPrice(d.askPrice);
       setReservePrice(d.reservePrice);
       setCommissionBps(d.commissionBps);
+      setCommissionPctInput(bpsToPctInput(d.commissionBps));
       setAgreementRef(d.agreementRef);
       setIntakeReceiptRef(d.intakeReceiptRef);
       setRestoredAt(d.savedAt);
@@ -474,6 +491,7 @@ export default function AdminTitipanBaruPage() {
     setAskPrice("");
     setReservePrice("");
     setCommissionBps(String(DEFAULT_COMMISSION_BPS));
+    setCommissionPctInput(bpsToPctInput(String(DEFAULT_COMMISSION_BPS)));
     setAgreementRef("");
     setIntakeReceiptRef("");
     setRestoredAt(null);
@@ -481,7 +499,7 @@ export default function AdminTitipanBaruPage() {
   };
 
   const askNum = Number(askPrice);
-  const bpsNum = Number(commissionBps);
+  const bpsNum = commissionBps === "" ? NaN : Number(commissionBps);
 
   /* ══ SERTIFIKAT TANPA GRADER: DICEGAH DI SINI, SEBELUM STRUKNYA DITANDATANGANI ══════════════
      Server MENOLAK kombinasi `certNumber` terisi + `grader` kosong (`CERT_WITHOUT_GRADER_MESSAGE`
@@ -1295,16 +1313,25 @@ export default function AdminTitipanBaruPage() {
         </Field>
 
         <Field
-          label="Komisi Hoshi (bps)"
-          hint="500 = 5%. Disimpan per titipan, jadi perubahan komisi standar di kemudian hari tidak mengubah apa yang sudah dijanjikan untuk kartu ini."
+          label="Komisi Hoshi (%)"
+          hint="Misalnya 5 atau 7,5. Disimpan per titipan, jadi perubahan komisi standar di kemudian hari tidak mengubah apa yang sudah dijanjikan untuk kartu ini."
         >
-          <input
-            value={commissionBps}
-            onChange={(e) => setCommissionBps(e.target.value.replace(/[^\d]/g, ""))}
-            inputMode="numeric"
-            placeholder="500"
-            className={INPUT}
-          />
+          <div className="relative">
+            <input
+              value={commissionPctInput}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^\d.,]/g, "");
+                setCommissionPctInput(v);
+                setCommissionBps(pctInputToBps(v));
+              }}
+              inputMode="decimal"
+              placeholder="5"
+              className={`${INPUT} pr-9`}
+            />
+            <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[15px] text-zinc-400">
+              %
+            </span>
+          </div>
         </Field>
 
         <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3.5">
