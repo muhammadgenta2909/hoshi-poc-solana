@@ -46,6 +46,35 @@ export const GRADE_FLOOR: Record<GradeTier, number> = {
   "10": 10,
 };
 
+/**
+ * Tingkatan harga bermerek Hoshi (permintaan PM): Kids = kelas pemula yang terjangkau, Core =
+ * kelas utama kolektor rutin, Grail = kartu incaran ("holy grail") yang paling mahal.
+ *
+ * PM hanya memberi tiga nama, tanpa angka. Batas di bawah adalah keputusan teknis yang mengikuti
+ * pembagian umum pasar kartu (≈ <$60 / $60–$300 / >$300) dan dicocokkan ke katalog live
+ * (21 Okt 2026, 101 kartu: 32 / 57 / 12) supaya tidak ada tier yang kosong. Ubah HANYA di sini —
+ * filter, hitungan, chip dan teks rentangnya semua membaca konstanta ini.
+ *
+ * Rentangnya [min, max) dalam IDR, bersambung tanpa celah: tiap harga masuk TEPAT satu tier.
+ */
+export type PriceTier = "kids" | "core" | "grail";
+export const PRICE_TIERS: PriceTier[] = ["kids", "core", "grail"];
+export const PRICE_TIER_LABEL: Record<PriceTier, string> = {
+  kids: "Hoshi Kids",
+  core: "Hoshi Core",
+  grail: "Hoshi Grail",
+};
+export const PRICE_TIER_RANGE: Record<PriceTier, readonly [number, number]> = {
+  kids: [0, 1_000_000],
+  core: [1_000_000, 5_000_000],
+  grail: [5_000_000, Infinity],
+};
+
+/** Tier tempat sebuah harga (IDR) jatuh. */
+export function priceTierOf(price: number): PriceTier {
+  return PRICE_TIERS.find((t) => price < PRICE_TIER_RANGE[t][1]) ?? "grail";
+}
+
 /** Card language (Figma badge: ENGLISH / JAPAN). */
 export type Language = "English" | "Japan";
 

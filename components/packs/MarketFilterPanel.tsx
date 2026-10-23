@@ -1,12 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { Era, Element, GradeTier, Grader, VaultSource } from "@/lib/market";
+import type { Era, Element, GradeTier, Grader, PriceTier, VaultSource } from "@/lib/market";
 import {
   ELEMENTS,
   ERAS,
   GRADE_TIERS,
   GRADERS,
+  PRICE_TIER_LABEL,
+  PRICE_TIER_RANGE,
+  PRICE_TIERS,
   VAULT_FILTER_LABEL,
   VAULT_SOURCES,
 } from "@/lib/market";
@@ -32,14 +35,25 @@ function CheckIcon() {
   );
 }
 
-/** A labelled checkbox row with a right-aligned count (Era / Grader / Element). */
+/** Teks rentang harga sebuah tier, mis. "< Rp 1 jt" / "Rp 1–5 jt" / "≥ Rp 5 jt". */
+function priceTierHint(t: PriceTier): string {
+  const [lo, hi] = PRICE_TIER_RANGE[t];
+  const jt = (v: number) => `${v / 1_000_000}`;
+  if (lo <= 0) return `< Rp ${jt(hi)} jt`;
+  if (!Number.isFinite(hi)) return `≥ Rp ${jt(lo)} jt`;
+  return `Rp ${jt(lo)}–${jt(hi)} jt`;
+}
+
+/** A labelled checkbox row with a right-aligned count (Era / Grader / Element / Hoshi Tier). */
 function CheckRow({
   label,
+  hint,
   count,
   checked,
   onToggle,
 }: {
   label: string;
+  hint?: string;
   count: number;
   checked: boolean;
   onToggle: () => void;
@@ -62,6 +76,7 @@ function CheckRow({
           {checked && <CheckIcon />}
         </span>
         <span className="text-[13px] text-zinc-300 group-hover:text-white">{label}</span>
+        {hint && <span className="text-[11px] tabular-nums text-zinc-500">{hint}</span>}
       </span>
       <span className="text-[12px] tabular-nums text-zinc-500">{count}</span>
     </button>
@@ -129,6 +144,9 @@ export default function MarketFilterPanel({
   priceMin,
   priceMax,
   onPrice,
+  priceTiers,
+  onTogglePriceTier,
+  priceTierCounts,
   eras,
   onToggleEra,
   eraCounts,
@@ -150,6 +168,9 @@ export default function MarketFilterPanel({
   priceMin: number;
   priceMax: number;
   onPrice: (lo: number, hi: number) => void;
+  priceTiers: Set<PriceTier>;
+  onTogglePriceTier: (t: PriceTier) => void;
+  priceTierCounts: Record<PriceTier, number>;
   eras: Set<Era>;
   onToggleEra: (e: Era) => void;
   eraCounts: Record<Era, number>;
@@ -228,6 +249,24 @@ export default function MarketFilterPanel({
               </div>
             </div>
           )}
+
+          {/* Hoshi Tier — tiga kelas harga bermerek (PM). SELALU tampil, termasuk tier yang
+              hitungannya 0: ini bagian tetap dari identitas marketplace, bukan facet data. */}
+          <div>
+            <SectionTitle>Hoshi Tier</SectionTitle>
+            <div className="flex flex-col">
+              {PRICE_TIERS.map((t) => (
+                <CheckRow
+                  key={t}
+                  label={PRICE_TIER_LABEL[t]}
+                  hint={priceTierHint(t)}
+                  count={priceTierCounts[t]}
+                  checked={priceTiers.has(t)}
+                  onToggle={() => onTogglePriceTier(t)}
+                />
+              ))}
+            </div>
+          </div>
 
           {/* Price Range */}
           <div>
