@@ -10,10 +10,22 @@ import type {
   GradeTier,
   Grader,
   Listing,
+  PriceTier,
   SortKey,
   VaultSource,
 } from "@/lib/market";
-import { CARD_CATEGORIES, ELEMENTS, ERAS, GRADE_FLOOR, GRADERS, VAULT_SOURCES, valueDeltaPct } from "@/lib/market";
+import {
+  CARD_CATEGORIES,
+  ELEMENTS,
+  ERAS,
+  GRADE_FLOOR,
+  GRADERS,
+  PRICE_TIER_LABEL,
+  PRICE_TIERS,
+  priceTierOf,
+  VAULT_SOURCES,
+  valueDeltaPct,
+} from "@/lib/market";
 import { getListings } from "@/lib/api";
 import TopNav from "@/components/packs/TopNav";
 import MarketFilterPanel from "@/components/packs/MarketFilterPanel";
@@ -249,6 +261,15 @@ export default function MarketplacePage() {
     [catalog],
   );
 
+  const priceTierCounts = useMemo(
+    () =>
+      PRICE_TIERS.reduce(
+        (acc, t) => ({ ...acc, [t]: catalog.filter((l) => priceTierOf(l.price) === t).length }),
+        {} as Record<PriceTier, number>,
+      ),
+    [catalog],
+  );
+
   // Price slider bounds derived from the live catalog: [0, most expensive listing]
   // (rounded up to the slider step). Falls back to a default ceiling while loading.
   const priceBounds = useMemo<[number, number]>(() => {
@@ -273,6 +294,9 @@ export default function MarketplacePage() {
   const effMin = Math.max(priceMin ?? priceBounds[0], priceBounds[0]);
   const effMax = Math.min(priceMax ?? priceBounds[1], priceBounds[1]);
 
+  // Hoshi Tier: pilihan ganda (OR antar tier), lalu AND dengan slider harga — jadi slider bisa
+  // mempersempit di dalam tier yang dipilih, sama seperti facet lain.
+  const [priceTiers, setPriceTiers] = useState<Set<PriceTier>>(new Set());
   const [eras, setEras] = useState<Set<Era>>(new Set());
   const [gradeTier, setGradeTier] = useState<GradeTier>("All");
   const [graders, setGraders] = useState<Set<Grader>>(new Set());
@@ -288,6 +312,7 @@ export default function MarketplacePage() {
 
     const filtered = listings.filter((l) => {
       if (l.price < effMin || l.price > effMax) return false;
+      if (priceTiers.size > 0 && !priceTiers.has(priceTierOf(l.price))) return false;
       if (vaultSources.size > 0 && !vaultSources.has(l.source ?? "HOSHI")) return false;
       if (eras.size > 0 && !eras.has(l.era)) return false;
       if (graders.size > 0 && !graders.has(l.grader)) return false;
@@ -316,7 +341,7 @@ export default function MarketplacePage() {
         break;
     }
     return sorted;
-  }, [listings, effMin, effMax, vaultSources, eras, graders, gradeTier, elements, category, sort]);
+  }, [listings, effMin, effMax, priceTiers, vaultSources, eras, graders, gradeTier, elements, category, sort]);
 
   // "Clear All" di panel filter. Pencarian IKUT dibersihkan: chip-nya duduk di baris chip yang
   // sama dengan chip filter, jadi tombol yang menyapu semua chip tapi menyisakan satu akan
@@ -325,6 +350,7 @@ export default function MarketplacePage() {
     clearSearch();
     setPriceMin(null);
     setPriceMax(null);
+    setPriceTiers(new Set());
     setVaultSources(new Set());
     setEras(new Set());
     setGradeTier("All");
@@ -339,6 +365,11 @@ export default function MarketplacePage() {
     // bahwa ia mempersempit bersama filter lain, bukan menggantikannya. Label dikutip supaya
     // terbaca sebagai kata yang diketik, bukan nama facet.
     ...(term ? [{ key: "q", label: `“${term}”`, onRemove: clearSearch }] : []),
+    ...[...priceTiers].map((t) => ({
+      key: `tier:${t}`,
+      label: PRICE_TIER_LABEL[t],
+      onRemove: () => setPriceTiers((s) => toggle(s, t)),
+    })),
     ...(gradeTier !== "All"
       ? [{ key: "grade", label: String(gradeTier), onRemove: () => setGradeTier("All") }]
       : []),
@@ -485,6 +516,9 @@ export default function MarketplacePage() {
                 setPriceMin(lo);
                 setPriceMax(hi);
               }}
+              priceTiers={priceTiers}
+              onTogglePriceTier={(t) => setPriceTiers((s) => toggle(s, t))}
+              priceTierCounts={priceTierCounts}
               eras={eras}
               onToggleEra={(e) => setEras((s) => toggle(s, e))}
               eraCounts={eraCounts}
