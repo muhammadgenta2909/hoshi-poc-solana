@@ -112,7 +112,14 @@ type PickCard = {
   name: string;
   image: string | null;
   set: string | null;
+  /** Kapan kartu ini jadi milik user (ms) — untuk urutan "terbaru di atas". 0 = tidak diketahui. */
+  at: number;
 };
+
+/** Saringan pemilih. "ALL" = semua rail. */
+type RailFilter = "ALL" | PickRail;
+
+const msOf = (iso: string | null | undefined): number => (iso ? Date.parse(iso) || 0 : 0);
 
 const toPickCard = (p: GachaPull): PickCard => ({
   key: p.nftAddress as string,
@@ -122,6 +129,7 @@ const toPickCard = (p: GachaPull): PickCard => ({
   name: p.ccItemName ?? p.nftName ?? "Kartu",
   image: p.nftImage,
   set: p.ccSet,
+  at: msOf(p.openedAt ?? p.createdAt),
 });
 
 /**
@@ -154,6 +162,7 @@ const boughtToPickCard = (l: Listing): PickCard | null => {
       name: l.name,
       image: l.image,
       set: l.set ?? l.category ?? null,
+      at: msOf(l.soldAt ?? l.listedAt),
     };
   }
   const nftAddress = l.nft?.assetAddress ?? l.ccNftAddress;
@@ -166,6 +175,7 @@ const boughtToPickCard = (l: Listing): PickCard | null => {
     name: l.name,
     image: l.image,
     set: l.set ?? l.category ?? null,
+    at: msOf(l.soldAt ?? l.listedAt),
   };
 };
 
@@ -225,6 +235,7 @@ export default function WithdrawPage() {
   const [cards, setCards] = useState<PickCard[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [railFilter, setRailFilter] = useState<RailFilter>("ALL");
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -346,11 +357,14 @@ export default function WithdrawPage() {
       ];
       const seen = new Set<string>();
       setCards(
-        pickList.filter((c) => {
-          if (busy.has(c.key) || seen.has(c.key)) return false;
-          seen.add(c.key);
-          return true;
-        }),
+        pickList
+          .filter((c) => {
+            if (busy.has(c.key) || seen.has(c.key)) return false;
+            seen.add(c.key);
+            return true;
+          })
+          // Terbaru di atas: kartu yang baru dibeli/dibuka adalah yang paling mungkin mau dikirim.
+          .sort((a, b) => b.at - a.at),
       );
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Gagal memuat data.");
@@ -495,13 +509,26 @@ export default function WithdrawPage() {
       return nextSet;
     });
 
+  const railCounts = useMemo(
+    () => ({
+      DOMESTIC: cards.filter((c) => c.rail === "DOMESTIC").length,
+      CC: cards.filter((c) => c.rail === "CC").length,
+    }),
+    [cards],
+  );
+  // Saringan yang menunjuk rail yang sudah kosong (mis. sesudah satu-satunya kartunya dikirim)
+  // jatuh balik ke "Semua" — jangan tinggalkan user di layar kosong tanpa sebab.
+  const effectiveRail: RailFilter =
+    railFilter !== "ALL" && railCounts[railFilter] === 0 ? "ALL" : railFilter;
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return cards;
     return cards.filter(
-      (c) => c.name.toLowerCase().includes(q) || (c.set ?? "").toLowerCase().includes(q),
+      (c) =>
+        (effectiveRail === "ALL" || c.rail === effectiveRail) &&
+        (!q || c.name.toLowerCase().includes(q) || (c.set ?? "").toLowerCase().includes(q)),
     );
-  }, [cards, search]);
+  }, [cards, search, effectiveRail]);
 
   const selectedCards = useMemo(
     () => cards.filter((c) => selected.has(c.key)),
@@ -1069,6 +1096,31 @@ export default function WithdrawPage() {
                   className="pl-10"
                 />
               </div>
+              {/* Saringan per LOKASI kartu — hanya kalau memang ada dua lokasi. */}
+              {railCounts.DOMESTIC > 0 && railCounts.CC > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ["ALL", "Semua", cards.length],
+                      ["DOMESTIC", "Gudang Hoshi", railCounts.DOMESTIC],
+                      ["CC", "Vault CollectorCrypt", railCounts.CC],
+                    ] as const
+                  ).map(([key, label, n]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setRailFilter(key)}
+                      className={`rounded-full border px-3.5 py-2 text-[13px] font-semibold transition ${
+                        effectiveRail === key
+                          ? "border-yellow-400/60 bg-yellow-400/15 text-yellow-200"
+                          : "border-white/10 bg-white/[0.03] text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      {label} <span className="opacity-70">({n})</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_340px] lg:items-start">
