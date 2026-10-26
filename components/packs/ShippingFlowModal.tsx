@@ -110,7 +110,7 @@ export const STATUS_LABEL: Record<RedemptionStatus, string> = {
   FUNDED: "Menunggu tanda tanganmu",
   BURN_SUBMITTED: "Diproses CollectorCrypt",
   IN_TRANSIT: "Dalam perjalanan",
-  DELIVERED: "Terkirim",
+  DELIVERED: "Diterima",
   PACKING: "Sedang dikemas",
   SHIPPED: "Dikirim",
   CANCELED: "Dibatalkan",
