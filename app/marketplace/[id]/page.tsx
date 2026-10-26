@@ -486,8 +486,33 @@ function ConsignedBadge() {
  *     tangan Hoshi atau tidak sama sekali); tidak ada yang bisa dipajang dari halaman ini.
  *
  *  Yang ditawarkan justru hak yang paling berarti buat pemiliknya: memintanya kembali, gratis. */
-function ConsignedOwnerPanel({ listing }: { listing: Listing }) {
+function ConsignedOwnerPanel({
+  listing,
+  boughtByMe,
+}: {
+  listing: Listing;
+  /** Penonton = PEMBELI kartu titipan ini. Panel di bawah ditulis untuk PEMILIK LAMA (yang
+   *  menitipkan) — "hasilnya masuk ke saldomu" salah total kalau dibaca pembelinya. */
+  boughtByMe: boolean;
+}) {
   const sold = listing.status === "SOLD";
+  if (boughtByMe) {
+    return (
+      <div className="mt-5 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.06] p-4">
+        <Label>Kartu milikmu</Label>
+        <p className="mt-2 text-[14px] leading-relaxed text-zinc-200">
+          Kamu sudah membeli kartu ini. Fisiknya disimpan aman di gudang Hoshi. Kalau mau dipegang
+          sendiri, minta kirim ke rumah dari Vault — cukup bayar ongkir.
+        </p>
+        <Link
+          href="/vault"
+          className="mt-4 block w-full rounded-xl bg-white/[0.06] px-4 py-3 text-center text-[15px] font-semibold text-zinc-100 transition hover:bg-white/[0.12]"
+        >
+          Buka Vault →
+        </Link>
+      </div>
+    );
+  }
   return (
     <div className="mt-5 rounded-2xl border border-sky-400/25 bg-sky-400/[0.06] p-4">
       <Label>Kartu titipanmu</Label>
@@ -780,7 +805,7 @@ function RightColumn({
           {/* TITIPAN dulu, baru panel pemilik biasa: kartu titipan lolos cek kepemilikan yang sama
               (penjualnya user sungguhan), tapi relist/cancel-nya ditolak server. */}
           {isConsigned ? (
-            <ConsignedOwnerPanel listing={listing} />
+            <ConsignedOwnerPanel listing={listing} boughtByMe={listing.status === "SOLD" && ownedNow} />
           ) : (
             <OwnerPanel
               listing={listing}
@@ -1090,6 +1115,7 @@ function RightColumnDesktop({
   buying,
   unavailable,
   owned,
+  ownedNow,
   isCatalogCc,
   isHoshiInventory,
   isConsigned,
@@ -1211,7 +1237,7 @@ function RightColumnDesktop({
             {buyMsg && <p className="mt-5 text-center text-sm text-[#3DDC84]">{buyMsg}</p>}
             {/* Sama persis dengan cabang mobile — titipan diperiksa DULU. */}
             {isConsigned ? (
-              <ConsignedOwnerPanel listing={listing} />
+              <ConsignedOwnerPanel listing={listing} boughtByMe={listing.status === "SOLD" && ownedNow} />
             ) : (
               <OwnerPanel
                 listing={listing}
