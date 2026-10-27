@@ -500,6 +500,9 @@ export type AdminRedemption = {
   createdAt: string;
   updatedAt?: string;
   processedAt?: string | null;
+  /** Kapan paket dinyatakan diterima + oleh siapa ("BUYER" | "AUTO" | "ADMIN"). */
+  deliveredAt?: string | null;
+  deliveredBy?: string | null;
 
   /* ═════ KONTRAK B2 — DIHITUNG SERVER. Absen = respons backend PRA-B2 (lihat fallback). ═════ */
 

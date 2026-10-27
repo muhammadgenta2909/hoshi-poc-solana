@@ -504,6 +504,14 @@ export type CardRedemption = {
   /** Link lacak resi (sejajar indeksnya dengan trackingIds). */
   trackingUrls?: string[];
   createdAt: string;
+  /** Kapan resi diisi admin (SHIPPED). Opsional: backend lama tidak membawanya. */
+  shippedAt?: string | null;
+  /** Kapan paket dinyatakan diterima. */
+  deliveredAt?: string | null;
+  /** "BUYER" | "AUTO" | "ADMIN" — siapa yang menyatakan diterima. */
+  deliveredBy?: string | null;
+  /** Kapan paket SHIPPED dianggap diterima otomatis (dihitung server: shippedAt + 7 hari). */
+  autoConfirmAt?: string | null;
 };
 
 /** Header untuk endpoint kirim-fisik CC: JWT wallet kita PLUS token akses CC hasil SIWS
@@ -802,6 +810,14 @@ export type CancelRedemptionResult = CardRedemption & {
  *  - `warning` + `shippingDebts` DITULIS backend. Tampilkan; jangan diganti janji refund otomatis,
  *    dan jangan dibuang — tidak ada layar lain yang menampilkan uang itu.
  */
+/** "Pesanan Diterima" — pembeli menyatakan paket kurir domestik sudah sampai. Idempoten. */
+export const confirmRedemptionReceived = (id: string, token: string) =>
+  api<CardRedemption>(`/redemptions/${encodeURIComponent(id)}/confirm-received`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+
 export const cancelRedemption = (id: string, token: string, reason?: string) =>
   api<CancelRedemptionResult>(`/redemptions/${encodeURIComponent(id)}/cancel`, {
     method: "POST",

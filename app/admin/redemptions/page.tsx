@@ -612,6 +612,21 @@ export default function AdminRedemptionsPage() {
                               Resi: {r.trackingIds?.join(", ")}
                             </p>
                           )}
+                          {r.status === "DELIVERED" && r.deliveredAt && (
+                            <p className="mt-0.5 truncate text-[11px] text-emerald-300/80">
+                              Diterima{" "}
+                              {r.deliveredBy === "BUYER"
+                                ? "— dikonfirmasi pembeli"
+                                : r.deliveredBy === "AUTO"
+                                  ? "— otomatis (7 hari)"
+                                  : "— ditandai admin"}{" "}
+                              ·{" "}
+                              {new Date(r.deliveredAt).toLocaleDateString("id-ID", {
+                                day: "numeric",
+                                month: "short",
+                              })}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </td>

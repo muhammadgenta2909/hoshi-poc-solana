@@ -47,7 +47,7 @@ import { formatIdr } from "@/components/packs/ui";
 import { STATUS_LABEL } from "@/components/packs/ShippingFlowModal";
 import { QrisPayHint } from "./QrisPayHint";
 import { CheckoutClosedNotice } from "./CheckoutClosedNotice";
-import { getPaymentsConfig } from "@/lib/paymentsConfig";
+import { getPaymentsConfig, usePaymentsConfig } from "@/lib/paymentsConfig";
 
 /* ───────────────────────── sesi tertunda (sepulang dari halaman bayar) ─────────────────────────
    KUNCI TERPISAH dari `hoshi_pending_ship` milik jalur CC — DENGAN SENGAJA. Dua rail punya alur
@@ -164,6 +164,8 @@ export default function DomesticShipModal({
   );
   const [orderStatus, setOrderStatus] = useState<PaymentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Rel pembayaran yang AKAN dipakai — supaya petunjuk bayar tidak menyebut kendala IDRX saat relnya Duitku.
+  const payCfg = usePaymentsConfig();
 
   const auth = useCallback(async () => token ?? (await login()), [token, login]);
 
@@ -373,7 +375,7 @@ export default function DomesticShipModal({
               )}
             </div>
             <div className="mt-4">
-              <QrisPayHint />
+              <QrisPayHint provider={payCfg?.provider} />
             </div>
             {error && (
               <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-[13px] text-red-400">

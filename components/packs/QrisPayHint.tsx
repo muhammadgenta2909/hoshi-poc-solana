@@ -9,7 +9,7 @@
  *   VA SENGAJA tidak disebut: IDRX hanya menerima transfer VA atas nama pemilik akun IDRX.
  * - Duitku: pembeli memilih sendiri di halaman bayar — QRIS, e-wallet, atau transfer bank — dan
  *   tidak ada name matching. Petunjuk "bank sering menolak" di sana keliru dan menakut-nakuti.
- * - Belum tahu (mis. layar ongkir, yang melompat ke halaman bayar tanpa layar antara): kalimat
+ * - Belum tahu (config server belum terjawab): kalimat
  *   netral yang benar untuk keduanya.
  *
  * Satu komponen untuk bayar kartu dan bayar ongkir, supaya petunjuknya tidak bisa berbeda.
@@ -28,7 +28,7 @@ export function QrisPayHint({ provider }: { provider?: "IDRX" | "DUITKU" }) {
           ]
         : [
             "Cara bayar ada di halaman berikutnya",
-            "Kalau scan QRIS ditolak aplikasi bank, coba pakai e-wallet seperti DANA.",
+            "Ikuti petunjuk di halaman pembayaran untuk menyelesaikan pembayaran.",
           ];
   return (
     <div className="w-full rounded-xl border border-sky-400/25 bg-sky-400/[0.07] px-3.5 py-2.5 text-left">

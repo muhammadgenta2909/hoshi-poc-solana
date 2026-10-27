@@ -34,6 +34,7 @@ import {
   ApiError,
   CC_SHIPPING_ENABLED,
   cancelRedemption,
+  confirmRedemptionReceived,
   getMyAddresses,
   getPaymentOrder,
   getMyPacks,
@@ -63,6 +64,7 @@ import {
 } from "@/components/account/ui";
 import AddAddressModal from "@/components/account/AddAddressModal";
 import { Img } from "@/components/packs/ui";
+import { BUSINESS } from "@/components/legal/business";
 import ShippingFlowModal, {
   CANCEL_CONFIRM_FREED,
   CANCEL_CONFIRM_MONEY,
@@ -302,6 +304,10 @@ export default function WithdrawPage() {
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<{ id: string; message: string } | null>(null);
+  /* ---- "Pesanan Diterima" (POST /redemptions/:id/confirm-received) — konfirmasi dua langkah ---- */
+  const [receiveConfirmId, setReceiveConfirmId] = useState<string | null>(null);
+  const [receivingId, setReceivingId] = useState<string | null>(null);
+  const [receiveError, setReceiveError] = useState<{ id: string; message: string } | null>(null);
   /**
    * HASIL pembatalan yang BERHASIL — `warning` + `shippingDebts` dari backend, disimpan supaya
    * bisa DIBACA dan DISALIN, bukan flash sebaris yang hilang.
@@ -420,6 +426,28 @@ export default function WithdrawPage() {
       }
     },
     [token, cancelingId, load],
+  );
+
+  const confirmReceived = useCallback(
+    async (id: string) => {
+      if (!token || receivingId) return;
+      setReceivingId(id);
+      setReceiveError(null);
+      try {
+        const updated = await confirmRedemptionReceived(id, token);
+        setReceiveConfirmId(null);
+        // Baris diperbarui di tempat — tidak perlu memuat ulang seluruh halaman.
+        setRedemptions((prev) => prev.map((r) => (r.id === id ? { ...r, ...updated } : r)));
+      } catch (e) {
+        setReceiveError({
+          id,
+          message: e instanceof Error ? e.message : "Konfirmasi tidak bisa diproses.",
+        });
+      } finally {
+        setReceivingId(null);
+      }
+    },
+    [token, receivingId],
   );
 
   // A new address came back from the shared AddAddressModal: select it, then
@@ -792,6 +820,94 @@ export default function WithdrawPage() {
                         </span>
                       )}
                     </div>
+
+                    {r.status === "SHIPPED" && (
+                      <div className="mt-2.5 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.05] px-3 py-2.5">
+                        {receiveConfirmId === r.id ? (
+                          <>
+                            <p className="text-[12px] leading-relaxed text-zinc-200">
+                              Paket {r.cardName} sudah sampai dan isinya sesuai?
+                            </p>
+                            <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-400">
+                              Kalau ada masalah, jangan konfirmasi dulu — hubungi kami. Simpan video
+                              saat membuka paket.
+                            </p>
+                            {receiveError?.id === r.id && (
+                              <p className="mt-2 text-[12px] leading-relaxed text-amber-200/90">
+                                {receiveError.message}
+                              </p>
+                            )}
+                            <div className="mt-2.5 flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void confirmReceived(r.id)}
+                                disabled={receivingId === r.id}
+                                className="flex-1 rounded-lg border border-emerald-400/40 bg-emerald-500/[0.15] px-3 py-2 text-[12px] font-semibold text-emerald-200 transition hover:bg-emerald-500/[0.25] disabled:opacity-60"
+                              >
+                                {receivingId === r.id ? "Menyimpan…" : "Ya, sudah diterima"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setReceiveConfirmId(null)}
+                                disabled={receivingId === r.id}
+                                className="flex-1 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[12px] font-semibold text-zinc-200 transition hover:bg-white/[0.10] disabled:opacity-60"
+                              >
+                                Belum
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReceiveError(null);
+                                setReceiveConfirmId(r.id);
+                              }}
+                              className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/[0.15] px-3 py-2 text-[13px] font-semibold text-emerald-200 transition hover:bg-emerald-500/[0.25]"
+                            >
+                              Pesanan Diterima
+                            </button>
+                            <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+                              Tekan kalau paketnya sudah sampai.
+                              {r.autoConfirmAt
+                                ? ` Kalau tidak ditekan, otomatis dianggap diterima pada ${new Date(
+                                    r.autoConfirmAt,
+                                  ).toLocaleDateString("id-ID", {
+                                    day: "numeric",
+                                    month: "long",
+                                  })}.`
+                                : ""}{" "}
+                              Ada masalah?{" "}
+                              <a
+                                href={`https://wa.me/${BUSINESS.phoneWa}?text=${encodeURIComponent(
+                                  `Halo Hoshi, ada masalah dengan paket ${r.cardName}${
+                                    r.trackingIds?.length ? ` (resi ${r.trackingIds.join(", ")})` : ""
+                                  }.`,
+                                )}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-semibold text-zinc-300 underline underline-offset-2 hover:text-white"
+                              >
+                                Hubungi kami
+                              </a>
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {r.status === "DELIVERED" && r.deliveredAt && (
+                      <p className="mt-1.5 text-[11px] text-emerald-300/80">
+                        Diterima{" "}
+                        {new Date(r.deliveredAt).toLocaleDateString("id-ID", {
+                          day: "numeric",
+                          month: "long",
+                          year: "numeric",
+                        })}
+                        {r.deliveredBy === "AUTO" ? " (otomatis)" : ""}
+                      </p>
+                    )}
 
                     {cancelable &&
                       (confirming ? (
