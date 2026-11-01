@@ -179,11 +179,25 @@ const kindLabel = (k: string): string =>
       ? "Bagian belakang kartu"
       : k === "CERT"
         ? "Nomor sertifikat"
-        : "Struk serah terima";
+        : k === "HANDOVER"
+          ? "Struk serah terima"
+          : k === "DAMAGE"
+            ? "Cacat / catatan"
+            : "Foto lainnya";
 
 /** Versi pendek untuk ditempel di petak 48px. */
 const kindShort = (k: string): string =>
-  k === "FRONT" ? "depan" : k === "BACK" ? "blkg" : k === "CERT" ? "sert" : "struk";
+  k === "FRONT"
+    ? "depan"
+    : k === "BACK"
+      ? "blkg"
+      : k === "CERT"
+        ? "sert"
+        : k === "HANDOVER"
+          ? "struk"
+          : k === "DAMAGE"
+            ? "cacat"
+            : "lain";
 
 /**
  * Pemilih gambar dari foto yang SUDAH tersimpan di titipan ini.
@@ -447,6 +461,22 @@ export default function AdminTitipanDetailPage() {
     setListImage(liveImage);
     setListImageBack(liveImageBack ?? "");
   }, [liveImage, liveImageBack]);
+
+  /* Pilihan otomatis untuk kartu yang BELUM tayang, kalau fotonya diunggah SESUDAH halaman dibuka.
+     `load()` hanya memilih dari foto yang ada saat itu — tanpa ini gambar depan tetap kosong dan
+     tombol "Pajang sekarang" mati tanpa penjelasan. Gambar belakang hanya diisi selama operator
+     belum menyentuhnya, supaya "Kosongkan" tetap berarti kosong. */
+  const [backTouched, setBackTouched] = useState(false);
+  useEffect(() => {
+    if (liveListing) return;
+    if (!listImage && newestFront) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect */
+      setListImage(newestFront);
+    }
+    if (!listImageBack && !backTouched && newestBack) {
+      setListImageBack(newestBack);
+    }
+  }, [liveListing, listImage, listImageBack, backTouched, newestFront, newestBack]);
 
   /**
    * Bukti yang WAJIB sebelum kartu boleh dinyatakan diterima — cermin gerbang di server, dan
@@ -1376,7 +1406,10 @@ export default function AdminTitipanDetailPage() {
                   hint="pembeli bisa membalik kartunya. Boleh dikosongkan."
                   photos={photos}
                   value={listImageBack}
-                  onChange={setListImageBack}
+                  onChange={(v) => {
+                    setBackTouched(true);
+                    setListImageBack(v);
+                  }}
                   clearable
                 />
               </div>
@@ -1402,6 +1435,7 @@ export default function AdminTitipanDetailPage() {
                   )
                 }
                 disabled={busy || !listImage || !listPrice}
+                title={!listImage ? "Pilih dulu gambar depan" : !listPrice ? "Isi harga dulu" : undefined}
                 className="mt-4 rounded-xl px-5 py-2.5 text-[14px] font-semibold text-[#171717] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ backgroundImage: "linear-gradient(180deg, #FBB222 0%, #FFF600 100%)" }}
               >
@@ -1555,7 +1589,10 @@ export default function AdminTitipanDetailPage() {
                   hint="pembeli bisa membalik kartunya. Boleh dikosongkan."
                   photos={photos}
                   value={listImageBack}
-                  onChange={setListImageBack}
+                  onChange={(v) => {
+                    setBackTouched(true);
+                    setListImageBack(v);
+                  }}
                   clearable
                 />
               </div>
