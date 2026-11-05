@@ -43,7 +43,9 @@ import Select from "@/components/admin/Select";
 import { ConfirmDialog } from "@/components/account/ui";
 
 const INPUT =
-  "w-full rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-[14px] text-zinc-100 placeholder-zinc-600 outline-none transition focus:border-yellow-400/40";
+  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-3 text-[13.5px] text-zinc-100 placeholder-zinc-500 outline-none transition focus:border-yellow-400/50";
+
+const GOLD = "linear-gradient(90deg, #FFF600 0%, #FBB222 100%)";
 
 /** Sama dengan NOTE_MIN di DTO backend. Alasan yang lebih pendek ditolak server. */
 const NOTE_MIN = 10;
@@ -104,18 +106,24 @@ function Field({
   hint,
   now,
   changed,
+  required,
   children,
 }: {
   label: string;
   hint?: ReactNode;
   now: ReactNode;
   changed: boolean;
+  /** Tanda bintang HANYA untuk kolom yang memang tidak boleh kosong. */
+  required?: boolean;
   children: ReactNode;
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 flex flex-wrap items-baseline gap-2">
-        <span className="text-[13px] font-medium text-zinc-300">{label}</span>
+      <span className="mb-2 flex flex-wrap items-baseline gap-2">
+        <span className="text-[13px] font-semibold text-white">
+          {label}
+          {required && <span className="text-red-500">*</span>}
+        </span>
         {changed && (
           <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-200">
             akan diubah
@@ -303,21 +311,14 @@ export default function LabelCorrectionPanel({
 
   return (
     <div>
-      <div className="rounded-xl border border-amber-400/20 bg-amber-400/[0.05] px-3.5 py-3 text-[12px] leading-relaxed text-amber-100/90">
-        Yang diubah di sini <strong>menimpa kolomnya</strong> — termasuk judul yang dilihat pembeli
-        kalau kartunya sedang tayang. Nilai lamanya tidak hilang: ia tersimpan permanen sebagai
-        baris <strong>“Keterangan kartu diperbaiki”</strong> di Riwayat, lengkap dengan nilai
-        sebelum dan sesudah, dan{" "}
-        <strong>pemilik kartu ini bisa membacanya sendiri</strong> di halaman titipannya. Catatan
-        kondisi dan foto tidak bisa ditimpa dari sini — keduanya bukti.
-      </div>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      {/* Urutan kolom mengikuti desain: kiri nama/nomor/sertifikat/skor, kanan set/grader/label/
+          alasan. Grid 2 kolom yang diisi berselang-seling menghasilkan susunan itu. */}
+      <div className="grid gap-x-5 gap-y-5 sm:grid-cols-2">
         <Field
           label="Nama kartu"
           now={shown(c.cardName)}
           changed={patch.cardName !== undefined}
-          hint="judul publik kartunya — tidak boleh dikosongkan"
+          required
         >
           <input
             value={form.cardName}
@@ -398,22 +399,22 @@ export default function LabelCorrectionPanel({
             className={INPUT}
           />
         </Field>
-      </div>
 
-      <div className="mt-4">
-        <span className="mb-1.5 block text-[13px] font-medium text-zinc-300">
-          Alasan koreksi (wajib)
-        </span>
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={2}
-          placeholder="APA yang salah dan DARI MANA kamu tahu nilai yang benar — mis. “dropdown grader tertinggal kosong saat intake di rumah pemilik; dicocokkan ulang dengan slab PSA 12345678 yang difoto di bukti”."
-          className={`${INPUT} resize-y leading-relaxed`}
-        />
-        <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">
-          Minimal {NOTE_MIN} karakter. Tersimpan permanen, dan pemilik kartu ikut membacanya.
-        </span>
+        <label className="block">
+          <span className="mb-2 block text-[13px] font-semibold text-white">
+            Alasan koreksi<span className="text-red-500">*</span>
+          </span>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={3}
+            placeholder="APA yang salah dan DARI MANA kamu tahu nilai yang benar — mis. “dropdown grader tertinggal kosong saat intake di rumah pemilik; dicocokkan ulang dengan slab PSA 12345678 yang difoto di bukti”."
+            className={`${INPUT} resize-y leading-relaxed`}
+          />
+          <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">
+            Minimal {NOTE_MIN} karakter. Tersimpan permanen, dan pemilik kartu ikut membacanya.
+          </span>
+        </label>
       </div>
 
       {/* Apa yang akan berubah — DITAMPILKAN sebelum tombolnya ditekan, bukan sesudah. */}
@@ -478,23 +479,28 @@ export default function LabelCorrectionPanel({
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={() => setConfirm(true)}
           disabled={!canSubmit}
-          className="rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+          className={`rounded-lg px-6 py-2.5 text-[13.5px] font-semibold transition ${
+            canSubmit
+              ? "text-[#171717] hover:brightness-105"
+              : "cursor-not-allowed bg-white/[0.12] text-zinc-400"
+          }`}
+          style={canSubmit ? { backgroundImage: GOLD } : undefined}
         >
-          {busy ? "Memproses…" : "Simpan koreksi keterangan"}
+          {busy ? "Memproses…" : "Simpan koreksi"}
         </button>
         <p className="text-[12px] leading-relaxed text-zinc-500">
           {nothingChanged
-            ? "Belum ada yang diubah — ubah dulu salah satu kolom di atas."
+            ? "Belum ada yang diubah"
             : noteTooShort
-              ? "Tulis dulu alasannya (minimal 10 karakter)."
+              ? "Tulis alasannya dulu (minimal 10 karakter)"
               : blockers.length > 0
-                ? "Selesaikan dulu yang di atas."
-                : `${changes.length} kolom akan ditimpa, dalam satu transaksi bersama baris auditnya.`}
+                ? "Selesaikan dulu yang di atas"
+                : `${changes.length} kolom akan diperbarui, bersama catatan riwayatnya`}
         </p>
       </div>
 
