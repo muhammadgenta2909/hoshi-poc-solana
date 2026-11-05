@@ -566,8 +566,9 @@ export default function HandoverReceiptButton({
   label?: string;
   /** Satu kalimat di bawah tombol. Isinya berbeda per layar, jadi ia bukan urusan komponen ini. */
   hint?: string;
-  /** "utama" = tombol kuning Hoshi (layar intake). "biasa" = tombol netral (halaman titipan). */
-  tone?: "utama" | "biasa";
+  /** "utama" = tombol kuning Hoshi (layar intake). "biasa" = tombol netral. "panel" = tombol
+      gelap berikon printer (halaman detail titipan). */
+  tone?: "utama" | "biasa" | "panel";
 }) {
   const [blocked, setBlocked] = useState(false);
 
@@ -579,7 +580,9 @@ export default function HandoverReceiptButton({
         className={
           tone === "utama"
             ? "rounded-xl px-5 py-2.5 text-[14px] font-semibold text-[#171717] transition hover:brightness-105"
-            : "rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.1]"
+            : tone === "panel"
+              ? "inline-flex items-center gap-3 rounded-xl bg-white/[0.06] px-5 py-3.5 text-[14px] font-semibold text-white transition hover:bg-white/[0.1]"
+              : "rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.1]"
         }
         style={
           tone === "utama"
@@ -587,6 +590,22 @@ export default function HandoverReceiptButton({
             : undefined
         }
       >
+        {tone === "panel" && (
+          <svg
+            aria-hidden
+            viewBox="0 0 24 24"
+            className="h-[18px] w-[18px] shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M7 9V3h10v6" />
+            <rect x="3" y="9" width="18" height="8" rx="2" />
+            <path d="M7 14h10v7H7z" />
+          </svg>
+        )}
         {label}
       </button>
       {hint && <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-400">{hint}</p>}
