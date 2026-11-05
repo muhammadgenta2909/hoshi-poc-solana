@@ -224,7 +224,9 @@ function Section({
       }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+        {/* Di ponsel judulnya selebar penuh, jadi tombol di kanan turun ke baris berikutnya
+            alih-alih menghimpit keterangannya jadi kolom sempit. */}
+        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
           <h2
             className={`text-[20px] font-bold leading-tight sm:text-[22px] ${
               danger ? "text-red-500" : "text-white"
@@ -1069,6 +1071,10 @@ export default function AdminTitipanDetailPage() {
      DIKETIK — dua pertanyaan yang berbeda, dan menggabungkannya berarti menaruh salinan ketiga
      aturan "alamat lengkap" di klien. */
   const typedPlan = returnPlanPayload();
+  /** Sudah ada kolom alamat yang diisi (diketik sekarang, atau terisi dari rencana tersimpan). */
+  const addressStarted = [retName, retPhone, retStreet, retApt, retCity, retState, retZip].some(
+    (v) => v.trim() !== "",
+  );
   /** Cara pengembalian yang BERLAKU untuk pelepasan ini: yang sedang diketik, kalau ada; kalau
       tidak, yang sudah tersimpan di baris. */
   const effectiveReturnMethod: string | null = typedPlan?.returnMethod ?? c.returnMethod;
@@ -1888,8 +1894,9 @@ export default function AdminTitipanDetailPage() {
                             <textarea
                               value={priceNote}
                               onChange={(e) => setPriceNote(e.target.value)}
-                              rows={2}
-                              placeholder="tulis alasan perubahan — mis. “pemilik setuju turun harga lewat WA, 19 Sep”"
+                              rows={3}
+                              placeholder="tulis alasan perubahan"
+                              title="mis. “pemilik setuju turun harga lewat WA, 19 Sep”"
                               className={`${INPUT} resize-y leading-relaxed`}
                             />
                           </label>
@@ -2547,7 +2554,10 @@ export default function AdminTitipanDetailPage() {
                           </p>
                         </div>
 
-                        {retMethod === "COURIER" && !typedPlan && (
+                        {/* Hanya kalau alamatnya SUDAH mulai diisi tapi belum lengkap. Formulir yang
+                            masih kosong tidak perlu diperingatkan — kalimat di samping tombol sudah
+                            bilang tujuannya boleh dilengkapi nanti. */}
+                        {retMethod === "COURIER" && !typedPlan && addressStarted && (
                           <p className="mt-4 rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
                             Alamatnya belum lengkap, jadi <strong>alamat tidak akan ikut tersimpan</strong>{" "}
                             — permintaan kembalinya tetap dicatat. Lengkapi nanti lewat tombol yang
