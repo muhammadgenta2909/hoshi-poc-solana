@@ -48,7 +48,7 @@ const dt = (s: string | undefined) =>
 export function PhotoGrid({ photos }: { photos: ConsignmentPhoto[] }) {
   if (photos.length === 0)
     return (
-      <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-6 text-center text-[13px] text-zinc-500">
+      <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-6 text-center text-[12px] text-zinc-500">
         Belum ada foto. Kartu tidak boleh dinyatakan diterima tanpa foto depan, belakang, dan
         struk serah terima yang sudah ditandatangani.
       </p>
@@ -69,12 +69,12 @@ export function PhotoGrid({ photos }: { photos: ConsignmentPhoto[] }) {
             />
           </a>
           <figcaption className="flex items-center justify-between gap-2 px-2.5 py-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-300">
+            <span className="text-[10.5px] font-semibold uppercase tracking-wide text-zinc-300">
               {PHOTO_KIND_LABEL[p.kind as ConsignmentPhotoKind] ?? p.kind}
             </span>
-            <span className="text-[10px] text-zinc-500">{dt(p.takenAt ?? p.createdAt)}</span>
+            <span className="text-[9.5px] text-zinc-500">{dt(p.takenAt ?? p.createdAt)}</span>
           </figcaption>
-          {p.note && <p className="px-2.5 pb-2 text-[11px] leading-snug text-zinc-400">{p.note}</p>}
+          {p.note && <p className="px-2.5 pb-2 text-[10.5px] leading-snug text-zinc-400">{p.note}</p>}
         </figure>
       ))}
     </div>
@@ -167,7 +167,7 @@ export function PhotoStrip({ photos }: { photos: ConsignmentPhoto[] }) {
 
   if (photos.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-6 text-center text-[13px] text-zinc-500">
+      <p className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-6 text-center text-[12px] text-zinc-500">
         Belum ada foto. Kartu tidak boleh dinyatakan diterima tanpa foto depan, belakang, dan struk
         serah terima yang sudah ditandatangani.
       </p>
@@ -176,7 +176,7 @@ export function PhotoStrip({ photos }: { photos: ConsignmentPhoto[] }) {
 
   return (
     <div>
-      <div className="flex flex-wrap gap-2.5">
+      <div className="flex flex-wrap gap-2">
         {STRIP_FILTERS.map((f) => {
           const n = countOf(f.key);
           const on = filter === f.key;
@@ -187,7 +187,7 @@ export function PhotoStrip({ photos }: { photos: ConsignmentPhoto[] }) {
               disabled={n === 0}
               onClick={() => setFilter(on ? null : f.key)}
               aria-pressed={on}
-              className={`rounded-full border px-4 py-2 text-[13px] font-semibold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-35 ${
+              className={`rounded-full border px-3.5 py-1.5 text-[12px] font-semibold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-35 ${
                 on
                   ? "border-yellow-400 bg-yellow-400 text-[#171717]"
                   : "border-yellow-400/70 text-white hover:bg-yellow-400/10"
@@ -203,12 +203,12 @@ export function PhotoStrip({ photos }: { photos: ConsignmentPhoto[] }) {
       <div
         ref={scroller}
         onScroll={measure}
-        className="no-scrollbar mt-4 flex snap-x gap-3 overflow-x-auto pb-1"
+        className="no-scrollbar mt-3 flex snap-x gap-2.5 overflow-x-auto pb-1"
       >
         {shown.map((p) => (
           <figure
             key={p.id}
-            className="w-[200px] shrink-0 snap-start overflow-hidden rounded-xl bg-white/[0.04] sm:w-[220px]"
+            className="w-[150px] shrink-0 snap-start overflow-hidden rounded-xl bg-white/[0.04] sm:w-[168px]"
             title={p.note ?? undefined}
           >
             <a href={p.url} target="_blank" rel="noreferrer" className="block p-2 pb-0">
@@ -219,14 +219,14 @@ export function PhotoStrip({ photos }: { photos: ConsignmentPhoto[] }) {
                 className="aspect-[3/4] w-full rounded-lg bg-black/40 object-cover"
               />
             </a>
-            <figcaption className="flex items-center justify-between gap-2 px-2.5 py-2.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-white">
+            <figcaption className="flex items-center justify-between gap-2 px-2 py-2">
+              <span className="text-[10.5px] font-semibold uppercase tracking-wide text-white">
                 {stripLabel(String(p.kind))}
               </span>
-              <span className="text-[10.5px] text-zinc-300">{dtFull(p.takenAt ?? p.createdAt)}</span>
+              <span className="text-[10px] text-zinc-300">{dtFull(p.takenAt ?? p.createdAt)}</span>
             </figcaption>
             {p.note && (
-              <p className="line-clamp-2 px-2.5 pb-2.5 text-[11px] leading-snug text-zinc-400">
+              <p className="line-clamp-2 px-2 pb-2 text-[10.5px] leading-snug text-zinc-400">
                 {p.note}
               </p>
             )}
@@ -311,7 +311,7 @@ export function PhotoUploader({
                 disabled={!consignmentId || busyKind !== null}
                 onClick={() => inputs.current[k]?.click()}
                 title={PHOTO_KIND_HINT[k]}
-                className={`flex items-center gap-2 rounded-xl border px-3.5 py-2.5 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
                   missing
                     ? "border-red-400/40 bg-red-400/10 text-red-200 hover:bg-red-400/15"
                     : n > 0
@@ -330,12 +330,12 @@ export function PhotoUploader({
                     className="h-[15px] w-[15px] shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70"
                   />
                 ) : (
-                  <span className="text-[15px] leading-none">📷</span>
+                  <span className="text-[13.5px] leading-none">📷</span>
                 )}
                 {busyKind === k ? (progress ?? "Mengunggah…") : PHOTO_KIND_LABEL[k]}
-                {busyKind !== k && n > 0 && <span className="text-[11px] opacity-80">×{n}</span>}
+                {busyKind !== k && n > 0 && <span className="text-[10.5px] opacity-80">×{n}</span>}
                 {busyKind !== k && missing && (
-                  <span className="text-[11px] font-bold uppercase">wajib</span>
+                  <span className="text-[10.5px] font-bold uppercase">wajib</span>
                 )}
               </button>
               <input
@@ -359,12 +359,12 @@ export function PhotoUploader({
       </div>
 
       {!consignmentId && (
-        <p className="text-[12px] text-zinc-500">
+        <p className="text-[11.5px] text-zinc-500">
           Simpan catatan kesepakatan dulu, baru foto bisa ditempelkan ke baris titipannya.
         </p>
       )}
       {progress && (
-        <p className="flex items-center gap-2 rounded-xl border border-yellow-400/25 bg-yellow-400/10 px-3.5 py-2.5 text-[12.5px] font-medium text-yellow-100">
+        <p className="flex items-center gap-2 rounded-xl border border-yellow-400/25 bg-yellow-400/10 px-3.5 py-2.5 text-[12px] font-medium text-yellow-100">
           <span
             aria-hidden
             className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70"
@@ -372,7 +372,7 @@ export function PhotoUploader({
           {progress} Jangan tutup halamannya dulu.
         </p>
       )}
-      {error && <p className="text-[12px] text-red-400">{error}</p>}
+      {error && <p className="text-[11.5px] text-red-400">{error}</p>}
     </div>
   );
 }
@@ -389,7 +389,7 @@ export default function ConsignmentPhotos(props: {
     <div className="space-y-4">
       <PhotoUploader {...props} />
       <PhotoGrid photos={props.photos} />
-      <p className="text-[11px] leading-relaxed text-zinc-500">
+      <p className="text-[10.5px] leading-relaxed text-zinc-500">
         Foto tersimpan permanen dan tidak bisa dihapus — termasuk oleh admin. Itu yang membuatnya
         berlaku sebagai bukti untuk pemilik kartu, bukan cuma catatan internal Hoshi.
       </p>

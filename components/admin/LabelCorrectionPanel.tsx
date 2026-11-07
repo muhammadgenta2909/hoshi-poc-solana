@@ -43,7 +43,7 @@ import Select from "@/components/admin/Select";
 import { ConfirmDialog } from "@/components/account/ui";
 
 const INPUT =
-  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-3 text-[13.5px] text-zinc-100 placeholder-zinc-500 outline-none transition focus:border-yellow-400/50";
+  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-[12.5px] text-zinc-100 placeholder-zinc-500 outline-none transition focus:border-yellow-400/50";
 
 const GOLD = "linear-gradient(90deg, #FFF600 0%, #FBB222 100%)";
 
@@ -119,19 +119,19 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 flex flex-wrap items-baseline gap-2">
-        <span className="text-[13px] font-semibold text-white">
+      <span className="mb-1.5 flex flex-wrap items-baseline gap-2">
+        <span className="text-[12px] font-semibold text-white">
           {label}
           {required && <span className="text-red-500">*</span>}
         </span>
         {changed && (
-          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-200">
+          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
             akan diubah
           </span>
         )}
       </span>
       {children}
-      <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">
+      <span className="mt-1 block text-[10.5px] leading-relaxed text-zinc-500">
         Sekarang: <span className="text-zinc-400">{now}</span>
         {hint ? <> · {hint}</> : null}
       </span>
@@ -401,7 +401,7 @@ export default function LabelCorrectionPanel({
         </Field>
 
         <label className="block">
-          <span className="mb-2 block text-[13px] font-semibold text-white">
+          <span className="mb-1.5 block text-[12px] font-semibold text-white">
             Alasan koreksi<span className="text-red-500">*</span>
           </span>
           <textarea
@@ -411,7 +411,7 @@ export default function LabelCorrectionPanel({
             placeholder="APA yang salah dan DARI MANA kamu tahu nilai yang benar — mis. “dropdown grader tertinggal kosong saat intake di rumah pemilik; dicocokkan ulang dengan slab PSA 12345678 yang difoto di bukti”."
             className={`${INPUT} resize-y leading-relaxed`}
           />
-          <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">
+          <span className="mt-1 block text-[10.5px] leading-relaxed text-zinc-500">
             Minimal {NOTE_MIN} karakter. Tersimpan permanen, dan pemilik kartu ikut membacanya.
           </span>
         </label>
@@ -420,10 +420,10 @@ export default function LabelCorrectionPanel({
       {/* Apa yang akan berubah — DITAMPILKAN sebelum tombolnya ditekan, bukan sesudah. */}
       {changes.length > 0 && blockers.length === 0 && (
         <div className="mt-4 rounded-xl border border-white/[0.07] bg-black/25 px-3.5 py-3">
-          <p className="text-[12.5px] font-semibold text-zinc-200">Yang akan ditulis:</p>
+          <p className="text-[12px] font-semibold text-zinc-200">Yang akan ditulis:</p>
           <ul className="mt-1.5 space-y-1">
             {changes.map((ch) => (
-              <li key={ch.field} className="text-[12px] leading-relaxed text-zinc-400">
+              <li key={ch.field} className="text-[11.5px] leading-relaxed text-zinc-400">
                 {FIELD_LABEL[ch.field]}:{" "}
                 <span className="text-zinc-500">{shown(ch.before)}</span> →{" "}
                 <span className="text-zinc-100">{shown(ch.after)}</span>
@@ -434,7 +434,7 @@ export default function LabelCorrectionPanel({
               bisa menanyakan titipan orang lain. Dikatakan sebagai kemungkinan, supaya 409-nya
               tidak terbaca seperti kerusakan. */}
           {(graderChanged || patch.certNumber !== undefined) && nextCert !== "" && (
-            <p className="mt-2.5 border-t border-white/[0.06] pt-2.5 text-[11.5px] leading-relaxed text-zinc-500">
+            <p className="mt-2.5 border-t border-white/[0.06] pt-2.5 text-[11px] leading-relaxed text-zinc-500">
               Pasangan <strong className="text-zinc-400">{nextGrader || "(kosong)"} {nextCert}</strong>{" "}
               ikut diperiksa terhadap titipan yang masih HIDUP: kalau ia sudah dipakai baris lain,
               server menolak dan <strong>tidak ada yang berubah</strong> — satu kartu fisik tidak
@@ -450,7 +450,7 @@ export default function LabelCorrectionPanel({
           {blockers.map((b) => (
             <li
               key={b.slice(0, 40)}
-              className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100"
+              className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber-100"
             >
               {b}
             </li>
@@ -459,19 +459,19 @@ export default function LabelCorrectionPanel({
       )}
 
       {done && (
-        <p className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-3 text-[12.5px] leading-relaxed text-emerald-200">
+        <p className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-3 text-[12px] leading-relaxed text-emerald-200">
           {done}
         </p>
       )}
       {err && (
-        <div className="mt-4 rounded-xl border border-red-400/35 bg-red-400/10 px-3.5 py-3 text-[12.5px] leading-relaxed text-red-200">
+        <div className="mt-4 rounded-xl border border-red-400/35 bg-red-400/10 px-3.5 py-3 text-[12px] leading-relaxed text-red-200">
           <p className="font-semibold">Koreksi DITOLAK — tidak ada yang berubah.</p>
           <p className="mt-1">{err}</p>
           {errStale && (
             <button
               type="button"
               onClick={onReload}
-              className="mt-2.5 rounded-lg border border-red-300/40 bg-red-400/10 px-3 py-1.5 text-[12px] font-semibold text-red-100 transition hover:bg-red-400/20"
+              className="mt-2.5 rounded-lg border border-red-300/40 bg-red-400/10 px-3 py-1.5 text-[11.5px] font-semibold text-red-100 transition hover:bg-red-400/20"
             >
               Muat ulang barisnya
             </button>
@@ -484,7 +484,7 @@ export default function LabelCorrectionPanel({
           type="button"
           onClick={() => setConfirm(true)}
           disabled={!canSubmit}
-          className={`rounded-lg px-6 py-2.5 text-[13.5px] font-semibold transition ${
+          className={`rounded-lg px-5 py-2 text-[12.5px] font-semibold transition ${
             canSubmit
               ? "text-[#171717] hover:brightness-105"
               : "cursor-not-allowed bg-white/[0.12] text-zinc-400"
@@ -493,7 +493,7 @@ export default function LabelCorrectionPanel({
         >
           {busy ? "Memproses…" : "Simpan koreksi"}
         </button>
-        <p className="text-[12px] leading-relaxed text-zinc-500">
+        <p className="text-[11.5px] leading-relaxed text-zinc-500">
           {nothingChanged
             ? "Belum ada yang diubah"
             : noteTooShort
@@ -515,7 +515,7 @@ export default function LabelCorrectionPanel({
             </span>
             <span className="mt-2 block space-y-1">
               {changes.map((ch) => (
-                <span key={ch.field} className="block text-[12.5px]">
+                <span key={ch.field} className="block text-[12px]">
                   <strong>{FIELD_LABEL[ch.field]}</strong>: {shown(ch.before)} →{" "}
                   {shown(ch.after)}
                 </span>
