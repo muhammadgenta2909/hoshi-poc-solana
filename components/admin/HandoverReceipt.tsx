@@ -581,7 +581,7 @@ export default function HandoverReceiptButton({
           tone === "utama"
             ? "rounded-xl px-5 py-2.5 text-[14px] font-semibold text-[#171717] transition hover:brightness-105"
             : tone === "panel"
-              ? "inline-flex items-center gap-3 rounded-xl bg-white/[0.06] px-5 py-3.5 text-[14px] font-semibold text-white transition hover:bg-white/[0.1]"
+              ? "inline-flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-4 py-2.5 text-[12.5px] font-semibold text-white transition hover:bg-white/[0.1]"
               : "rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-[13px] font-semibold text-zinc-200 transition hover:bg-white/[0.1]"
         }
         style={
@@ -594,7 +594,7 @@ export default function HandoverReceiptButton({
           <svg
             aria-hidden
             viewBox="0 0 24 24"
-            className="h-[18px] w-[18px] shrink-0"
+            className="h-4 w-4 shrink-0"
             fill="none"
             stroke="currentColor"
             strokeWidth="1.8"

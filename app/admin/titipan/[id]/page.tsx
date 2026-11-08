@@ -54,11 +54,13 @@ import {
 } from "@/lib/admin-api";
 import {
   certLookupUrl,
+  chargeablePriceRange,
   commissionPct,
   consignorLinkMethodLabel,
   estimatedPayout,
   eventTitle,
   isAwaitingClaim,
+  isChargeablePrice,
   isInHoshiCustody,
   isReturnAddressFormComplete,
   reserveWarning,
@@ -82,7 +84,7 @@ import { ConfirmDialog } from "@/components/account/ui";
 import { getStates } from "@/lib/geo";
 
 const INPUT =
-  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-3 text-[13.5px] text-zinc-100 placeholder-zinc-500 outline-none transition focus:border-yellow-400/50";
+  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-[12.5px] text-zinc-100 placeholder-zinc-500 outline-none transition focus:border-yellow-400/50";
 
 /** Gradasi emas Hoshi — kuning di kiri, jingga di kanan, sesuai desain. */
 const GOLD = "linear-gradient(90deg, #FFF600 0%, #FBB222 100%)";
@@ -106,6 +108,10 @@ const dt = (s: string | null | undefined) =>
         minute: "2-digit",
       })
     : "—";
+
+/** Catatan riwayat dari server menulis rupiah tanpa titik ("Rp 1300000"); tampilkan berformat. */
+const prettyRupiah = (s: string) =>
+  s.replace(/Rp (\d{4,})/g, (_, n: string) => `Rp ${Number(n).toLocaleString("id-ID")}`);
 
 /** Kotak harga menampilkan titik ribuan supaya "kurang satu nol" kelihatan; state tetap digit polos. */
 const groupDigits = (digits: string) => (digits ? Number(digits).toLocaleString("id-ID") : "");
@@ -219,7 +225,7 @@ function Section({
 }) {
   return (
     <section
-      className={`rounded-2xl p-5 sm:p-6 ${
+      className={`rounded-xl p-4 sm:p-5 ${
         danger ? "border border-red-500/60 bg-red-950/20" : "bg-white/[0.035]"
       }`}
     >
@@ -228,17 +234,17 @@ function Section({
             alih-alih menghimpit keterangannya jadi kolom sempit. */}
         <div className="w-full min-w-0 sm:w-auto sm:flex-1">
           <h2
-            className={`text-[20px] font-bold leading-tight sm:text-[22px] ${
+            className={`text-[16px] font-bold leading-tight sm:text-[18px] ${
               danger ? "text-red-500" : "text-white"
             }`}
           >
             {title}
           </h2>
-          {sub && <p className="mt-1.5 text-[12.5px] leading-relaxed text-zinc-500">{sub}</p>}
+          {sub && <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-500">{sub}</p>}
         </div>
         {right && <div className="flex shrink-0 flex-wrap items-center gap-3">{right}</div>}
       </div>
-      {children && <div className="mt-5">{children}</div>}
+      {children && <div className="mt-4">{children}</div>}
     </section>
   );
 }
@@ -246,8 +252,8 @@ function Section({
 /** Kotak bergaris di dalam satu Section. */
 function SubBox({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/10 p-4 sm:p-5">
-      <p className="text-[15px] font-bold text-white">{title}</p>
+    <div className="rounded-xl border border-white/10 p-3.5 sm:p-4">
+      <p className="text-[13.5px] font-bold text-white">{title}</p>
       <div className="mt-1.5">{children}</div>
     </div>
   );
@@ -257,12 +263,12 @@ function SubBox({ title, children }: { title: string; children: ReactNode }) {
 function KV({ label, value, plain }: { label: string; value: ReactNode; plain?: boolean }) {
   return (
     <div
-      className={`flex items-start justify-between gap-4 py-3 ${
+      className={`flex items-start justify-between gap-4 py-2.5 ${
         plain ? "" : "border-b border-white/[0.08]"
       }`}
     >
-      <span className="shrink-0 text-[12.5px] text-zinc-500">{label}</span>
-      <span className="min-w-0 break-words text-right text-[13px] font-medium text-white">
+      <span className="shrink-0 text-[12px] text-zinc-500">{label}</span>
+      <span className="min-w-0 break-words text-right text-[12px] font-medium text-white">
         {value}
       </span>
     </div>
@@ -271,7 +277,7 @@ function KV({ label, value, plain }: { label: string; value: ReactNode; plain?: 
 
 function FieldLabel({ children, required }: { children: ReactNode; required?: boolean }) {
   return (
-    <span className="mb-2 block text-[13px] font-semibold text-white">
+    <span className="mb-1.5 block text-[12px] font-semibold text-white">
       {children}
       {required && <span className="text-red-500">*</span>}
     </span>
@@ -309,8 +315,8 @@ function ActionButton({
       onClick={onClick}
       disabled={!enabled}
       title={title}
-      className={`rounded-lg px-6 text-[13.5px] font-semibold transition ${
-        full ? "w-full py-3" : "py-2.5"
+      className={`rounded-lg px-5 text-[12.5px] font-semibold transition ${
+        full ? "w-full py-2.5" : "py-2"
       } ${enabled ? toneCls : "cursor-not-allowed bg-white/[0.12] text-zinc-400"}`}
       style={enabled && tone === "gold" ? { backgroundImage: GOLD } : undefined}
     >
@@ -321,7 +327,7 @@ function ActionButton({
 
 /** Kalimat kecil di samping tombol: apa yang masih kurang, atau bahwa semuanya siap. */
 function Hint({ children }: { children: ReactNode }) {
-  return <span className="text-[12px] leading-relaxed text-zinc-500">{children}</span>;
+  return <span className="text-[11.5px] leading-relaxed text-zinc-500">{children}</span>;
 }
 
 /** Sakelar pilihan berbentuk pil (cara pengembalian, penanggung ongkir). */
@@ -344,7 +350,7 @@ function PillToggle<T extends string>({
             type="button"
             onClick={() => onChange(o.value)}
             aria-pressed={on}
-            className={`rounded-full px-4 py-2 text-[13px] font-semibold transition ${
+            className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition ${
               on ? "text-[#171717]" : "text-zinc-200 hover:text-white"
             }`}
             style={on ? { backgroundImage: GOLD } : undefined}
@@ -367,7 +373,7 @@ function IconArrowLeft() {
 
 function IconTrash() {
   return (
-    <svg aria-hidden viewBox="0 0 24 24" className="h-[17px] w-[17px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" />
     </svg>
   );
@@ -375,7 +381,7 @@ function IconTrash() {
 
 function IconSwap() {
   return (
-    <svg aria-hidden viewBox="0 0 24 24" className="h-[17px] w-[17px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 7h14l-3-3M20 17H6l3 3" />
     </svg>
   );
@@ -420,7 +426,7 @@ function ListingStatusPill({ status }: { status: string }) {
   return (
     <span
       style={JERSEY}
-      className={`inline-block rounded-full px-3.5 py-1 text-[17px] leading-none tracking-wide ${cls}`}
+      className={`inline-block rounded-full px-3 py-[3px] text-[14px] leading-none tracking-wide ${cls}`}
     >
       {s.charAt(0) + s.slice(1).toLowerCase()}
     </span>
@@ -444,7 +450,7 @@ function SlotTile({
 }) {
   return (
     <div
-      className={`w-[160px] rounded-xl bg-white/[0.04] p-2.5 transition sm:w-[200px] ${
+      className={`w-[128px] rounded-xl bg-white/[0.04] p-2 transition sm:w-[150px] ${
         active ? "ring-2 ring-yellow-400" : ""
       }`}
     >
@@ -463,7 +469,7 @@ function SlotTile({
               className="aspect-[3/4] w-full rounded-lg bg-black/40 object-contain"
             />
           ) : (
-            <span className="grid aspect-[3/4] w-full place-items-center rounded-lg border border-dashed border-white/20 text-[12px] text-zinc-500">
+            <span className="grid aspect-[3/4] w-full place-items-center rounded-lg border border-dashed border-white/20 text-[11.5px] text-zinc-500">
               + Pilih foto
             </span>
           )}
@@ -474,7 +480,7 @@ function SlotTile({
             onClick={onClear}
             aria-label={`Kosongkan gambar ${label.toLowerCase()}`}
             title="Kosongkan"
-            className="absolute right-1.5 top-1.5 grid h-8 w-8 place-items-center rounded-md bg-[#F2B705] text-[#171717] transition hover:brightness-110"
+            className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-md bg-[#F2B705] text-[#171717] transition hover:brightness-110"
           >
             <IconTrash />
           </button>
@@ -484,13 +490,13 @@ function SlotTile({
             onClick={onOpen}
             aria-label={`Ganti gambar ${label.toLowerCase()}`}
             title="Ganti"
-            className="absolute right-1.5 top-1.5 grid h-8 w-8 place-items-center rounded-md bg-[#F2B705] text-[#171717] transition hover:brightness-110"
+            className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-md bg-[#F2B705] text-[#171717] transition hover:brightness-110"
           >
             <IconSwap />
           </button>
         ) : null}
       </div>
-      <p className="mt-2.5 text-center text-[12px] font-semibold uppercase tracking-wide text-white">
+      <p className="mt-2.5 text-center text-[11.5px] font-semibold uppercase tracking-wide text-white">
         {label}
         {onClear && <span className="font-normal normal-case text-zinc-400"> (Opsional)</span>}
       </p>
@@ -546,7 +552,7 @@ function BuyerImageSlots({
 
       {slot && (
         <div className="mt-4 rounded-xl bg-black/25 p-3.5">
-          <p className="text-[12.5px] leading-relaxed text-zinc-300">
+          <p className="text-[12px] leading-relaxed text-zinc-300">
             Pilih foto untuk gambar <strong>{slot === "FRONT" ? "depan" : "belakang"}</strong>,
             diambil dari foto bukti. Foto struk tidak ditawarkan karena memuat nama dan nomor HP
             pemilik.
@@ -567,16 +573,16 @@ function BuyerImageSlots({
                 }`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt="" className="h-28 w-20 object-cover" />
+                <img src={p.url} alt="" className="h-24 w-[68px] object-cover" />
                 {/* Jenis foto ditulis DI ATAS gambarnya — tanpa ini operator harus menebak mana
                     yang depan dan mana yang belakang dari petak sekecil ini. */}
-                <span className="absolute inset-x-0 bottom-0 bg-black/70 py-0.5 text-center text-[9.5px] font-semibold uppercase tracking-wide text-zinc-100">
+                <span className="absolute inset-x-0 bottom-0 bg-black/70 py-0.5 text-center text-[9px] font-semibold uppercase tracking-wide text-zinc-100">
                   {kindShort(p.kind)}
                 </span>
               </button>
             ))}
             {choices.length === 0 && (
-              <p className="text-[12px] text-zinc-500">Belum ada foto yang bisa dipakai.</p>
+              <p className="text-[11.5px] text-zinc-500">Belum ada foto yang bisa dipakai.</p>
             )}
           </div>
         </div>
@@ -1040,21 +1046,21 @@ export default function AdminTitipanDetailPage() {
     }
   };
 
-  if (loading && !c) return <p className="py-16 text-center text-[13px] text-zinc-500">Memuat…</p>;
+  if (loading && !c) return <p className="py-16 text-center text-[12px] text-zinc-500">Memuat…</p>;
 
   if (!c)
     return (
       <div className="space-y-4">
         <Link
           href="/admin/titipan"
-          className="inline-flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-4 py-2.5 text-[13.5px] font-semibold text-white transition hover:bg-white/[0.1]"
+          className="inline-flex items-center gap-2 rounded-lg bg-white/[0.06] px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:bg-white/[0.1]"
         >
           <span className="text-yellow-400">
             <IconArrowLeft />
           </span>
           Kembali ke titipan
         </Link>
-        <p className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-[13px] text-red-300">
+        <p className="rounded-xl border border-red-400/30 bg-red-400/10 px-3.5 py-2.5 text-[12px] text-red-300">
           {error ?? "Titipan tidak ditemukan."}
         </p>
       </div>
@@ -1159,8 +1165,16 @@ export default function AdminTitipanDetailPage() {
   const currentPrice = c.listing?.priceIdrx ?? c.askPriceIdr;
   const newPriceNum = Number(newPrice) || 0;
   const priceSame = newPrice !== "" && newPriceNum === currentPrice;
+  /* Rentang yang bisa ditagihkan ke pembeli — server menolak harga di luar ini, jadi operator
+     diberi tahu SEBELUM menekan tombol, bukan sesudah ditolak. */
+  const priceOutOfRange = newPrice !== "" && !isChargeablePrice(newPriceNum);
+  const priceDelta = newPrice !== "" && !priceSame ? newPriceNum - currentPrice : 0;
+  const priceNoteLen = priceNote.trim().length;
   const priceReady =
-    !busy && newPrice !== "" && newPriceNum > 0 && !priceSame && priceNote.trim().length >= NOTE_MIN;
+    !busy && newPrice !== "" && !priceOutOfRange && !priceSame && priceNoteLen >= NOTE_MIN;
+  /* Perubahan harga terakhir, apa adanya dari riwayat: server menulisnya sebagai
+     "Harga Rp X → Rp Y. <alasan>". */
+  const lastPriceEvent = [...(c.events ?? [])].reverse().find((e) => e.kind === "PRICE");
 
   const lostEvent = [...(c.events ?? [])].reverse().find((e) => e.kind === "LOST");
   const showUploader = uploadOpen ?? !c.custodyAcceptedAt;
@@ -1172,8 +1186,8 @@ export default function AdminTitipanDetailPage() {
     return (
       <div className="space-y-5 pb-10">
         <header>
-          <h1 className="text-[22px] font-bold text-zinc-100">Kode klaim diterbitkan</h1>
-          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-zinc-500">
+          <h1 className="text-[18px] font-bold text-zinc-100">Kode klaim diterbitkan</h1>
+          <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-zinc-500">
             Untuk “{c.cardName}”, atas nama {c.consignorNameAtIntake}.
           </p>
         </header>
@@ -1196,8 +1210,8 @@ export default function AdminTitipanDetailPage() {
             Ditawarkan DI SINI karena di sinilah satu-satunya tempat kodenya masih terbaca.
             Begitu layar ini ditutup, struk yang dicetak dari halaman titipan tidak akan pernah
             memuat kode lagi — server memang hanya menyimpan sidiknya. */}
-        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
-          <p className="text-[13px] font-semibold text-zinc-200">
+        <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 sm:p-5">
+          <p className="text-[12px] font-semibold text-zinc-200">
             Sekalian cetak struk serah terimanya?
           </p>
           <div className="mt-3">
@@ -1217,7 +1231,7 @@ export default function AdminTitipanDetailPage() {
     <div className="pb-12">
       <Link
         href="/admin/titipan"
-        className="inline-flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-4 py-2.5 text-[13.5px] font-semibold text-white transition hover:bg-white/[0.1]"
+        className="inline-flex items-center gap-2 rounded-lg bg-white/[0.06] px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:bg-white/[0.1]"
       >
         <span className="text-yellow-400">
           <IconArrowLeft />
@@ -1225,11 +1239,11 @@ export default function AdminTitipanDetailPage() {
         Kembali ke titipan
       </Link>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[164px_minmax(0,1fr)]">
+      <div className="mt-5 grid gap-5 lg:grid-cols-[128px_minmax(0,1fr)]">
         {/* ── GAMBAR KARTU ── */}
         <aside className="lg:sticky lg:top-0 lg:self-start">
           {thumbUrl ? (
-            <a href={thumbUrl} target="_blank" rel="noreferrer" className="block w-28 lg:w-full">
+            <a href={thumbUrl} target="_blank" rel="noreferrer" className="block w-24 lg:w-full">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={thumbUrl}
@@ -1238,17 +1252,17 @@ export default function AdminTitipanDetailPage() {
               />
             </a>
           ) : (
-            <div className="grid aspect-[3/4] w-28 place-items-center rounded-lg border border-dashed border-white/15 px-2 text-center text-[11.5px] text-zinc-500 lg:w-full">
+            <div className="grid aspect-[3/4] w-24 place-items-center rounded-lg border border-dashed border-white/15 px-2 text-center text-[11px] text-zinc-500 lg:w-full">
               Belum ada foto
             </div>
           )}
         </aside>
 
-        <div className="min-w-0 space-y-5">
+        <div className="min-w-0 space-y-4">
           {/* ── JUDUL ── */}
           <header>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-              <h1 className="text-[26px] font-bold leading-tight text-white sm:text-[30px]">
+              <h1 className="text-[21px] font-bold leading-tight text-white sm:text-[24px]">
                 {c.cardName}
               </h1>
               <div className="flex flex-wrap items-center gap-2">
@@ -1256,20 +1270,20 @@ export default function AdminTitipanDetailPage() {
                   <span
                     key={chip}
                     style={JERSEY}
-                    className="rounded-full bg-white/[0.21] px-3.5 py-1 text-[17px] uppercase leading-none tracking-wide text-white"
+                    className="rounded-full bg-white/[0.21] px-3 py-[3px] text-[14px] uppercase leading-none tracking-wide text-white"
                   >
                     {chip}
                   </span>
                 ))}
                 <span
                   style={JERSEY}
-                  className={`rounded-full border px-3.5 py-1 text-[17px] uppercase leading-none tracking-wide ${ui.cls}`}
+                  className={`rounded-full border px-3 py-[3px] text-[14px] uppercase leading-none tracking-wide ${ui.cls}`}
                 >
                   {ui.label}
                 </span>
               </div>
             </div>
-            <p className="mt-2 text-[14px] text-white">
+            <p className="mt-2 text-[13px] text-white">
               <span className="text-zinc-500">Milik </span>
               <span className="font-semibold text-yellow-400">{c.consignorNameAtIntake}</span>
               <span className="mx-2 text-zinc-500">-</span>
@@ -1281,14 +1295,14 @@ export default function AdminTitipanDetailPage() {
 
           {/* ── Keadaan custody: satu kalimat, paling atas, tanpa jargon ── */}
           <div
-            className={`rounded-2xl border px-5 py-4 text-[13.5px] leading-relaxed ${
+            className={`rounded-xl border px-3.5 py-2.5 text-[12.5px] leading-relaxed ${
               inCustody
-                ? "border-cyan-400/70 bg-cyan-950/25 text-white"
+                ? "border-[#04A1B8] bg-[#091928] text-white"
                 : c.status === "INTAKE"
                   ? "border-amber-400/40 bg-amber-400/[0.07] text-amber-100"
                   : c.status === "LOST"
                     ? "border-red-500/50 bg-red-950/25 text-red-100"
-                    : "border-white/15 bg-white/[0.03] text-zinc-200"
+                    : "border-[#04A1B8] bg-[#091928] text-zinc-100"
             }`}
           >
             {c.status === "INTAKE" && (
@@ -1339,7 +1353,7 @@ export default function AdminTitipanDetailPage() {
               yang berbeda ("kartunya di mana" vs "uangnya nanti ke siapa"), dan keduanya bisa
               benar sekaligus. Tetap di atas tab karena ia menghalangi pemajangan dan ganti rugi. */}
           {awaitingClaim && (
-            <div className="rounded-2xl border border-violet-400/30 bg-violet-400/[0.08] px-5 py-4 text-[13px] leading-relaxed text-violet-100">
+            <div className="rounded-xl border border-violet-400/30 bg-violet-400/[0.08] px-3.5 py-2.5 text-[12px] leading-relaxed text-violet-100">
               <strong>Belum ada akun yang mengklaim kartu ini.</strong> Pemiliknya —{" "}
               {c.consignorNameAtIntake} ({c.consignorPhoneAtIntake}) — belum memakai kode klaimnya.
               {c.custodyAcceptedAt && !c.custodyReleasedAt
@@ -1362,11 +1376,11 @@ export default function AdminTitipanDetailPage() {
                     type="button"
                     onClick={() => void issueClaimCode()}
                     disabled={busy || claimNote.trim().length < NOTE_MIN}
-                    className="rounded-xl border border-violet-300/40 bg-violet-400/10 px-4 py-2 text-[13px] font-semibold text-violet-100 transition hover:bg-violet-400/20 disabled:opacity-50"
+                    className="rounded-xl border border-violet-300/40 bg-violet-400/10 px-3.5 py-1.5 text-[12px] font-semibold text-violet-100 transition hover:bg-violet-400/20 disabled:opacity-50"
                   >
                     {busy ? "Memproses…" : "Terbitkan kode klaim baru"}
                   </button>
-                  <p className="text-[11.5px] leading-relaxed text-violet-200/70">
+                  <p className="text-[11px] leading-relaxed text-violet-200/70">
                     Kode lama langsung berhenti berlaku, dan alasan di atas tersimpan permanen.
                     Pakai ini kalau pemiliknya kehilangan kodenya, kodenya kedaluwarsa, atau ia
                     perlu ditegur lagi.
@@ -1382,16 +1396,16 @@ export default function AdminTitipanDetailPage() {
                   <button
                     type="button"
                     onClick={() => setLinkOpen(true)}
-                    className="text-[12.5px] font-semibold text-violet-200 underline-offset-2 hover:underline"
+                    className="text-[12px] font-semibold text-violet-200 underline-offset-2 hover:underline"
                   >
                     Pemiliknya sudah punya akun dan ada di depanmu? Tautkan langsung →
                   </button>
                 ) : (
                   <div>
-                    <p className="text-[12.5px] font-semibold text-violet-100">
+                    <p className="text-[12px] font-semibold text-violet-100">
                       Tautkan akun pemilik ke titipan ini
                     </p>
-                    <p className="mt-1 text-[11.5px] leading-relaxed text-violet-200/75">
+                    <p className="mt-1 text-[11px] leading-relaxed text-violet-200/75">
                       Lakukan ini HANYA kalau kamu sudah memastikan orangnya — cocokkan alamat
                       wallet di layarnya, atau tanda terima bertanda tangan yang ia bawa. Sesudah
                       tertaut, hasil penjualan kartu ini masuk ke akun tersebut.
@@ -1434,7 +1448,7 @@ export default function AdminTitipanDetailPage() {
                           }, "Akun pemilik tertaut. Kartu ini sekarang punya tujuan pembayaran.")
                         }
                         disabled={busy || !linkPick || linkNote.trim().length < NOTE_MIN}
-                        className="rounded-xl border border-violet-300/40 bg-violet-400/10 px-4 py-2 text-[13px] font-semibold text-violet-100 transition hover:bg-violet-400/20 disabled:opacity-50"
+                        className="rounded-xl border border-violet-300/40 bg-violet-400/10 px-3.5 py-1.5 text-[12px] font-semibold text-violet-100 transition hover:bg-violet-400/20 disabled:opacity-50"
                       >
                         {busy ? "Memproses…" : "Tautkan akun ini"}
                       </button>
@@ -1445,7 +1459,7 @@ export default function AdminTitipanDetailPage() {
                           setLinkPick(null);
                           setLinkNote("");
                         }}
-                        className="px-2 py-2 text-[12.5px] text-violet-200/70 transition hover:text-violet-100"
+                        className="px-2 py-2 text-[12px] text-violet-200/70 transition hover:text-violet-100"
                       >
                         Batal
                       </button>
@@ -1460,7 +1474,7 @@ export default function AdminTitipanDetailPage() {
               Kalimat pertamanya menyebut fakta yang paling mudah hilang dari kepala orang:
               kartunya MASIH DI RAK KITA. "Ditarik" bukan "sudah pulang". */}
           {returnPending && (
-            <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-5 py-4 text-[13px] leading-relaxed text-amber-100">
+            <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
               <strong>Pemilik minta kartunya kembali</strong> ({dt(c.withdrawRequestedAt)}) — dan
               kartunya <strong>masih di rak Hoshi</strong> sampai serah terimanya dicatat.
               {c.returnMethod == null ? (
@@ -1509,7 +1523,7 @@ export default function AdminTitipanDetailPage() {
                       type="button"
                       onClick={() => goTab(t)}
                       aria-pressed={on}
-                      className={`whitespace-nowrap rounded-full px-4 py-2.5 text-[14px] transition sm:px-5 sm:text-[16px] ${
+                      className={`whitespace-nowrap rounded-full px-3.5 py-2 text-[13px] transition sm:px-4 sm:text-[13.5px] ${
                         on ? "font-semibold text-[#171717]" : "text-white hover:text-yellow-200"
                       }`}
                       style={on ? { backgroundImage: GOLD } : undefined}
@@ -1524,7 +1538,7 @@ export default function AdminTitipanDetailPage() {
               type="button"
               onClick={() => goTab("LOST")}
               aria-pressed={tab === "LOST"}
-              className={`shrink-0 whitespace-nowrap rounded-full px-4 py-2.5 text-[14px] transition sm:px-5 sm:text-[16px] ${
+              className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-2 text-[13px] transition sm:px-4 sm:text-[13.5px] ${
                 tab === "LOST"
                   ? "bg-red-600 font-semibold text-white"
                   : "bg-red-950/70 text-white/90 hover:bg-red-900/70"
@@ -1536,12 +1550,12 @@ export default function AdminTitipanDetailPage() {
 
           <div ref={msgRef} className="space-y-3 empty:hidden">
             {ok && (
-              <p className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-[13px] text-emerald-200">
+              <p className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-2.5 text-[12px] text-emerald-200">
                 {ok}
               </p>
             )}
             {error && (
-              <p className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-[13px] text-red-300">
+              <p className="rounded-xl border border-red-400/30 bg-red-400/10 px-3.5 py-2.5 text-[12px] text-red-300">
                 {error}
               </p>
             )}
@@ -1549,7 +1563,7 @@ export default function AdminTitipanDetailPage() {
 
           {/* ═════════════════════════════ TAB: INFORMASI KARTU ═════════════════════════════ */}
           {tab === "INFO" && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {/* ── STRUK SERAH TERIMA ─────────────────────────────────────────────────────────
                   SEBELUM kartu "Bukti", karena itu urutan yang benar di lapangan: cetak → tanda
                   tangani di depan pemiliknya → baru difoto sebagai bukti "Struk serah terima".
@@ -1559,13 +1573,13 @@ export default function AdminTitipanDetailPage() {
                 title="Struk serah terima"
                 sub="Dua lembar identik: satu untuk pemilik kartu, satu untuk Hoshi. Ditandatangani kedua pihak di tempat. Inilah satu-satunya bukti yang isinya tidak bisa Hoshi ubah sendiri — salinan pemiliknya ada di tangan dia."
               >
-                <div className="flex flex-wrap items-center gap-5 sm:gap-7">
+                <div className="flex flex-wrap items-center gap-4 sm:gap-5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src="/icon-paper.png"
                     alt=""
                     aria-hidden
-                    className="h-20 w-20 shrink-0 object-contain sm:h-24 sm:w-24"
+                    className="h-14 w-14 shrink-0 object-contain sm:h-16 sm:w-16"
                   />
                   <HandoverReceiptButton
                     data={receiptDataFrom(c)}
@@ -1577,7 +1591,7 @@ export default function AdminTitipanDetailPage() {
                     }
                   />
                 </div>
-                <p className="mt-5 text-[12.5px] leading-relaxed text-zinc-500">
+                <p className="mt-5 text-[12px] leading-relaxed text-zinc-500">
                   {c.custodyAcceptedAt ? (
                     <>
                       <strong className="font-semibold text-white">
@@ -1609,7 +1623,7 @@ export default function AdminTitipanDetailPage() {
                     <button
                       type="button"
                       onClick={() => setUploadOpen(!showUploader)}
-                      className="rounded-lg border border-white/15 px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-white/[0.06]"
+                      className="rounded-lg border border-white/15 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-white/[0.06]"
                     >
                       {showUploader ? "Tutup unggah foto" : "+ Tambah foto"}
                     </button>
@@ -1625,7 +1639,7 @@ export default function AdminTitipanDetailPage() {
                       required={c.custodyAcceptedAt ? [] : requiredKinds}
                       onUpdated={setC}
                     />
-                    <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                    <p className="mt-3 text-[10.5px] leading-relaxed text-zinc-500">
                       Pilih jenis fotonya dulu, lalu ambil fotonya. Foto tersimpan permanen dan
                       tidak bisa dihapus — termasuk oleh admin.
                     </p>
@@ -1636,10 +1650,10 @@ export default function AdminTitipanDetailPage() {
 
                 {showStale && liveListing && (
                   <div className="mt-5 rounded-xl border border-yellow-400/35 bg-yellow-400/[0.08] p-4">
-                    <p className="text-[13.5px] font-semibold text-yellow-100">
+                    <p className="text-[12.5px] font-semibold text-yellow-100">
                       Foto baru ini belum tampil di halaman pembeli
                     </p>
-                    <p className="mt-1 text-[12px] leading-relaxed text-zinc-400">
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-400">
                       Foto bukti dan foto yang dipajang itu terpisah. Foto bukti tersimpan
                       selamanya, sedangkan yang dilihat pembeli baru berubah kalau kamu memakainya.
                     </p>
@@ -1652,7 +1666,7 @@ export default function AdminTitipanDetailPage() {
                         ].filter(Boolean) as { label: string; now: string | null; next?: string }[]
                       ).map((s) => (
                         <div key={s.label}>
-                          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                          <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-500">
                             {s.label}
                           </p>
                           <div className="flex items-center gap-2">
@@ -1661,11 +1675,11 @@ export default function AdminTitipanDetailPage() {
                                 /* eslint-disable-next-line @next/next/no-img-element */
                                 <img src={s.now} alt="" className="h-20 w-14 rounded-md object-cover opacity-60" />
                               ) : (
-                                <div className="grid h-20 w-14 place-items-center rounded-md border border-dashed border-white/15 text-[10px] text-zinc-500">
+                                <div className="grid h-20 w-14 place-items-center rounded-md border border-dashed border-white/15 text-[9.5px] text-zinc-500">
                                   kosong
                                 </div>
                               )}
-                              <p className="mt-1 text-[10px] text-zinc-500">sekarang</p>
+                              <p className="mt-1 text-[9.5px] text-zinc-500">sekarang</p>
                             </div>
                             <span className="text-zinc-500">→</span>
                             <div className="text-center">
@@ -1675,7 +1689,7 @@ export default function AdminTitipanDetailPage() {
                                 alt=""
                                 className="h-20 w-14 rounded-md object-cover ring-2 ring-yellow-400"
                               />
-                              <p className="mt-1 text-[10px] text-yellow-200">baru</p>
+                              <p className="mt-1 text-[9.5px] text-yellow-200">baru</p>
                             </div>
                           </div>
                         </div>
@@ -1707,7 +1721,7 @@ export default function AdminTitipanDetailPage() {
                       <button
                         type="button"
                         onClick={() => setStaleDismissed(staleKey)}
-                        className="rounded-lg border border-white/12 px-4 py-2.5 text-[13px] text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200"
+                        className="rounded-lg border border-white/12 px-4 py-2.5 text-[12px] text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-200"
                       >
                         Biarkan yang sekarang
                       </button>
@@ -1723,9 +1737,9 @@ export default function AdminTitipanDetailPage() {
                   sub="Tekan hanya kalau kartunya benar-benar sudah ada di tanganmu. Tanggal terima ditulis sekali dan tidak bisa dibatalkan."
                 >
                   <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                    <p className="text-[12px] text-zinc-500">Catatan kondisi (dari pencatatan awal)</p>
-                    <p className="mt-1 text-[13px] leading-relaxed text-white">{c.conditionNote}</p>
-                    <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                    <p className="text-[11.5px] text-zinc-500">Catatan kondisi (dari pencatatan awal)</p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-white">{c.conditionNote}</p>
+                    <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-500">
                       Tidak bisa diedit di sini. Kalau ada yang perlu diluruskan, tulis koreksi di
                       tab Legalitas Kartu — koreksi disimpan sebagai catatan baru, jadi terlihat
                       sebagai koreksi.
@@ -1741,7 +1755,7 @@ export default function AdminTitipanDetailPage() {
                         placeholder="mis. Rak A-3, Jakarta"
                         className={INPUT}
                       />
-                      <span className="mt-1 block text-[11px] text-zinc-500">
+                      <span className="mt-1 block text-[10.5px] text-zinc-500">
                         Kartu orang lain yang tidak tercatat ada di rak mana adalah kartu yang
                         belum benar-benar kita pegang.
                       </span>
@@ -1769,7 +1783,7 @@ export default function AdminTitipanDetailPage() {
                   {/* DIKATAKAN SEBELUM TOMBOLNYA DITEKAN, bukan cuma di dialog konfirmasi: inilah
                       kalimat yang menentukan apa yang operator janjikan ke pemilik kartu. */}
                   {afterAcceptBlockers.length > 0 && (
-                    <p className="mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-100">
+                    <p className="mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
                       Menerima kartu ini <strong>tidak</strong> membuatnya bisa dipajang:{" "}
                       {afterAcceptBlockers.join(" dan ")}. Custody-nya tetap tercatat dan kartunya
                       tetap bisa ditarik kembali kapan saja — tapi jangan menjanjikan “nanti kami
@@ -1799,7 +1813,7 @@ export default function AdminTitipanDetailPage() {
                   title="Harga & Listing"
                   sub="Harga di perjanjian dan harga di marketplace ditulis dalam satu transaksi, jadi keduanya tidak bisa berbeda."
                 >
-                  <div className={`grid gap-6 ${can("PRICE") ? "lg:grid-cols-2" : ""}`}>
+                  <div className={`grid gap-5 ${can("PRICE") ? "lg:grid-cols-2" : ""}`}>
                     <div>
                       {c.listing ? (
                         <>
@@ -1842,6 +1856,27 @@ export default function AdminTitipanDetailPage() {
                         />
                       )}
 
+                      {/* Perubahan harga terakhir beserta alasannya, langsung dari riwayat — supaya
+                          "kenapa harganya segini" terjawab tanpa membuka tab Legalitas. */}
+                      {lastPriceEvent && (
+                        <div className="py-2.5">
+                          <div className="flex items-start justify-between gap-4">
+                            <span className="shrink-0 text-[12px] text-zinc-500">Perubahan harga terakhir</span>
+                            <span className="text-right text-[12px] font-medium text-white">
+                              {dt(lastPriceEvent.createdAt)}
+                              {lastPriceEvent.actorLabel ? (
+                                <span className="font-normal text-zinc-500"> · {lastPriceEvent.actorLabel}</span>
+                              ) : null}
+                            </span>
+                          </div>
+                          {lastPriceEvent.note && (
+                            <p className="mt-1.5 rounded-lg bg-white/[0.04] px-3 py-2 text-[11.5px] leading-relaxed text-zinc-300">
+                              {prettyRupiah(lastPriceEvent.note)}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {/* Lantai harga yang disepakati di depan pemiliknya — FAKTA di kartu harga,
                           bukan hanya peringatan yang muncul saat sudah dilanggar. */}
                       {c.reservePriceIdr != null && c.reservePriceIdr > 0 && (
@@ -1855,7 +1890,7 @@ export default function AdminTitipanDetailPage() {
                       {/* Keadaan SEKARANG, dijawab server: kartu orang SEDANG dipajang di bawah lantai
                           yang dijanjikan kepadanya. */}
                       {c.belowReserve && (
-                        <p className="mt-3 rounded-xl border border-amber-400/35 bg-amber-400/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-100">
+                        <p className="mt-3 rounded-xl border border-amber-400/35 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
                           Harga yang berlaku sekarang{" "}
                           {c.effectivePriceIdr != null ? `(${rp(c.effectivePriceIdr)}) ` : ""}ada DI
                           BAWAH harga terendah yang disepakati dengan pemiliknya
@@ -1865,7 +1900,7 @@ export default function AdminTitipanDetailPage() {
                         </p>
                       )}
 
-                      <p className="mt-3 text-[12px] leading-relaxed text-zinc-500">
+                      <p className="mt-3 text-[11.5px] leading-relaxed text-zinc-500">
                         Harga adalah bagian dari perjanjian yang ditandatangani pemilik kartu — beri
                         tahu dia sebelum mengubahnya.
                       </p>
@@ -1873,21 +1908,41 @@ export default function AdminTitipanDetailPage() {
 
                     {can("PRICE") && (
                       <div>
-                        <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="grid gap-3 sm:grid-cols-2">
                           <label className="block">
                             <FieldLabel>Harga baru (Rp)</FieldLabel>
                             <div className="relative">
-                              <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-white">
+                              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[12px] font-semibold text-white">
                                 Rp
                               </span>
                               <input
                                 value={groupDigits(newPrice)}
                                 onChange={(e) => setNewPrice(onlyDigits(e.target.value))}
                                 inputMode="numeric"
-                                placeholder={groupDigits(String(currentPrice))}
-                                className={`${INPUT} pl-11`}
+                                placeholder="0"
+                                aria-invalid={priceOutOfRange || undefined}
+                                className={`${INPUT} pl-10 ${
+                                  priceOutOfRange ? "border-red-400/60 focus:border-red-400/70" : ""
+                                }`}
                               />
                             </div>
+                            {/* Selisihnya langsung terbaca — salah ketik "kurang satu nol" ketahuan
+                                di sini, bukan sesudah tersimpan. */}
+                            {priceDelta !== 0 && !priceOutOfRange && (
+                              <span
+                                className={`mt-1.5 block text-[11px] font-medium ${
+                                  priceDelta < 0 ? "text-amber-200" : "text-emerald-300"
+                                }`}
+                              >
+                                {priceDelta < 0 ? "Turun" : "Naik"} {rp(Math.abs(priceDelta))}
+                                {currentPrice > 0
+                                  ? ` (${((Math.abs(priceDelta) / currentPrice) * 100).toLocaleString("id-ID", {
+                                      maximumFractionDigits: 1,
+                                    })}%)`
+                                  : ""}{" "}
+                                dari harga sekarang
+                              </span>
+                            )}
                           </label>
                           <label className="block">
                             <FieldLabel>Alasan perubahan</FieldLabel>
@@ -1899,16 +1954,28 @@ export default function AdminTitipanDetailPage() {
                               title="mis. “pemilik setuju turun harga lewat WA, 19 Sep”"
                               className={`${INPUT} resize-y leading-relaxed`}
                             />
+                            {priceNoteLen > 0 && priceNoteLen < NOTE_MIN && (
+                              <span className="mt-1 block text-[10.5px] text-zinc-500">
+                                {priceNoteLen}/{NOTE_MIN} karakter minimal
+                              </span>
+                            )}
                           </label>
                         </div>
 
-                        {reserveWarning(newPriceNum, c.reservePriceIdr) && (
-                          <p className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-100">
-                            {reserveWarning(newPriceNum, c.reservePriceIdr)}
+                        {priceOutOfRange ? (
+                          <p className="mt-3 rounded-xl border border-red-400/30 bg-red-400/10 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-red-200">
+                            Harga ini tidak bisa ditagihkan ke pembeli. Rentang yang bisa dibayar:{" "}
+                            {chargeablePriceRange()}.
                           </p>
+                        ) : (
+                          reserveWarning(newPriceNum, c.reservePriceIdr) && (
+                            <p className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber-100">
+                              {reserveWarning(newPriceNum, c.reservePriceIdr)}
+                            </p>
+                          )
                         )}
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                           <ActionButton
                             full
                             enabled={priceReady}
@@ -1927,15 +1994,21 @@ export default function AdminTitipanDetailPage() {
                           >
                             {busy ? "Memproses…" : "Simpan harga"}
                           </ActionButton>
-                          <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500">
-                            {newPrice === ""
-                              ? "Isi harga baru dan alasannya. Alasannya disimpan permanen."
-                              : priceSame
-                                ? "Harga baru sama dengan harga sekarang."
-                                : priceNote.trim().length < NOTE_MIN
-                                  ? `Tulis alasannya dulu (minimal ${NOTE_MIN} karakter).`
-                                  : `Pemilik menerima ± ${rp(estimatedPayout(newPriceNum, c.commissionBps))} setelah komisi ${commissionPct(c.commissionBps)}%.`}
-                          </p>
+                          {/* Kalimat status hanya muncul setelah operator mulai mengisi — tombol
+                              abu-abu di form yang masih kosong sudah cukup jelas sendiri. */}
+                          {(newPrice !== "" || priceNoteLen > 0) && (
+                            <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                              {newPrice === ""
+                                ? "Isi harga barunya dulu."
+                                : priceOutOfRange
+                                  ? "Harga di luar rentang yang bisa ditagihkan."
+                                  : priceSame
+                                    ? "Harga baru sama dengan harga sekarang."
+                                    : priceNoteLen < NOTE_MIN
+                                      ? `Tulis alasannya dulu (minimal ${NOTE_MIN} karakter).`
+                                      : `Pemilik menerima ± ${rp(estimatedPayout(newPriceNum, c.commissionBps))} setelah komisi ${commissionPct(c.commissionBps)}%. Alasannya tersimpan di riwayat.`}
+                            </p>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1951,7 +2024,7 @@ export default function AdminTitipanDetailPage() {
                 >
                   {/* Dua penghalang yang BERBEDA, dan keduanya ditampilkan kalau keduanya berlaku. */}
                   {awaitingClaim && (
-                    <p className="rounded-xl border border-violet-400/30 bg-violet-400/10 px-4 py-3 text-[13px] leading-relaxed text-violet-100">
+                    <p className="rounded-xl border border-violet-400/30 bg-violet-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-violet-100">
                       Kartu ini belum diklaim pemiliknya, jadi belum ada akun yang akan menerima
                       hasil penjualannya — memajangnya sekarang berarti menawarkan kartu yang uangnya
                       tidak punya tujuan. Kirim ulang kode klaimnya lewat panel ungu di atas, lalu
@@ -1960,7 +2033,7 @@ export default function AdminTitipanDetailPage() {
                   )}
                   {rawUnlistable && (
                     <p
-                      className={`rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-[13px] leading-relaxed text-amber-100 ${
+                      className={`rounded-xl border border-amber-400/25 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100 ${
                         awaitingClaim ? "mt-3" : ""
                       }`}
                     >
@@ -1975,7 +2048,7 @@ export default function AdminTitipanDetailPage() {
                       <label className="block max-w-sm">
                         <FieldLabel required>Harga (Rp)</FieldLabel>
                         <div className="relative">
-                          <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-white">
+                          <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[12px] font-semibold text-white">
                             Rp
                           </span>
                           <input
@@ -1985,7 +2058,7 @@ export default function AdminTitipanDetailPage() {
                             className={`${INPUT} pl-11`}
                           />
                         </div>
-                        <span className="mt-1 block text-[11px] text-zinc-500">
+                        <span className="mt-1 block text-[10.5px] text-zinc-500">
                           Pemilik menerima ± {rp(estimatedPayout(Number(listPrice) || 0, c.commissionBps))}{" "}
                           setelah komisi {commissionPct(c.commissionBps)}%.
                           {c.reservePriceIdr != null && c.reservePriceIdr > 0 && (
@@ -1995,7 +2068,7 @@ export default function AdminTitipanDetailPage() {
                         {/* Lantai harga dipasang DI SINI juga, di detik harga pajang pertama
                             ditentukan — bukan hanya di layar ubah harga. */}
                         {reserveWarning(Number(listPrice) || 0, c.reservePriceIdr) && (
-                          <span className="mt-1.5 block rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber-100">
+                          <span className="mt-1.5 block rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[11px] leading-relaxed text-amber-100">
                             {reserveWarning(Number(listPrice) || 0, c.reservePriceIdr)}
                           </span>
                         )}
@@ -2003,7 +2076,7 @@ export default function AdminTitipanDetailPage() {
 
                       <div className="mt-5">
                         <FieldLabel>Gambar yang dilihat pembeli</FieldLabel>
-                        <p className="mb-3 text-[12px] leading-relaxed text-zinc-500">
+                        <p className="mb-3 text-[11.5px] leading-relaxed text-zinc-500">
                           Sudah dipilih otomatis dari foto depan & belakang terbaru. Ketuk gambarnya
                           kalau fotonya tertukar. Gambar belakang boleh dikosongkan.
                         </p>
@@ -2021,7 +2094,7 @@ export default function AdminTitipanDetailPage() {
 
                       <div className="mt-5 flex flex-wrap items-center gap-3">
                         <ActionButton
-                          enabled={!busy && !!listImage && !!listPrice}
+                          enabled={!busy && !!listImage && !!listPrice && isChargeablePrice(Number(listPrice))}
                           onClick={() =>
                             void run(
                               () =>
@@ -2047,7 +2120,9 @@ export default function AdminTitipanDetailPage() {
                             ? "Pilih dulu gambar depan."
                             : !listPrice
                               ? "Isi harga dulu."
-                              : "Siap dipajang."}
+                              : !isChargeablePrice(Number(listPrice))
+                                ? `Harga di luar rentang yang bisa ditagihkan (${chargeablePriceRange()}).`
+                                : "Siap dipajang."}
                         </Hint>
                       </div>
                     </>
@@ -2108,7 +2183,7 @@ export default function AdminTitipanDetailPage() {
 
           {/* ═════════════════════════════ TAB: LEGALITAS KARTU ═════════════════════════════ */}
           {tab === "LEGAL" && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               <Section title="Catatan serah terima">
                 <div className="grid gap-x-10 lg:grid-cols-2">
                   <div>
@@ -2198,7 +2273,7 @@ export default function AdminTitipanDetailPage() {
 
                 {can("CORRECTION") && (
                   <div className="mt-6">
-                    <p className="text-[13px] font-semibold text-white">
+                    <p className="text-[12px] font-semibold text-white">
                       Bila ada koreksi, silakan isi kolom di bawah!
                     </p>
                     <label className="mt-4 block">
@@ -2211,7 +2286,7 @@ export default function AdminTitipanDetailPage() {
                         className={`${INPUT} resize-y leading-relaxed`}
                       />
                     </label>
-                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                    <p className="mt-1 text-[10.5px] leading-relaxed text-zinc-500">
                       Tidak menimpa apa pun — ditulis sebagai catatan baru di riwayat. Untuk data
                       kartu yang salah ketik (nama, set, nomor, sertifikat, grader), pakai “Koreksi
                       data kartu” di bawah: yang itu memang membetulkan kolomnya.
@@ -2276,20 +2351,20 @@ export default function AdminTitipanDetailPage() {
                   <ol className="space-y-3.5">
                     {[...c.events].reverse().map((e) => (
                       <li key={e.id} className="border-l-2 border-white/10 pl-3.5">
-                        <p className="text-[13px] font-semibold text-white">
+                        <p className="text-[12px] font-semibold text-white">
                           {eventTitle(e.kind)}
                           {e.fromStatus && e.toStatus && e.fromStatus !== e.toStatus && (
-                            <span className="ml-2 text-[11px] font-normal text-zinc-500">
+                            <span className="ml-2 text-[10.5px] font-normal text-zinc-500">
                               {e.fromStatus} → {e.toStatus}
                             </span>
                           )}
                         </p>
-                        <p className="text-[11px] text-zinc-500">
+                        <p className="text-[10.5px] text-zinc-500">
                           {dt(e.createdAt)}
                           {e.actorLabel ? ` · ${e.actorLabel}` : ""}
                         </p>
                         {e.note && (
-                          <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-400">{e.note}</p>
+                          <p className="mt-0.5 text-[11.5px] leading-relaxed text-zinc-400">{prettyRupiah(e.note)}</p>
                         )}
                       </li>
                     ))}
@@ -2309,7 +2384,7 @@ export default function AdminTitipanDetailPage() {
                 {/* Sudah pulang: resi/penerimanya ditampilkan supaya "benar sampai?" punya jawaban
                     yang bisa diperiksa pemiliknya sendiri, bukan sekadar "kata Hoshi". */}
                 {c.custodyReleasedAt && c.releaseReason === "WITHDRAWN" && (
-                  <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5 text-[13px] leading-relaxed text-zinc-200">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3 text-[12px] leading-relaxed text-zinc-200">
                     <strong className="text-white">Kartu sudah dikembalikan ke pemiliknya</strong>{" "}
                     pada {dt(c.custodyReleasedAt)} —{" "}
                     {returnMethodLabel(c.returnMethod) ?? "cara pengembalian tidak tercatat"}.
@@ -2332,7 +2407,7 @@ export default function AdminTitipanDetailPage() {
                   </div>
                 )}
                 {c.custodyReleasedAt && c.releaseReason === "SHIPPED_TO_BUYER" && (
-                  <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5 text-[13px] leading-relaxed text-zinc-200">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3 text-[12px] leading-relaxed text-zinc-200">
                     <strong className="text-white">Kartu sudah diserahkan ke pembeli</strong> pada{" "}
                     {dt(c.custodyReleasedAt)}.
                   </div>
@@ -2348,19 +2423,19 @@ export default function AdminTitipanDetailPage() {
                       }
                     >
                       {c.status === "INTAKE" ? (
-                        <p className="text-[12.5px] leading-relaxed text-zinc-500">
+                        <p className="text-[12px] leading-relaxed text-zinc-500">
                           Kesepakatan dibatalkan. Tidak ada kartu yang pernah berpindah, jadi tidak
                           ada yang perlu diserahkan.
                         </p>
                       ) : (
                         <>
-                          <p className="text-[12.5px] leading-relaxed text-zinc-500">
+                          <p className="text-[12px] leading-relaxed text-zinc-500">
                             Catat permintaan pengembalian kartu dari pemilik. Jika kartu sedang
                             ditampilkan di marketplace, listing akan dinonaktifkan dan status kartu
                             diperbarui menjadi tidak dipajang. Tidak ada biaya administrasi untuk
                             pengajuan pengembalian.
                           </p>
-                          <p className="mt-2 text-[12.5px] leading-relaxed text-zinc-500">
+                          <p className="mt-2 text-[12px] leading-relaxed text-zinc-500">
                             Jika kartu telah terjual sebelum permintaan diproses, permintaan
                             pengembalian tidak dapat dilanjutkan. Transaksi penjualan tetap berlaku
                             dan hasil penjualan masuk ke saldo pemilik.
@@ -2383,7 +2458,7 @@ export default function AdminTitipanDetailPage() {
                         berpindah tangan, dan server memang menolak alamat untuk baris seperti itu. */}
                     {c.status !== "INTAKE" && (
                       <SubBox title="Ke mana kartunya dikembalikan?">
-                        <p className="text-[12.5px] leading-relaxed text-zinc-500">
+                        <p className="text-[12px] leading-relaxed text-zinc-500">
                           Lengkapi informasi pengembalian untuk memastikan kartu dikirimkan atau
                           diserahkan kepada penerima yang tepat. Informasi alamat dapat dilengkapi
                           kemudian, tetapi harus tersedia sebelum kartu dapat ditandai telah dikirim.
@@ -2510,7 +2585,7 @@ export default function AdminTitipanDetailPage() {
                             </div>
                           </div>
                         ) : (
-                          <p className="mt-4 rounded-lg bg-black/25 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-zinc-400">
+                          <p className="mt-4 rounded-lg bg-black/25 px-3.5 py-2.5 text-[12px] leading-relaxed text-zinc-400">
                             Diambil langsung tidak butuh alamat. Yang dicatat nanti, saat kartunya
                             benar-benar diserahkan, adalah <strong>siapa</strong> yang datang
                             mengambil — dan itu ditanyakan di bagian “Kartu fisik sudah keluar”.
@@ -2533,7 +2608,7 @@ export default function AdminTitipanDetailPage() {
                               ]}
                             />
                             <div className="relative w-full sm:w-60">
-                              <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-white">
+                              <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[12px] font-semibold text-white">
                                 Rp
                               </span>
                               <input
@@ -2545,7 +2620,7 @@ export default function AdminTitipanDetailPage() {
                               />
                             </div>
                           </div>
-                          <p className="mt-2 text-[12px] leading-relaxed text-zinc-500">
+                          <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500">
                             Kosongkan biayanya untuk ditaksir otomatis dari tarif wilayah tujuan —
                             tarif yang sama dengan pengiriman kartu biasa; wilayah yang tidak
                             dikenali memakai tarif cadangan yang lebih mahal. Ini{" "}
@@ -2558,7 +2633,7 @@ export default function AdminTitipanDetailPage() {
                             masih kosong tidak perlu diperingatkan — kalimat di samping tombol sudah
                             bilang tujuannya boleh dilengkapi nanti. */}
                         {retMethod === "COURIER" && !typedPlan && addressStarted && (
-                          <p className="mt-4 rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
+                          <p className="mt-4 rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber-100">
                             Alamatnya belum lengkap, jadi <strong>alamat tidak akan ikut tersimpan</strong>{" "}
                             — permintaan kembalinya tetap dicatat. Lengkapi nanti lewat tombol yang
                             sama; kartunya tidak bisa ditandai terkirim sebelum itu.
@@ -2590,12 +2665,12 @@ export default function AdminTitipanDetailPage() {
 
                 {can("RELEASE") && release && (
                   <SubBox title="Kartu fisik sudah keluar">
-                    <p className="text-[12.5px] leading-relaxed text-zinc-500">
+                    <p className="text-[12px] leading-relaxed text-zinc-500">
                       Dicatat saat kartunya benar-benar berpindah tangan. Untuk kartu yang sudah
                       terjual, pengirimannya biasanya sudah tercatat otomatis dari layar “Kirim
                       Kartu” — pakai ini kalau serah terimanya dilakukan langsung.
                     </p>
-                    <p className="mt-3 rounded-lg bg-black/25 px-3.5 py-2.5 text-[12.5px] text-zinc-300">
+                    <p className="mt-3 rounded-lg bg-black/25 px-3.5 py-2.5 text-[12px] text-zinc-300">
                       Yang akan dicatat: <strong className="text-white">{release.label}</strong>
                       {release.value === "WITHDRAWN" && effectiveReturnMethod && (
                         <> · {returnMethodLabel(effectiveReturnMethod)}</>
@@ -2608,7 +2683,7 @@ export default function AdminTitipanDetailPage() {
                     {release.value === "WITHDRAWN" && (
                       <div className="mt-4">
                         {effectiveReturnMethod == null ? (
-                          <p className="rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
+                          <p className="rounded-lg border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber-100">
                             Tujuan pengembaliannya belum dicatat, jadi kartu ini belum bisa
                             dinyatakan keluar. Isi dulu <strong>“Ke mana kartunya dikembalikan?”</strong>{" "}
                             di atas — server menolak selama itu kosong.
@@ -2616,7 +2691,7 @@ export default function AdminTitipanDetailPage() {
                         ) : effectiveReturnMethod === "COURIER" ? (
                           <>
                             <FieldLabel>Nomor resi</FieldLabel>
-                            <p className="-mt-1 mb-3 text-[12px] leading-relaxed text-zinc-500">
+                            <p className="-mt-1 mb-3 text-[11.5px] leading-relaxed text-zinc-500">
                               Tanpa resi, “sudah dikirim” tidak bisa diperiksa oleh pemilik kartunya
                               sendiri.
                               {storedReturnAddress && (
@@ -2645,7 +2720,7 @@ export default function AdminTitipanDetailPage() {
                         ) : (
                           <>
                             <FieldLabel>Siapa yang mengambil kartunya?</FieldLabel>
-                            <p className="-mt-1 mb-3 text-[12px] leading-relaxed text-zinc-500">
+                            <p className="-mt-1 mb-3 text-[11.5px] leading-relaxed text-zinc-500">
                               Nama orang yang benar-benar berdiri di depanmu, dan dasar kamu yakin
                               ia berhak menerimanya.
                             </p>
@@ -2704,7 +2779,7 @@ export default function AdminTitipanDetailPage() {
                 )}
 
                 {!can("RETURN") && !(can("RELEASE") && release) && !c.custodyReleasedAt && (
-                  <p className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5 text-[13px] leading-relaxed text-zinc-400">
+                  <p className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3 text-[12px] leading-relaxed text-zinc-400">
                     {c.status === "LOST"
                       ? "Kartu ini tercatat hilang / rusak, jadi tidak ada kartu yang bisa dikembalikan. Lanjutannya ada di tab Kartu Hilang."
                       : c.status === "CANCELLED"
@@ -2718,7 +2793,7 @@ export default function AdminTitipanDetailPage() {
 
           {/* ═════════════════════════════ TAB: KARTU HILANG ═════════════════════════════ */}
           {tab === "LOST" && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {c.status === "LOST" && (
                 <Section
                   danger
@@ -2727,11 +2802,11 @@ export default function AdminTitipanDetailPage() {
                 >
                   {lostEvent?.note ? (
                     <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                      <p className="text-[12px] text-zinc-500">
+                      <p className="text-[11.5px] text-zinc-500">
                         Deskripsi kejadian
                         {lostEvent.actorLabel ? ` · dicatat oleh ${lostEvent.actorLabel}` : ""}
                       </p>
-                      <p className="mt-1 text-[13px] leading-relaxed text-white">{lostEvent.note}</p>
+                      <p className="mt-1 text-[12px] leading-relaxed text-white">{lostEvent.note}</p>
                     </div>
                   ) : null}
                 </Section>
@@ -2744,7 +2819,7 @@ export default function AdminTitipanDetailPage() {
                   sub="Gunakan bagian ini untuk melaporkan kartu yang hilang atau mengalami kerusakan selama berada dalam pengelolaan Hoshi. Pastikan laporan berisi kronologi kejadian, kondisi terakhir kartu, dan informasi pendukung yang tersedia."
                 >
                   <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-                    <p className="text-[12.5px] leading-relaxed text-zinc-500">
+                    <p className="text-[12px] leading-relaxed text-zinc-500">
                       Setelah laporan disimpan, kartu tidak dapat ditampilkan di marketplace atau
                       diproses untuk pengiriman melalui alur normal. Pencatatan laporan tidak secara
                       otomatis memproses penggantian kartu atau pembayaran kompensasi.
@@ -2785,10 +2860,10 @@ export default function AdminTitipanDetailPage() {
                   sub="Struk serah terima yang ditandatangani kedua pihak berbunyi: “Hoshi mengganti sesuai nilai yang tertulis di struk ini.” Nominalnya karena itu bukan keputusan operator — server membacanya sendiri dari harga jual yang disepakati, dan menolak angka lain."
                 >
                   {/* ANGKA YANG DIJANJIKAN KERTASNYA, DITAMPILKAN — bukan kotak isian kosong. */}
-                  <p className="rounded-xl border border-emerald-400/20 bg-black/25 px-4 py-3.5 text-[13px] leading-relaxed text-zinc-200">
+                  <p className="rounded-xl border border-emerald-400/20 bg-black/25 px-3.5 py-3 text-[12px] leading-relaxed text-zinc-200">
                     Struk menjanjikan{" "}
-                    <strong className="text-[16px] text-emerald-200">{rp(c.askPriceIdr)}</strong>
-                    <span className="mt-1 block text-[11.5px] text-zinc-500">
+                    <strong className="text-[13.5px] text-emerald-200">{rp(c.askPriceIdr)}</strong>
+                    <span className="mt-1 block text-[11px] text-zinc-500">
                       Harga jual yang disepakati di struk serah terima — bukan harga dasar
                       {c.reservePriceIdr != null ? ` (${rp(c.reservePriceIdr)})` : ""}, bukan
                       taksiran pasar hari ini. Inilah yang akan dikreditkan.
@@ -2797,14 +2872,14 @@ export default function AdminTitipanDetailPage() {
 
                   {/* ── DUA KEADAAN YANG MEMBUATNYA PASTI DITOLAK, DIKATAKAN LEBIH DULU ── */}
                   {c.consignorId == null && (
-                    <p className="mt-3 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-violet-100">
+                    <p className="mt-3 rounded-lg border border-violet-400/30 bg-violet-400/10 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-violet-100">
                       Belum ada akun pemilik yang tertaut ke titipan ini, jadi uangnya belum punya
                       tujuan — server menolak selama itu. Tautkan akunnya (atau minta pemiliknya
                       menukarkan kode klaim) lewat panel ungu di atas, baru bayar.
                     </p>
                   )}
                   {(c.status === "SOLD" || c.soldOrderId != null || c.listing?.buyerId != null) && (
-                    <p className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-100">
+                    <p className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-amber-100">
                       Kartu ini <strong>sudah terjual</strong> sebelum hilang. Pemiliknya sudah
                       menerima payout-nya; yang tidak menerima apa pun adalah{" "}
                       <strong>PEMBELI</strong>, dan dialah yang wajib dipulihkan — lewat{" "}
@@ -2828,7 +2903,7 @@ export default function AdminTitipanDetailPage() {
                   {/* HASILNYA — hijau HANYA kalau rupiahnya benar-benar bergerak. */}
                   {compResult && (
                     <div
-                      className={`mt-3 rounded-lg border px-3.5 py-3 text-[12.5px] leading-relaxed ${
+                      className={`mt-3 rounded-lg border px-3.5 py-3 text-[12px] leading-relaxed ${
                         compResult.ok
                           ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100"
                           : "border-red-400/40 bg-red-400/10 text-red-200"
@@ -2866,7 +2941,7 @@ export default function AdminTitipanDetailPage() {
                   title="Pelaporan Kartu Hilang atau Rusak"
                   sub="Gunakan bagian ini untuk melaporkan kartu yang hilang atau mengalami kerusakan selama berada dalam pengelolaan Hoshi."
                 >
-                  <p className="rounded-xl border border-white/10 bg-black/20 px-4 py-3.5 text-[13px] leading-relaxed text-zinc-300">
+                  <p className="rounded-xl border border-white/10 bg-black/20 px-3.5 py-3 text-[12px] leading-relaxed text-zinc-300">
                     Belum bisa dilaporkan dari sini:{" "}
                     {c.status === "INTAKE"
                       ? "kartunya belum diterima Hoshi — selama serah terimanya belum dicatat, kartu masih di tangan pemiliknya."
